@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"internal/testenv"
 	"io"
 	"math"
 	"net"
@@ -324,8 +323,6 @@ func TestTLSUniqueMatches(t *testing.T) {
 }
 
 func TestVerifyHostname(t *testing.T) {
-	testenv.MustHaveExternalNetwork(t)
-
 	c, err := Dial("tcp", "www.google.com:https", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -350,8 +347,6 @@ func TestVerifyHostname(t *testing.T) {
 }
 
 func TestVerifyHostnameResumed(t *testing.T) {
-	testenv.MustHaveExternalNetwork(t)
-
 	config := &Config{
 		ClientSessionCache: NewLRUClientSessionCache(32),
 	}
