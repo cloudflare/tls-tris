@@ -25,6 +25,7 @@ type clientHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocols                []string
+	keyShares                    []keyShare
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -51,6 +52,7 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		m.secureRenegotiationSupported == m1.secureRenegotiationSupported &&
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
 		eqStrings(m.alpnProtocols, m1.alpnProtocols)
+	// TODO(filippo): TLS 1.3 fields
 }
 
 func (m *clientHelloMsg) marshal() []byte {
@@ -190,8 +192,8 @@ func (m *clientHelloMsg) marshal() []byte {
 	}
 	if len(m.supportedCurves) > 0 {
 		// http://tools.ietf.org/html/rfc4492#section-5.5.1
-		z[0] = byte(extensionSupportedCurves >> 8)
-		z[1] = byte(extensionSupportedCurves)
+		z[0] = byte(extensionSupportedGroups >> 8)
+		z[1] = byte(extensionSupportedGroups)
 		l := 2 + 2*len(m.supportedCurves)
 		z[2] = byte(l >> 8)
 		z[3] = byte(l)
@@ -404,8 +406,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.nextProtoNeg = true
 		case extensionStatusRequest:
 			m.ocspStapling = length > 0 && data[0] == statusTypeOCSP
-		case extensionSupportedCurves:
+		case extensionSupportedGroups:
 			// http://tools.ietf.org/html/rfc4492#section-5.5.1
+			// https://tlswg.github.io/tls13-spec/#rfc.section.6.3.2.2
 			if length < 2 {
 				return false
 			}
@@ -437,6 +440,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.sessionTicket = data[:length]
 		case extensionSignatureAlgorithms:
 			// https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
+			// https://tlswg.github.io/tls13-spec/#rfc.section.6.3.2.1
 			if length < 2 || length&1 != 0 {
 				return false
 			}
@@ -487,6 +491,29 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			m.scts = true
 			if length != 0 {
 				return false
+			}
+		case extensionKeyShare:
+			// https://tlswg.github.io/tls13-spec/#rfc.section.6.3.2.3
+			if length < 2 {
+				return false
+			}
+			l := int(data[0])<<8 | int(data[1])
+			if l != length-2 {
+				return false
+			}
+			d := data[2:length]
+			for len(d) != 0 {
+				if len(d) < 4 {
+					return false
+				}
+				dataLen := int(d[1])<<8 | int(d[2])
+				if dataLen == 0 || 2+dataLen > len(d) {
+					return false
+				}
+				m.keyShares = append(m.keyShares, keyShare{
+					group: CurveID(d[0])<<8 | CurveID(d[1]),
+					data:  d[2 : 2+dataLen],
+				})
 			}
 		}
 		data = data[length:]

@@ -126,10 +126,24 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 
 	hs.hello = new(serverHelloMsg)
 
+	keyShares := make(map[CurveID][]byte)
+	for _, keyShare := range hs.clientHello.keyShares {
+		if _, ok := keyShares[keyShare.group]; ok {
+			c.sendAlert(alertIllegalParameter)
+			return false, errors.New("tls: duplicate key share for the same type")
+		}
+		// TODO(filippo): check this group is listed in supportedCurves.
+		keyShares[keyShare.group] = keyShare.data
+	}
+
 	supportedCurve := false
 	preferredCurves := config.curvePreferences()
 Curves:
 	for _, curve := range hs.clientHello.supportedCurves {
+		if _, ok := keyShares[curve]; c.vers == VersionTLS13 && !ok {
+			// TODO(filippo): support the Hello Retry Request fallback instead.
+			continue
+		}
 		for _, supported := range preferredCurves {
 			if supported == curve {
 				supportedCurve = true
@@ -145,6 +159,8 @@ Curves:
 			break
 		}
 	}
+	// TLS 1.3 has removed point format negotiation.
+	supportedPointFormat = supportedPointFormat || c.vers == VersionTLS13
 	hs.ellipticOk = supportedCurve && supportedPointFormat
 
 	foundCompression := false
@@ -159,6 +175,10 @@ Curves:
 	if !foundCompression {
 		c.sendAlert(alertHandshakeFailure)
 		return false, errors.New("tls: client does not support uncompressed connections")
+	}
+	if len(hs.clientHello.compressionMethods) != 1 && c.vers == VersionTLS13 {
+		c.sendAlert(alertIllegalParameter)
+		return false, errors.New("tls: 1.3 client offered compression")
 	}
 
 	hs.hello.vers = c.vers
@@ -201,6 +221,7 @@ Curves:
 		ServerName:      hs.clientHello.serverName,
 		SupportedCurves: hs.clientHello.supportedCurves,
 		SupportedPoints: hs.clientHello.supportedPoints,
+		// TODO: add signatureAndHashes, version
 	})
 	if err != nil {
 		c.sendAlert(alertInternalError)
@@ -231,7 +252,7 @@ Curves:
 		}
 	}
 
-	if hs.checkForResumption() {
+	if c.vers != VersionTLS13 && hs.checkForResumption() {
 		return true, nil
 	}
 
@@ -768,6 +789,10 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 				continue
 			}
 			if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
+				continue
+			}
+			if version == VersionTLS13 && candidate.flags&suiteTLS12 == 0 {
+				// TODO(filippo): support other ciphersuites under 1.3
 				continue
 			}
 			hs.suite = candidate
