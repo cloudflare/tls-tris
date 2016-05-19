@@ -24,6 +24,7 @@ const (
 	VersionTLS10 = 0x0301
 	VersionTLS11 = 0x0302
 	VersionTLS12 = 0x0303
+	VersionTLS13 = 0x0304
 )
 
 const (
@@ -72,14 +73,16 @@ const (
 const (
 	extensionServerName          uint16 = 0
 	extensionStatusRequest       uint16 = 5
-	extensionSupportedCurves     uint16 = 10
+	extensionSupportedGroups     uint16 = 10
 	extensionSupportedPoints     uint16 = 11
 	extensionSignatureAlgorithms uint16 = 13
 	extensionALPN                uint16 = 16
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
-	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
-	extensionRenegotiationInfo   uint16 = 0xff01
+	extensionKeyShare            uint16 = 40
+
+	extensionNextProtoNeg      uint16 = 13172 // not IANA assigned
+	extensionRenegotiationInfo uint16 = 0xff01
 )
 
 // TLS signaling cipher suite values
@@ -87,7 +90,8 @@ const (
 	scsvRenegotiation uint16 = 0x00ff
 )
 
-// CurveID is the type of a TLS identifier for an elliptic curve. See
+// CurveID is the type of a TLS identifier for a named group. TLS up to 1.2 uses
+// this only for elliptic curves. TLS 1.3 extended it to Finite Field Groups. See
 // http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 type CurveID uint16
 
@@ -96,6 +100,11 @@ const (
 	CurveP384 CurveID = 24
 	CurveP521 CurveID = 25
 )
+
+type keyShare struct {
+	group CurveID
+	data  []byte
+}
 
 // TLS Elliptic Curve Point Formats
 // http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
