@@ -4,7 +4,11 @@
 
 package tls
 
-import "bytes"
+import (
+	"bytes"
+	"encoding/hex"
+	"log"
+)
 
 type clientHelloMsg struct {
 	raw                          []byte
@@ -506,14 +510,15 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				if len(d) < 4 {
 					return false
 				}
-				dataLen := int(d[1])<<8 | int(d[2])
-				if dataLen == 0 || 2+dataLen > len(d) {
+				dataLen := int(d[2])<<8 | int(d[3])
+				if dataLen == 0 || 4+dataLen > len(d) {
 					return false
 				}
 				m.keyShares = append(m.keyShares, keyShare{
 					group: CurveID(d[0])<<8 | CurveID(d[1]),
-					data:  d[2 : 2+dataLen],
+					data:  d[4 : 4+dataLen],
 				})
+				d = d[4+dataLen:]
 			}
 		}
 		data = data[length:]
@@ -537,6 +542,7 @@ type serverHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocol                 string
+	keyShare                     keyShare
 }
 
 func (m *serverHelloMsg) equal(i interface{}) bool {
@@ -569,23 +575,12 @@ func (m *serverHelloMsg) equal(i interface{}) bool {
 		m.alpnProtocol == m1.alpnProtocol
 }
 
-func (m *serverHelloMsg) marshal() []byte {
-	if m.raw != nil {
-		return m.raw
-	}
-
-	length := 38 + len(m.sessionId)
-	numExtensions := 0
-	extensionsLength := 0
-
-	nextProtoLen := 0
+func (m *serverHelloMsg) encExtensionsLen() (numExtensions, extensionsLength int) {
 	if m.nextProtoNeg {
 		numExtensions++
 		for _, v := range m.nextProtos {
-			nextProtoLen += len(v)
+			extensionsLength += len(v) + 1
 		}
-		nextProtoLen += len(m.nextProtos)
-		extensionsLength += nextProtoLen
 	}
 	if m.ocspStapling {
 		numExtensions++
@@ -604,13 +599,29 @@ func (m *serverHelloMsg) marshal() []byte {
 		extensionsLength += 2 + 1 + alpnLen
 		numExtensions++
 	}
-	sctLen := 0
 	if len(m.scts) > 0 {
 		for _, sct := range m.scts {
-			sctLen += len(sct) + 2
+			extensionsLength += len(sct) + 2
 		}
-		extensionsLength += 2 + sctLen
+		extensionsLength += 2
 		numExtensions++
+	}
+	return
+}
+
+func (m *serverHelloMsg) marshal() []byte {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	var length, numExtensions, extensionsLength int
+	if m.vers == VersionTLS13 {
+		length = 36
+		numExtensions = 1
+		extensionsLength = 4 + len(m.keyShare.data)
+	} else {
+		length = 38 + len(m.sessionId)
+		numExtensions, extensionsLength = m.encExtensionsLen()
 	}
 
 	if numExtensions > 0 {
@@ -626,26 +637,54 @@ func (m *serverHelloMsg) marshal() []byte {
 	x[4] = uint8(m.vers >> 8)
 	x[5] = uint8(m.vers)
 	copy(x[6:38], m.random)
-	x[38] = uint8(len(m.sessionId))
-	copy(x[39:39+len(m.sessionId)], m.sessionId)
-	z := x[39+len(m.sessionId):]
+	z := x[38:]
+	if m.vers != VersionTLS13 {
+		z[0] = uint8(len(m.sessionId))
+		copy(z[1:1+len(m.sessionId)], m.sessionId)
+		z = z[1+len(m.sessionId):]
+	}
 	z[0] = uint8(m.cipherSuite >> 8)
 	z[1] = uint8(m.cipherSuite)
-	z[2] = m.compressionMethod
+	z = z[2:]
+	if m.vers != VersionTLS13 {
+		z[0] = m.compressionMethod
+		z = z[1:]
+	}
 
-	z = z[3:]
 	if numExtensions > 0 {
 		z[0] = byte(extensionsLength >> 8)
 		z[1] = byte(extensionsLength)
 		z = z[2:]
 	}
+
+	if m.vers != VersionTLS13 {
+		m.marshalEncExtensions(z)
+	} else {
+		z[0] = byte(extensionKeyShare >> 8)
+		z[1] = byte(extensionKeyShare)
+		z[2] = byte((len(m.keyShare.data) + 4) >> 8)
+		z[3] = byte(len(m.keyShare.data) + 4)
+		z[4] = byte(m.keyShare.group >> 8)
+		z[5] = byte(m.keyShare.group)
+		z[6] = byte(len(m.keyShare.data) >> 8)
+		z[7] = byte(len(m.keyShare.data))
+		copy(z[8:], m.keyShare.data)
+	}
+	println(hex.Dump(z))
+
+	m.raw = x
+
+	return x
+}
+
+func (m *serverHelloMsg) marshalEncExtensions(z []byte) {
 	if m.nextProtoNeg {
 		z[0] = byte(extensionNextProtoNeg >> 8)
 		z[1] = byte(extensionNextProtoNeg & 0xff)
-		z[2] = byte(nextProtoLen >> 8)
-		z[3] = byte(nextProtoLen)
+		x := z[2:]
 		z = z[4:]
 
+		nextProtoLen := 0
 		for _, v := range m.nextProtos {
 			l := len(v)
 			if l > 255 {
@@ -654,7 +693,12 @@ func (m *serverHelloMsg) marshal() []byte {
 			z[0] = byte(l)
 			copy(z[1:], []byte(v[0:l]))
 			z = z[1+l:]
+			nextProtoLen += l + 1
 		}
+
+		x[0] = byte(nextProtoLen >> 8)
+		x[1] = byte(nextProtoLen)
+
 	}
 	if m.ocspStapling {
 		z[0] = byte(extensionStatusRequest >> 8)
@@ -690,27 +734,27 @@ func (m *serverHelloMsg) marshal() []byte {
 		copy(z[7:], []byte(m.alpnProtocol))
 		z = z[7+alpnLen:]
 	}
-	if sctLen > 0 {
+	if len(m.scts) > 0 {
 		z[0] = byte(extensionSCT >> 8)
 		z[1] = byte(extensionSCT)
-		l := sctLen + 2
-		z[2] = byte(l >> 8)
-		z[3] = byte(l)
-		z[4] = byte(sctLen >> 8)
-		z[5] = byte(sctLen)
+		x := z[2:]
 
 		z = z[6:]
+		sctLen := 0
 		for _, sct := range m.scts {
 			z[0] = byte(len(sct) >> 8)
 			z[1] = byte(len(sct))
 			copy(z[2:], sct)
 			z = z[len(sct)+2:]
+			sctLen += len(sct) + 2
 		}
+
+		l := sctLen + 2
+		x[0] = byte(l >> 8)
+		x[1] = byte(l)
+		x[2] = byte(sctLen >> 8)
+		x[3] = byte(sctLen)
 	}
-
-	m.raw = x
-
-	return x
 }
 
 func (m *serverHelloMsg) unmarshal(data []byte) bool {
