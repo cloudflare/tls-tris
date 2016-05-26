@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,6 +145,7 @@ type halfConn struct {
 
 func (hc *halfConn) setErrorLocked(err error) error {
 	hc.err = err
+	debug.PrintStack()
 	return err
 }
 

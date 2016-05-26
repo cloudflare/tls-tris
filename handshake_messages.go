@@ -520,6 +520,8 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				})
 				d = d[4+dataLen:]
 			}
+		case 0xff02: // NSS Draft Version Extension
+			log.Println("tls: 1.3 draft version:", (int(data[0])<<8)+int(data[1]))
 		}
 		data = data[length:]
 	}
