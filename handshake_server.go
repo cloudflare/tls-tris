@@ -147,6 +147,11 @@ Curves:
 		for _, supported := range preferredCurves {
 			if supported == curve {
 				supportedCurve = true
+				hs.hello.keyShare, err = c.config.generateKeyShare(curve)
+				if err != nil {
+					c.sendAlert(alertInternalError)
+					return false, err
+				}
 				break Curves
 			}
 		}
@@ -791,7 +796,7 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 			if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
 				continue
 			}
-			if version == VersionTLS13 && candidate.flags&suiteTLS12 == 0 {
+			if version == VersionTLS13 && candidate.flags&suiteECDHE == 0 && candidate.flags&suiteTLS12 == 0 {
 				// TODO(filippo): support other ciphersuites under 1.3
 				continue
 			}

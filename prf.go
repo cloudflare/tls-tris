@@ -132,6 +132,8 @@ func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secr
 			return prf12(sha512.New384), crypto.SHA384
 		}
 		return prf12(sha256.New), crypto.SHA256
+	case VersionTLS13:
+		return prf12(sha256.New), crypto.SHA256 // TODO(filippo)
 	default:
 		panic("unknown version")
 	}
