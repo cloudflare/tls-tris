@@ -11,6 +11,7 @@ import (
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -411,6 +412,26 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			b.resize(recordHeaderLen + explicitIVLen + len(prefix) + len(finalBlock))
 			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen:], prefix)
 			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen+len(prefix):], finalBlock)
+		case *tls13AEAD:
+			nonce := make([]byte, len(c.IV))
+			copy(nonce, c.IV)
+			offset := len(nonce) - len(hc.seq)
+			for i, s := range hc.seq {
+				nonce[offset+i] = nonce[offset+i] ^ s
+			}
+
+			realType := b.data[0]
+			b.data[0] = byte(recordTypeApplicationData) // opaque_type
+
+			b.resize(recordHeaderLen + len(payload) + 1 + c.aead.Overhead())
+			payload = b.data[recordHeaderLen : recordHeaderLen+len(payload)+1]
+			payload[len(payload)-1] = realType
+
+			println("Nonce:")
+			println(hex.Dump(nonce))
+			println("Plaintext:")
+			println(hex.Dump(payload))
+			c.aead.Seal(payload[:0], nonce, payload, nil)
 		default:
 			panic("unknown cipher type")
 		}
@@ -421,6 +442,9 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 	b.data[3] = byte(n >> 8)
 	b.data[4] = byte(n)
 	hc.incSeq()
+
+	println("Encrypted payload:")
+	println(hex.Dump(b.data))
 
 	return true, 0
 }
@@ -785,6 +809,8 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 			// The MAC is appended before padding so affects the
 			// payload size directly.
 			payloadBytes -= macSize
+		case *tls13AEAD:
+			payloadBytes -= ciph.aead.Overhead() + 3
 		default:
 			panic("unknown cipher type")
 		}
@@ -806,7 +832,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		explicitIVIsSeq := false
 
 		var cbc cbcMode
-		if c.out.version >= VersionTLS11 {
+		if c.out.version >= VersionTLS11 && c.out.version < VersionTLS13 {
 			var ok bool
 			if cbc, ok = c.out.cipher.(cbcMode); ok {
 				explicitIVLen = cbc.BlockSize()
@@ -834,6 +860,10 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		if vers == 0 {
 			// Some TLS servers fail if the record version is
 			// greater than TLS 1.0 for the initial ClientHello.
+			vers = VersionTLS10
+		}
+		if vers >= VersionTLS13 {
+			// TLS 1.3 froze the record version at { 3, 1 }
 			vers = VersionTLS10
 		}
 		b.data[1] = byte(vers >> 8)

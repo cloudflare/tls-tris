@@ -6,7 +6,6 @@ package tls
 
 import (
 	"bytes"
-	"encoding/hex"
 	"log"
 )
 
@@ -531,6 +530,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 
 type serverHelloMsg struct {
 	raw                          []byte
+	rawEncExtensions             []byte
 	vers                         uint16
 	random                       []byte
 	sessionId                    []byte
@@ -544,7 +544,7 @@ type serverHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocol                 string
-	keyShare                     keyShare
+	keyShare                     *keyShare
 }
 
 func (m *serverHelloMsg) equal(i interface{}) bool {
@@ -660,7 +660,7 @@ func (m *serverHelloMsg) marshal() []byte {
 	}
 
 	if m.vers != VersionTLS13 {
-		m.marshalEncExtensions(z)
+		m.writeEncExtensions(z)
 	} else {
 		z[0] = byte(extensionKeyShare >> 8)
 		z[1] = byte(extensionKeyShare)
@@ -672,14 +672,36 @@ func (m *serverHelloMsg) marshal() []byte {
 		z[7] = byte(len(m.keyShare.data))
 		copy(z[8:], m.keyShare.data)
 	}
-	println(hex.Dump(z))
 
 	m.raw = x
 
 	return x
 }
 
-func (m *serverHelloMsg) marshalEncExtensions(z []byte) {
+func (m *serverHelloMsg) marshalEncExtensions() []byte {
+	if m.rawEncExtensions != nil {
+		return m.rawEncExtensions
+	}
+
+	numExtensions, extensionsLength := m.encExtensionsLen()
+	extensionsLength += 4 * numExtensions
+	length := 2 + extensionsLength
+
+	x := make([]byte, 4+length)
+	x[0] = typeEncryptedExtensions
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+	x[4] = uint8(extensionsLength >> 8)
+	x[5] = uint8(extensionsLength)
+	m.writeEncExtensions(x[6:])
+
+	m.rawEncExtensions = x
+
+	return x
+}
+
+func (m *serverHelloMsg) writeEncExtensions(z []byte) {
 	if m.nextProtoNeg {
 		z[0] = byte(extensionNextProtoNeg >> 8)
 		z[1] = byte(extensionNextProtoNeg & 0xff)
@@ -903,8 +925,9 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 }
 
 type certificateMsg struct {
-	raw          []byte
-	certificates [][]byte
+	raw            []byte
+	requestContext bool
+	certificates   [][]byte
 }
 
 func (m *certificateMsg) equal(i interface{}) bool {
@@ -928,18 +951,26 @@ func (m *certificateMsg) marshal() (x []byte) {
 	}
 
 	length := 3 + 3*len(m.certificates) + i
+	if m.requestContext {
+		length += 1
+	}
 	x = make([]byte, 4+length)
 	x[0] = typeCertificate
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
 
-	certificateOctets := length - 3
-	x[4] = uint8(certificateOctets >> 16)
-	x[5] = uint8(certificateOctets >> 8)
-	x[6] = uint8(certificateOctets)
+	z := x[4:]
+	if m.requestContext {
+		z = z[1:]
+	}
 
-	y := x[7:]
+	certificateOctets := 3*len(m.certificates) + i
+	z[0] = uint8(certificateOctets >> 16)
+	z[1] = uint8(certificateOctets >> 8)
+	z[2] = uint8(certificateOctets)
+
+	y := z[3:]
 	for _, slice := range m.certificates {
 		y[0] = uint8(len(slice) >> 16)
 		y[1] = uint8(len(slice) >> 8)

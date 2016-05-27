@@ -52,7 +52,11 @@ func (c *Conn) serverHandshake() error {
 	}
 
 	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
-	if isResume {
+	if hs.hello.vers == VersionTLS13 {
+		if err := hs.doTLS13Handshake(); err != nil {
+			return err
+		}
+	} else if isResume {
 		// The client has included a session ticket and so we do an abbreviated handshake.
 		if err := hs.doResumeHandshake(); err != nil {
 			return err
@@ -126,32 +130,13 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 
 	hs.hello = new(serverHelloMsg)
 
-	keyShares := make(map[CurveID][]byte)
-	for _, keyShare := range hs.clientHello.keyShares {
-		if _, ok := keyShares[keyShare.group]; ok {
-			c.sendAlert(alertIllegalParameter)
-			return false, errors.New("tls: duplicate key share for the same type")
-		}
-		// TODO(filippo): check this group is listed in supportedCurves.
-		keyShares[keyShare.group] = keyShare.data
-	}
-
 	supportedCurve := false
 	preferredCurves := config.curvePreferences()
 Curves:
 	for _, curve := range hs.clientHello.supportedCurves {
-		if _, ok := keyShares[curve]; c.vers == VersionTLS13 && !ok {
-			// TODO(filippo): support the Hello Retry Request fallback instead.
-			continue
-		}
 		for _, supported := range preferredCurves {
 			if supported == curve {
 				supportedCurve = true
-				hs.hello.keyShare, err = c.config.generateKeyShare(curve)
-				if err != nil {
-					c.sendAlert(alertInternalError)
-					return false, err
-				}
 				break Curves
 			}
 		}
@@ -199,7 +184,7 @@ Curves:
 		return false, errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
-	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
+	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported && c.vers < VersionTLS13
 	hs.hello.compressionMethod = compressionNone
 	if len(hs.clientHello.serverName) > 0 {
 		c.serverName = hs.clientHello.serverName
@@ -271,6 +256,7 @@ Curves:
 	}
 
 	for _, id := range preferenceList {
+		// TODO(filippo): check against signature_algorithms
 		if hs.setCipherSuite(id, supportedList, c.vers) {
 			break
 		}
@@ -796,8 +782,7 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 			if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
 				continue
 			}
-			if version == VersionTLS13 && candidate.flags&suiteECDHE == 0 && candidate.flags&suiteTLS12 == 0 {
-				// TODO(filippo): support other ciphersuites under 1.3
+			if version == VersionTLS13 && candidate.flags&suiteECDHE == 0 {
 				continue
 			}
 			hs.suite = candidate
