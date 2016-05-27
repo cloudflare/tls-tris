@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	".."
+	"github.com/FiloSottile/tls-tris"
 )
 
 func main() {
