@@ -149,7 +149,9 @@ type halfConn struct {
 
 func (hc *halfConn) setErrorLocked(err error) error {
 	hc.err = err
-	debug.PrintStack()
+	if err != nil && err != io.EOF {
+		debug.PrintStack()
+	}
 	return err
 }
 
@@ -259,7 +261,9 @@ type cbcMode interface {
 // decrypt checks and strips the mac and decrypts the data in b. Returns a
 // success boolean, the number of bytes to skip from the start of the record in
 // order to get the application payload, and an optional alert value.
-func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert) {
+func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, typ recordType, alertValue alert) {
+	typ = recordType(b.data[0])
+
 	// pull out payload
 	payload := b.data[recordHeaderLen:]
 
@@ -279,7 +283,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		case cipher.AEAD:
 			explicitIVLen = 8
 			if len(payload) < explicitIVLen {
-				return false, 0, alertBadRecordMAC
+				return false, 0, 0, alertBadRecordMAC
 			}
 			nonce := payload[:8]
 			payload = payload[8:]
@@ -292,7 +296,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			var err error
 			payload, err = c.Open(payload[:0], nonce, payload, hc.additionalData[:])
 			if err != nil {
-				return false, 0, alertBadRecordMAC
+				return false, 0, 0, alertBadRecordMAC
 			}
 			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
@@ -302,7 +306,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			}
 
 			if len(payload)%blockSize != 0 || len(payload) < roundUp(explicitIVLen+macSize+1, blockSize) {
-				return false, 0, alertBadRecordMAC
+				return false, 0, 0, alertBadRecordMAC
 			}
 
 			if explicitIVLen > 0 {
@@ -327,6 +331,25 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			//
 			// However, our behavior matches OpenSSL, so we leak
 			// only as much as they do.
+		case *tls13AEAD:
+			nonce := make([]byte, len(c.IV))
+			copy(nonce, c.IV)
+			offset := len(nonce) - len(hc.seq)
+			for i, s := range hc.seq {
+				nonce[offset+i] = nonce[offset+i] ^ s
+			}
+			println("Nonce:")
+			println(hex.Dump(nonce))
+
+			payload, err := c.aead.Open(payload[:0], nonce, payload, nil)
+			if err != nil {
+				return false, 0, 0, alertBadRecordMAC
+			}
+			println("Plaintext:")
+			println(hex.Dump(payload))
+
+			typ = recordType(payload[len(payload)-1])
+			b.resize(recordHeaderLen + len(payload) - 1)
 		default:
 			panic("unknown cipher type")
 		}
@@ -335,7 +358,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 	// check, strip mac
 	if hc.mac != nil {
 		if len(payload) < macSize {
-			return false, 0, alertBadRecordMAC
+			return false, 0, 0, alertBadRecordMAC
 		}
 
 		// strip mac off payload, b.data
@@ -347,13 +370,13 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], payload[:n])
 
 		if subtle.ConstantTimeCompare(localMAC, remoteMAC) != 1 || paddingGood != 255 {
-			return false, 0, alertBadRecordMAC
+			return false, 0, 0, alertBadRecordMAC
 		}
 		hc.inDigestBuf = localMAC
 	}
 	hc.incSeq()
 
-	return true, recordHeaderLen + explicitIVLen, 0
+	return true, recordHeaderLen + explicitIVLen, typ, 0
 }
 
 // padToBlockSize calculates the needed padding block, if any, for a payload.
@@ -622,7 +645,7 @@ Again:
 
 	vers := uint16(b.data[1])<<8 | uint16(b.data[2])
 	n := int(b.data[3])<<8 | int(b.data[4])
-	if c.haveVers && vers != c.vers {
+	if c.haveVers && vers != c.vers && c.vers != VersionTLS13 {
 		c.sendAlert(alertProtocolVersion)
 		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
 		return c.in.setErrorLocked(c.newRecordHeaderError(msg))
@@ -654,7 +677,7 @@ Again:
 
 	// Process message.
 	b, c.rawInput = c.in.splitBlock(b, recordHeaderLen+n)
-	ok, off, err := c.in.decrypt(b)
+	ok, off, typ, err := c.in.decrypt(b)
 	if !ok {
 		c.in.setErrorLocked(c.sendAlert(err))
 	}
@@ -710,7 +733,7 @@ Again:
 
 	case recordTypeHandshake:
 		// TODO(rsc): Should at least pick off connection close.
-		if typ != want && !(c.isClient && c.config.Renegotiation != RenegotiateNever) {
+		if typ != want && !(c.isClient && c.config.Renegotiation != RenegotiateNever && c.vers <= VersionTLS13) {
 			return c.in.setErrorLocked(c.sendAlert(alertNoRenegotiation))
 		}
 		c.hand.Write(data)

@@ -8,11 +8,10 @@ import (
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"hash"
-
-	"golang.org/x/crypto/hkdf"
 )
 
 func (hs *serverHandshakeState) doTLS13Handshake() error {
@@ -92,17 +91,18 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
+	xES := hkdfExtract(sha256.New, ES, nil)
 	handshakeCtxt := hs.finishedHash.Sum()
-	cKey := HKDFExpandLabel(sha256.New, nil, ES, handshakeCtxt, "handshake key expansion, client write key", 16)
-	println("client write key:")
+	cKey := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, client write key", 16)
+	println("Client Write Key:")
 	println(hex.Dump(cKey))
-	cIV := HKDFExpandLabel(sha256.New, nil, ES, handshakeCtxt, "handshake key expansion, client write iv", 12) // Lowercase because NSS
+	cIV := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, client write iv", 12) // Lowercase because NSS
 	println("Client Write IV:")
 	println(hex.Dump(cIV))
-	sKey := HKDFExpandLabel(sha256.New, nil, ES, handshakeCtxt, "handshake key expansion, server write key", 16)
+	sKey := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, server write key", 16)
 	println("Server Write Key:")
 	println(hex.Dump(sKey))
-	sIV := HKDFExpandLabel(sha256.New, nil, ES, handshakeCtxt, "handshake key expansion, server write iv", 12) // Lowercase because NSS
+	sIV := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, server write iv", 12) // Lowercase because NSS
 	println("Server Write IV:")
 	println(hex.Dump(sIV))
 
@@ -133,15 +133,9 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		sigType = signatureECDSA
 	}
 	hashType, err := pickTLS12HashForSignature(sigType, hs.clientHello.signatureAndHashes)
-	hash := hs.finishedHash.Sum()
-	println("Finished Hash:")
-	println(hex.Dump(hash))
-	paddedHash := padDigitallySigned("TLS 1.3, server CertificateVerify", hash)
-	hashPaddedHash := sha256.Sum256(paddedHash)
-	println("Hash of Padded Hash:")
-	println(hex.Dump(hashPaddedHash[:]))
 
-	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), hashPaddedHash[:], nil)
+	toSign := prepareDigitallySigned(sha256.New, "TLS 1.3, server CertificateVerify", hs.finishedHash.Sum())
+	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], nil)
 	if err != nil {
 		return err
 	}
@@ -157,22 +151,32 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
 		return err
 	}
-	mSS := HKDFExpandLabel(sha256.New, nil, ES, hs.finishedHash.Sum(), "expanded static secret", sha256.Size)
+
+	mSS := hkdfExpandLabel(sha256.New, xES, hs.finishedHash.Sum(), "expanded static secret", sha256.Size)
 	println("mSS:")
 	println(hex.Dump(mSS))
-	mES := HKDFExpandLabel(sha256.New, nil, ES, hs.finishedHash.Sum(), "expanded ephemeral secret", sha256.Size)
+	mES := hkdfExpandLabel(sha256.New, xES, hs.finishedHash.Sum(), "expanded ephemeral secret", sha256.Size)
 	println("mES:")
 	println(hex.Dump(mES))
-	serverFinishedKey := HKDFExpandLabel(sha256.New, mSS, mES, nil, "server finished", sha256.Size)
+	masterSecret := hkdfExtract(sha256.New, mES, mSS)
+	serverFinishedKey := hkdfExpandLabel(sha256.New, masterSecret, nil, "server finished", sha256.Size)
 	println("Server Finished Key:")
 	println(hex.Dump(serverFinishedKey))
+	clientFinishedKey := hkdfExpandLabel(sha256.New, masterSecret, nil, "client finished", sha256.Size)
+	println("Client Finished Key:")
+	println(hex.Dump(clientFinishedKey))
+	trafficSecret0 := hkdfExpandLabel(sha256.New, masterSecret, hs.finishedHash.Sum(), "traffic secret", sha256.Size)
+	println("Traffic Secret:")
+	println(hex.Dump(trafficSecret0))
+
 	h = hmac.New(sha256.New, serverFinishedKey)
 	h.Write(hs.finishedHash.Sum())
 	verifyData := h.Sum(nil)
-	finishedMsg := &finishedMsg{
+	serverFinished := &finishedMsg{
 		verifyData: verifyData,
 	}
-	if _, err := c.writeRecord(recordTypeHandshake, finishedMsg.marshal()); err != nil {
+	hs.finishedHash.Write(serverFinished.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, serverFinished.marshal()); err != nil {
 		return err
 	}
 
@@ -180,15 +184,64 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	return errors.New("WIP")
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+
+	clientFinished, ok := msg.(*finishedMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(clientFinished, msg)
+	}
+	println("Client Finished received:")
+	println(hex.Dump(clientFinished.verifyData))
+	h = hmac.New(sha256.New, clientFinishedKey)
+	h.Write(hs.finishedHash.Sum())
+	expectedVerifyData := h.Sum(nil)
+	println("Client Finished expected:")
+	println(hex.Dump(expectedVerifyData))
+	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
+		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: client's Finished message is incorrect")
+	}
+
+	handshakeCtxt = hs.finishedHash.Sum()
+	cKey = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, client write key", 16)
+	println("Client Write Key:")
+	println(hex.Dump(cKey))
+	cIV = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, client write iv", 12) // Lowercase because NSS
+	println("Client Write IV:")
+	println(hex.Dump(cIV))
+	sKey = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, server write key", 16)
+	println("Server Write Key:")
+	println(hex.Dump(sKey))
+	sIV = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, server write iv", 12) // Lowercase because NSS
+	println("Server Write IV:")
+	println(hex.Dump(sIV))
+
+	clientCipher = aeadTLS13(cKey, cIV)
+	serverCipher = aeadTLS13(sKey, sIV)
+
+	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
+	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
+	c.in.changeCipherSpec()
+	c.out.changeCipherSpec()
+
+	return nil
 }
 
-func padDigitallySigned(context string, data []byte) []byte {
-	padding := bytes.Repeat([]byte{32}, 64)
-	padding = append(padding, context...)
-	padding = append(padding, 0)
-	padding = append(padding, data...)
-	return padding
+func prepareDigitallySigned(hash func() hash.Hash, context string, data []byte) []byte {
+	message := bytes.Repeat([]byte{32}, 64)
+	message = append(message, context...)
+	message = append(message, 0)
+	message = append(message, data...)
+	println("Padded message to sign:")
+	println(hex.Dump(message))
+	h := hash()
+	h.Write(message)
+	return h.Sum(nil)
 }
 
 func (c *Config) generateKeyShare(curveID CurveID) (elliptic.Curve, []byte, *keyShare, error) {
@@ -228,7 +281,7 @@ func deriveECDHESecret(curve elliptic.Curve, ks, pk []byte) []byte {
 	return x1Bytes
 }
 
-func HKDFExpandLabel(hash func() hash.Hash, salt, secret, hashValue []byte, label string, L int) []byte {
+func hkdfExpandLabel(hash func() hash.Hash, prk, hashValue []byte, label string, L int) []byte {
 	hkdfLabel := make([]byte, 4+len("TLS 1.3, ")+len(label)+len(hashValue))
 	hkdfLabel[0] = byte(L >> 8)
 	hkdfLabel[1] = byte(L)
@@ -243,12 +296,7 @@ func HKDFExpandLabel(hash func() hash.Hash, salt, secret, hashValue []byte, labe
 	println("Label:")
 	println(hex.Dump(hkdfLabel))
 
-	res := make([]byte, L)
-	if salt == nil {
-		salt = make([]byte, hash().Size())
-	}
-	hkdf.New(hash, secret, salt, hkdfLabel).Read(res)
-	return res
+	return hkdfExpand(hash, prk, hkdfLabel, L)
 }
 
 type tls13AEAD struct {

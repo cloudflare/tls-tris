@@ -3,6 +3,7 @@
 package main
 
 import (
+	"io/ioutil"
 	"log"
 	"os"
 
@@ -32,6 +33,11 @@ func main() {
 		}
 		if _, err := conn.Write([]byte("Do you want to play a game?")); err != nil {
 			log.Println(err)
+		}
+		if answer, err := ioutil.ReadAll(conn); err != nil {
+			log.Println(err)
+		} else {
+			log.Printf("%q\n", answer)
 		}
 		if err := conn.Close(); err != nil {
 			log.Println(err)
