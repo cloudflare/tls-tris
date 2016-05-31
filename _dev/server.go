@@ -3,14 +3,16 @@
 package main
 
 import (
-	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/FiloSottile/tls-tris"
 )
 
 func main() {
+	http.Handle("/", http.FileServer(http.Dir(".")))
+
 	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
 		log.Fatal(err)
@@ -25,22 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer l.Close()
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		if _, err := conn.Write([]byte("Do you want to play a game?")); err != nil {
-			log.Println(err)
-		}
-		if answer, err := ioutil.ReadAll(conn); err != nil {
-			log.Println(err)
-		} else {
-			log.Printf("%q\n", answer)
-		}
-		if err := conn.Close(); err != nil {
-			log.Println(err)
-		}
-	}
+
+	s := &http.Server{}
+	log.Println(s.Serve(l))
 }
