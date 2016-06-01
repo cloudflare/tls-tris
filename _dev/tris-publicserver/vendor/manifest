@@ -1,0 +1,40 @@
+{
+	"version": 0,
+	"dependencies": [
+		{
+			"importpath": "golang.org/x/crypto/ocsp",
+			"repository": "https://go.googlesource.com/crypto",
+			"vcs": "git",
+			"revision": "5bcd134fee4dd1475da17714aac19c0aa0142e2f",
+			"branch": "master",
+			"path": "/ocsp",
+			"notests": true
+		},
+		{
+			"importpath": "golang.org/x/net/context",
+			"repository": "https://go.googlesource.com/net",
+			"vcs": "git",
+			"revision": "c4c3ea71919de159c9e246d7be66deb7f0a39a58",
+			"branch": "master",
+			"path": "/context",
+			"notests": true
+		},
+		{
+			"importpath": "golang.org/x/time/rate",
+			"repository": "https://go.googlesource.com/time",
+			"vcs": "git",
+			"revision": "a4bde12657593d5e90d0533a3e4fd95e635124cb",
+			"branch": "master",
+			"path": "/rate",
+			"notests": true
+		},
+		{
+			"importpath": "rsc.io/letsencrypt",
+			"repository": "https://github.com/rsc/letsencrypt",
+			"vcs": "git",
+			"revision": "a019c9e6fce0c7132679dea13bd8df7c86ffe26c",
+			"branch": "master",
+			"notests": true
+		}
+	]
+}

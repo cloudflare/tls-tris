@@ -1,5 +1,3 @@
-//+build ignore
-
 package main
 
 import (
@@ -19,9 +17,10 @@ func main() {
 	}
 
 	l, err := tls.Listen("tcp", os.Args[1], &tls.Config{
-		MinVersion:   tls.VersionTLS13,
+		MinVersion:   tls.VersionTLS10,
 		MaxVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{"h2"},
 	})
 	if err != nil {
 		log.Fatal(err)
