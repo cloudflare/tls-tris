@@ -56,7 +56,7 @@ func (c *Conn) clientHandshake() error {
 	}
 
 	hello := &clientHelloMsg{
-		vers:                         c.config.maxVersion(),
+		vers:                         c.config.maxVersion(true),
 		compressionMethods:           []uint8{compressionNone},
 		random:                       make([]byte, 32),
 		ocspStapling:                 true,
@@ -133,7 +133,7 @@ NextCipherSuite:
 			}
 
 			versOk := candidateSession.vers >= c.config.minVersion() &&
-				candidateSession.vers <= c.config.maxVersion()
+				candidateSession.vers <= c.config.maxVersion(true)
 			if versOk && cipherSuiteOk {
 				session = candidateSession
 			}
@@ -166,7 +166,7 @@ NextCipherSuite:
 		return unexpectedMessageError(serverHello, msg)
 	}
 
-	vers, ok := c.config.mutualVersion(serverHello.vers)
+	vers, ok := c.config.mutualVersion(serverHello.vers, true)
 	if !ok || vers < VersionTLS10 {
 		// TLS 1.0 is the minimum version supported as a client.
 		c.sendAlert(alertProtocolVersion)

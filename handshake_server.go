@@ -121,7 +121,7 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		c.sendAlert(alertUnexpectedMessage)
 		return false, unexpectedMessageError(hs.clientHello, msg)
 	}
-	c.vers, ok = config.mutualVersion(hs.clientHello.vers)
+	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
@@ -271,7 +271,7 @@ Curves:
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
 			// The client is doing a fallback connection.
-			if hs.clientHello.vers < c.config.maxVersion() {
+			if hs.clientHello.vers < c.config.maxVersion(false) {
 				c.sendAlert(alertInappropriateFallback)
 				return false, errors.New("tls: client using inappropriate protocol fallback")
 			}

@@ -13,11 +13,29 @@ DO NOT USE THIS FOR THE SAKE OF EVERYTHING THAT'S GOOD AND JUST.
 
 [![Build Status](https://travis-ci.org/FiloSottile/tls-tris.svg?branch=master)](https://travis-ci.org/FiloSottile/tls-tris)
 
+## Usage
+
+Since `crypto/tls` is very deeply (and not that elegantly) coupled with the Go stdlib,
+tls-tris shouldn't be used as an external package.  It also is impossible to vendor it
+as `crypto/tls` because stdlib packages would import the standard one and mismatch.
+
+So, to build with tls-tris, you need to use a custom GOROOT.
+A script is provided that will take care of it for you: `./_dev/go.sh`.
+Just use that instead of the `go` tool.
+
+```
+./_dev/go.sh build github.com/mholt/caddy
+```
+
+Since we assume that if you are using tls-tris you want 1.3, a hardcoded MaxVersion
+of 1.2 is overridden to 1.3 automatically.
+
 ## Running the NSS test client
 
 ```
 go run generate_cert.go -ecdsa-curve P256 -host 192.168.64.1 -duration 87600h
-go run _dev/tris-localserver/server.go 192.168.64.1:4433
+make -C _dev bin/tris-localserver
+TLSDEBUG=1 ./_dev/bin/tris-localserver 192.168.64.1:4433
 ```
 
 ```

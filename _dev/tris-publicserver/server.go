@@ -26,6 +26,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	http.Handle("/", NewReverseProxy(*target))
+
 	var m letsencrypt.Manager
 	m.SetHosts([]string{*hostname})
 	if *email != "" {
@@ -37,19 +39,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	l, err := tls.Listen("tcp", ":https", &tls.Config{
-		MinVersion:     tls.VersionTLS10,
-		MaxVersion:     tls.VersionTLS13,
+	tlsConfig := &tls.Config{
 		GetCertificate: m.GetCertificate,
-		NextProtos:     []string{"h2"},
-	})
+	}
+	l, err := tls.Listen("tcp", ":https", tlsConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer l.Close()
 
-	s := &http.Server{}
-	http.Handle("/", NewReverseProxy(*target))
+	s := &http.Server{
+		TLSConfig: tlsConfig,
+	}
 	log.Println(s.Serve(l))
 }
 
