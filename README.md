@@ -17,10 +17,17 @@ DO NOT USE THIS FOR THE SAKE OF EVERYTHING THAT'S GOOD AND JUST.
 
 ```
 go run generate_cert.go -ecdsa-curve P256 -host 192.168.64.1 -duration 87600h
-go run _dev/server.go 192.168.64.1:4433
+go run _dev/tris-localserver/server.go 192.168.64.1:4433
 ```
 
 ```
 docker build -t tstclnt _dev/tstclnt
 docker run -it tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
 ```
+
+## Testing with Firefox
+
+1. Download the latest Firefox Nightly
+1. Navigate to about:config and set `security.tls.version.max` to `4`
+1. Navigate to https://tris.filippo.io/
+
