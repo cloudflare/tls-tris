@@ -33,8 +33,9 @@ const (
 	recordHeaderLen = 5            // record header length
 	maxHandshake    = 65536        // maximum handshake we support (protocol max is 16 MB)
 
-	minVersion = VersionTLS10
-	maxVersion = VersionTLS12
+	minVersion       = VersionTLS10
+	maxClientVersion = VersionTLS12
+	maxServerVersion = VersionTLS13
 )
 
 // TLS record types.
@@ -515,9 +516,22 @@ func (c *Config) minVersion() uint16 {
 	return c.MinVersion
 }
 
-func (c *Config) maxVersion() uint16 {
+func (c *Config) maxVersion(isClient bool) uint16 {
+	maxVersion := uint16(maxServerVersion)
+	if isClient {
+		maxVersion = maxClientVersion
+	}
 	if c == nil || c.MaxVersion == 0 {
 		return maxVersion
+	}
+
+	if isClient && c.MaxVersion == VersionTLS13 {
+		return VersionTLS12
+	}
+	if !isClient && c.MaxVersion == VersionTLS12 {
+		// XXX: If you are using tls-tris, we assume you want 1.3 even
+		// if the package hardcoded VersionTLS12.
+		return VersionTLS13
 	}
 	return c.MaxVersion
 }
@@ -533,9 +547,9 @@ func (c *Config) curvePreferences() []CurveID {
 
 // mutualVersion returns the protocol version to use given the advertised
 // version of the peer.
-func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
+func (c *Config) mutualVersion(vers uint16, isClient bool) (uint16, bool) {
 	minVersion := c.minVersion()
-	maxVersion := c.maxVersion()
+	maxVersion := c.maxVersion(isClient)
 
 	if vers < minVersion {
 		return 0, false

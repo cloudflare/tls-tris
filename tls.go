@@ -37,9 +37,6 @@ func Server(conn net.Conn, config *Config) *Conn {
 // The config cannot be nil: users must set either ServerName or
 // InsecureSkipVerify in the config.
 func Client(conn net.Conn, config *Config) *Conn {
-	if config.MaxVersion == VersionTLS13 {
-		panic("VersionTLS13 is not supported on the client side.")
-	}
 	return &Conn{conn: conn, config: config, isClient: true}
 }
 
