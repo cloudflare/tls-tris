@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -129,6 +130,16 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		c.sendAlert(alertUnexpectedMessage)
 		return false, unexpectedMessageError(hs.clientHello, msg)
 	}
+
+	if os.Getenv("TLSDEBUG") == "1" {
+		var keyShares []CurveID
+		for _, ks := range hs.clientHello.keyShares {
+			keyShares = append(keyShares, ks.group)
+		}
+		fmt.Fprintf(os.Stderr, "Version: %x\nCiphersuites: %v\nGroups: %v\nkeyShares: %v\n\n",
+			hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares)
+	}
+
 	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
@@ -219,7 +230,7 @@ Curves:
 		ServerName:      hs.clientHello.serverName,
 		SupportedCurves: hs.clientHello.supportedCurves,
 		SupportedPoints: hs.clientHello.supportedPoints,
-		// TODO: add signatureAndHashes, version
+		// TODO(filippo): add signatureAndHashes, version
 	})
 	if err != nil {
 		c.sendAlert(alertInternalError)
@@ -263,8 +274,9 @@ Curves:
 		supportedList = c.config.cipherSuites()
 	}
 
+	// TODO(filippo): check signature_algorithms
+
 	for _, id := range preferenceList {
-		// TODO(filippo): check against signature_algorithms
 		if hs.setCipherSuite(id, supportedList, c.vers) {
 			break
 		}

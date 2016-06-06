@@ -49,3 +49,15 @@ docker run -it tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
 1. Navigate to about:config and set `security.tls.version.max` to `4`
 1. Navigate to https://tris.filippo.io/
 
+## Testing with mint
+
+```
+go run generate_cert.go -ecdsa-curve P256 -host localhost -duration 87600h
+make -C _dev bin/tris-localserver
+TLSDEBUG=1 ./_dev/bin/tris-localserver 127.0.0.1:4433
+```
+
+```
+go build github.com/bifurcation/mint/bin/mint-client-https
+./mint-client-https -url https://localhost:4433
+```

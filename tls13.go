@@ -20,7 +20,15 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
 
-	var ks *keyShare
+	// Group choice logic
+	//
+	// When picking the group for the handshake, priority is given to groups
+	// that the client provided a keyShare for, so to avoid a round-trip.
+	// After that the order of CurvePreferences is respected.
+	//
+	// Conveniently, this logic never affects the cipher suite choice, as
+	// crypto/tls only supports ECDHE.
+
 	for i, keyShare := range hs.clientHello.keyShares {
 		for _, otherKS := range hs.clientHello.keyShares[i+1:] {
 			if keyShare.group == otherKS.group {
@@ -39,12 +47,14 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("tls: received key share for unsupported curve")
 		}
-		if ks == nil {
-			for _, curveID := range config.curvePreferences() {
-				if curveID == keyShare.group {
-					ks = &keyShare
-					break
-				}
+	}
+
+	var ks *keyShare
+	for _, curveID := range config.curvePreferences() {
+		for _, keyShare := range hs.clientHello.keyShares {
+			if curveID == keyShare.group {
+				ks = &keyShare
+				break
 			}
 		}
 	}
@@ -67,7 +77,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 	dump("ES:", ES)
 
-	h := hmac.New(sha256.New, make([]byte, sha256.Size)) //TODO(filippo)
+	h := hmac.New(sha256.New, make([]byte, sha256.Size)) // TODO(filippo)
 	h.Write(ES)
 	dump("xES:", h.Sum(nil))
 
