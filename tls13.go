@@ -133,24 +133,28 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	sigType := signatureRSA
-	if hs.suite.flags&suiteECDSA != 0 {
-		sigType = signatureECDSA
+	// TODO(filippo): need a new, proper type for 1.3 SignatureScheme
+	// TODO(filippo): check what the client supports, add support for SHA384
+	var opts crypto.SignerOpts
+	sigType := signatureAndHash{hash: 0x04, signature: 0x03} // ecdsa_secp256r1_sha256
+	if hs.suite.flags&suiteECDSA == 0 {
+		// This is what we are supposed to use, but NSS if off-spec and mint goes with it.
+		//opts = &rsa.PSSOptions{SaltLength: sha256.Size, Hash: crypto.SHA256}
+		//sigType = signatureAndHash{hash: 0x07, signature: 0x00} // rsa_pss_sha256
+		opts = crypto.SHA256
+		sigType = signatureAndHash{hash: 0x04, signature: 0x01} // rsa_pkcs1_sha256
 	}
-	hashType, err := pickTLS12HashForSignature(sigType, hs.clientHello.signatureAndHashes)
 
 	toSign := prepareDigitallySigned(sha256.New, "TLS 1.3, server CertificateVerify", hs.finishedHash.Sum())
-	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], nil)
+	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], opts)
 	if err != nil {
 		return err
 	}
 
 	verifyMsg := &certificateVerifyMsg{
 		hasSignatureAndHash: true,
-		signatureAndHash: signatureAndHash{
-			hash: hashType, signature: sigType,
-		},
-		signature: signature,
+		signatureAndHash:    sigType,
+		signature:           signature,
 	}
 	hs.finishedHash.Write(verifyMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
