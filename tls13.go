@@ -81,10 +81,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	h.Write(ES)
 	dump("xES:", h.Sum(nil))
 
-	if hs.clientHello.ocspStapling && len(hs.cert.OCSPStaple) > 0 {
-		hs.hello.ocspStapling = true
-	}
-
 	hs.hello.cipherSuite = hs.suite.id
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)

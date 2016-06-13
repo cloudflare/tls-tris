@@ -219,7 +219,7 @@ Curves:
 		// had a bug around this. Best to send nothing at all if
 		// config.NextProtos is empty. See
 		// https://golang.org/issue/5445.
-		if hs.clientHello.nextProtoNeg && len(config.NextProtos) > 0 {
+		if hs.clientHello.nextProtoNeg && len(config.NextProtos) > 0 && c.vers < VersionTLS13 {
 			hs.hello.nextProtoNeg = true
 			hs.hello.nextProtos = config.NextProtos
 		}
