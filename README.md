@@ -30,12 +30,20 @@ Just use that instead of the `go` tool.
 Since we assume that if you are using tls-tris you want 1.3, a hardcoded MaxVersion
 of 1.2 is overridden to 1.3 automatically.
 
+## Debugging
+
+The environment variable `TLSDEBUG` has three recognized values:
+
+  * `live`: print to stderr a handshake trace and error stacks
+  * `keys`: like `live`, but also print key material and derivation steps
+  * `error`: like `live`, but only dump to stderr if an error occurs
+
 ## Running the NSS test client
 
 ```
 go run generate_cert.go -ecdsa-curve P256 -host 192.168.64.1 -duration 87600h
 make -C _dev bin/tris-localserver
-TLSDEBUG=1 ./_dev/bin/tris-localserver 192.168.64.1:4433
+./_dev/bin/tris-localserver 192.168.64.1:4433
 ```
 
 ```
@@ -54,7 +62,7 @@ docker run -it tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
 ```
 go run generate_cert.go -ecdsa-curve P256 -host localhost -duration 87600h
 make -C _dev bin/tris-localserver
-TLSDEBUG=1 ./_dev/bin/tris-localserver 127.0.0.1:4433
+./_dev/bin/tris-localserver 127.0.0.1:4433
 ```
 
 ```

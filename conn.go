@@ -15,8 +15,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -145,12 +143,14 @@ type halfConn struct {
 
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
+
+	traceErr func(error)
 }
 
 func (hc *halfConn) setErrorLocked(err error) error {
 	hc.err = err
-	if err != nil && err != io.EOF && os.Getenv("TLSDEBUG") == "1" {
-		debug.PrintStack()
+	if hc.traceErr != nil {
+		hc.traceErr(err)
 	}
 	return err
 }
@@ -338,13 +338,11 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, typ recordType, a
 			for i, s := range hc.seq {
 				nonce[offset+i] = nonce[offset+i] ^ s
 			}
-			dump("Nonce:", nonce)
 
 			payload, err := c.aead.Open(payload[:0], nonce, payload, nil)
 			if err != nil {
 				return false, 0, 0, alertBadRecordMAC
 			}
-			dump("Plaintext:", payload)
 
 			typ = recordType(payload[len(payload)-1])
 			b.resize(recordHeaderLen + len(payload) - 1)
@@ -451,8 +449,6 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			payload = b.data[recordHeaderLen : recordHeaderLen+len(payload)+1]
 			payload[len(payload)-1] = realType
 
-			dump("Nonce:", nonce)
-			dump("Plaintext:", payload)
 			c.aead.Seal(payload[:0], nonce, payload, nil)
 		default:
 			panic("unknown cipher type")
@@ -464,8 +460,6 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 	b.data[3] = byte(n >> 8)
 	b.data[4] = byte(n)
 	hc.incSeq()
-
-	dump("Encrypted payload:", b.data)
 
 	return true, 0
 }

@@ -13,12 +13,16 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"os"
+	"runtime/debug"
 )
 
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
+
+	hs.dump("ClientHello:", hs.clientHello.marshal())
 
 	// Group choice logic
 	//
@@ -75,37 +79,31 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
 	}
-	dump("ES:", ES)
-
-	h := hmac.New(sha256.New, make([]byte, sha256.Size)) // TODO(filippo)
-	h.Write(ES)
-	dump("xES:", h.Sum(nil))
+	dumpKeys("ES:", ES)
 
 	hs.hello.cipherSuite = hs.suite.id
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)
-	if config.ClientAuth == NoClientCert {
-		// No need to keep a full record of the handshake if client
-		// certificates won't be used.
-		hs.finishedHash.discardHandshakeBuffer()
-	}
+	hs.finishedHash.discardHandshakeBuffer()
 	hs.finishedHash.Write(hs.clientHello.marshal())
 	hs.finishedHash.Write(hs.hello.marshal())
-	dump("Hash:", hs.finishedHash.Sum())
+	hs.dump("ServerHello:", hs.hello.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 		return err
 	}
 
-	xES := hkdfExtract(sha256.New, ES, nil)
+	xES := hkdfExtract(sha256.New, ES, nil) // TODO(filippo)
+	dumpKeys("xES:", xES)
 	handshakeCtxt := hs.finishedHash.Sum()
+	dumpKeys("Hash:", handshakeCtxt)
 	cKey := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, client write key", 16)
-	dump("Client Write Key:", cKey)
+	dumpKeys("Client Write Key:", cKey)
 	cIV := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, client write iv", 12) // Lowercase because NSS
-	dump("Client Write IV:", cIV)
+	dumpKeys("Client Write IV:", cIV)
 	sKey := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, server write key", 16)
-	dump("Server Write Key:", sKey)
+	dumpKeys("Server Write Key:", sKey)
 	sIV := hkdfExpandLabel(sha256.New, xES, handshakeCtxt, "handshake key expansion, server write iv", 12) // Lowercase because NSS
-	dump("Server Write IV:", sIV)
+	dumpKeys("Server Write IV:", sIV)
 
 	clientCipher := aeadTLS13(cKey, cIV)
 	serverCipher := aeadTLS13(sKey, sIV)
@@ -116,6 +114,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	c.out.changeCipherSpec()
 
 	hs.finishedHash.Write(hs.hello.marshalEncExtensions())
+	hs.dump("EncryptedExtensions:", hs.hello.marshalEncExtensions())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshalEncExtensions()); err != nil {
 		return err
 	}
@@ -125,6 +124,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		certificates:   hs.cert.Certificate,
 	}
 	hs.finishedHash.Write(certMsg.marshal())
+	hs.dump("Certificate:", certMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
 		return err
 	}
@@ -153,29 +153,31 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		signature:           signature,
 	}
 	hs.finishedHash.Write(verifyMsg.marshal())
+	hs.dump("CertificateVerify", verifyMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
 		return err
 	}
 
 	mSS := hkdfExpandLabel(sha256.New, xES, hs.finishedHash.Sum(), "expanded static secret", sha256.Size)
-	dump("mSS:", mSS)
+	dumpKeys("mSS:", mSS)
 	mES := hkdfExpandLabel(sha256.New, xES, hs.finishedHash.Sum(), "expanded ephemeral secret", sha256.Size)
-	dump("mES:", mES)
+	dumpKeys("mES:", mES)
 	masterSecret := hkdfExtract(sha256.New, mES, mSS)
 	serverFinishedKey := hkdfExpandLabel(sha256.New, masterSecret, nil, "server finished", sha256.Size)
-	dump("Server Finished Key:", serverFinishedKey)
+	dumpKeys("Server Finished Key:", serverFinishedKey)
 	clientFinishedKey := hkdfExpandLabel(sha256.New, masterSecret, nil, "client finished", sha256.Size)
-	dump("Client Finished Key:", clientFinishedKey)
+	dumpKeys("Client Finished Key:", clientFinishedKey)
 	trafficSecret0 := hkdfExpandLabel(sha256.New, masterSecret, hs.finishedHash.Sum(), "traffic secret", sha256.Size)
-	dump("Traffic Secret:", trafficSecret0)
+	dumpKeys("Traffic Secret:", trafficSecret0)
 
-	h = hmac.New(sha256.New, serverFinishedKey)
+	h := hmac.New(sha256.New, serverFinishedKey)
 	h.Write(hs.finishedHash.Sum())
 	verifyData := h.Sum(nil)
 	serverFinished := &finishedMsg{
 		verifyData: verifyData,
 	}
 	hs.finishedHash.Write(serverFinished.marshal())
+	hs.dump("Finished:", serverFinished.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, serverFinished.marshal()); err != nil {
 		return err
 	}
@@ -194,11 +196,11 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(clientFinished, msg)
 	}
-	dump("Client Finished received:", clientFinished.verifyData)
+	hs.dump("Client Finished received:", clientFinished.verifyData)
 	h = hmac.New(sha256.New, clientFinishedKey)
 	h.Write(hs.finishedHash.Sum())
 	expectedVerifyData := h.Sum(nil)
-	dump("Client Finished expected:", expectedVerifyData)
+	hs.dump("Client Finished expected:", expectedVerifyData)
 	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
 		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
 		c.sendAlert(alertHandshakeFailure)
@@ -207,13 +209,13 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	handshakeCtxt = hs.finishedHash.Sum()
 	cKey = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, client write key", 16)
-	dump("Client Write Key:", cKey)
+	dumpKeys("Client Write Key:", cKey)
 	cIV = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, client write iv", 12) // Lowercase because NSS
-	dump("Client Write IV:", cIV)
+	dumpKeys("Client Write IV:", cIV)
 	sKey = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, server write key", 16)
-	dump("Server Write Key:", sKey)
+	dumpKeys("Server Write Key:", sKey)
 	sIV = hkdfExpandLabel(sha256.New, trafficSecret0, handshakeCtxt, "application data key expansion, server write iv", 12) // Lowercase because NSS
-	dump("Server Write IV:", sIV)
+	dumpKeys("Server Write IV:", sIV)
 
 	clientCipher = aeadTLS13(cKey, cIV)
 	serverCipher = aeadTLS13(sKey, sIV)
@@ -231,7 +233,7 @@ func prepareDigitallySigned(hash func() hash.Hash, context string, data []byte) 
 	message = append(message, context...)
 	message = append(message, 0)
 	message = append(message, data...)
-	dump("Padded message to sign:", message)
+	dumpKeys("Padded message to sign:", message)
 	h := hash()
 	h.Write(message)
 	return h.Sum(nil)
@@ -286,7 +288,7 @@ func hkdfExpandLabel(hash func() hash.Hash, prk, hashValue []byte, label string,
 	z[0] = byte(len(hashValue))
 	copy(z[1:], hashValue)
 
-	dump("Label:", hkdfLabel)
+	dumpKeys("Label:", hkdfLabel)
 
 	return hkdfExpand(hash, prk, hkdfLabel, L)
 }
@@ -309,8 +311,35 @@ func aeadTLS13(key, IV []byte) *tls13AEAD {
 	return &tls13AEAD{aead, IV}
 }
 
-func dump(label string, data []byte) {
-	if os.Getenv("TLSDEBUG") == "1" {
+func (hs *serverHandshakeState) tracef(format string, a ...interface{}) {
+	var output io.Writer
+	switch os.Getenv("TLSDEBUG") {
+	case "error":
+		output = &hs.trace
+	case "live", "keys":
+		output = os.Stderr
+	default:
+		return
+	}
+	fmt.Fprintf(output, format, a...)
+}
+
+func (hs *serverHandshakeState) dump(label string, data []byte) {
+	hs.tracef("%s\n%s\n", label, hex.Dump(data))
+}
+
+func (hs *serverHandshakeState) traceErr(err error) {
+	if err == nil {
+		return
+	}
+	hs.tracef("%s\n%v\n", debug.Stack(), err)
+	if os.Getenv("TLSDEBUG") == "error" {
+		io.Copy(os.Stderr, &hs.trace)
+	}
+}
+
+func dumpKeys(label string, data []byte) {
+	if os.Getenv("TLSDEBUG") == "keys" {
 		fmt.Fprintf(os.Stderr, "%s\n%s\n", label, hex.Dump(data))
 	}
 }

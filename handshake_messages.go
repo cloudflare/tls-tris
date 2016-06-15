@@ -4,11 +4,7 @@
 
 package tls
 
-import (
-	"bytes"
-	"fmt"
-	"os"
-)
+import "bytes"
 
 type clientHelloMsg struct {
 	raw                          []byte
@@ -522,9 +518,6 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 		case 0xff02: // NSS Draft Version Extension
 			version := uint16(data[0]<<8) + uint16(data[1])
-			if os.Getenv("TLSDEBUG") == "1" {
-				fmt.Fprintln(os.Stderr, "1.3 draft version:", version)
-			}
 			if version != 11 && version != 12 {
 				m.vers = VersionTLS12
 			}

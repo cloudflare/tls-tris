@@ -5,6 +5,7 @@
 package tls
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
@@ -14,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -33,6 +33,8 @@ type serverHandshakeState struct {
 	masterSecret    []byte
 	certsFromClient [][]byte
 	cert            *Certificate
+
+	trace bytes.Buffer
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -47,6 +49,9 @@ func (c *Conn) serverHandshake() error {
 	hs := serverHandshakeState{
 		c: c,
 	}
+	c.in.traceErr = hs.traceErr
+	c.out.traceErr = hs.traceErr
+	defer func() { c.in.traceErr, c.out.traceErr = nil, nil }()
 	isResume, err := hs.readClientHello()
 	if err != nil {
 		return err
@@ -131,14 +136,12 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		return false, unexpectedMessageError(hs.clientHello, msg)
 	}
 
-	if os.Getenv("TLSDEBUG") == "1" {
-		var keyShares []CurveID
-		for _, ks := range hs.clientHello.keyShares {
-			keyShares = append(keyShares, ks.group)
-		}
-		fmt.Fprintf(os.Stderr, "Version: %x\nCiphersuites: %v\nGroups: %v\nkeyShares: %v\n\n",
-			hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares)
+	var keyShares []CurveID
+	for _, ks := range hs.clientHello.keyShares {
+		keyShares = append(keyShares, ks.group)
 	}
+	hs.tracef("Version: %x\nCiphersuites: %v\nGroups: %v\nkeyShares: %v\n\n",
+		hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares)
 
 	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
 	if !ok {
