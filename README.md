@@ -48,7 +48,7 @@ make -C _dev bin/tris-localserver
 
 ```
 docker build -t tstclnt _dev/tstclnt
-docker run -it tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
+docker run -i tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
 ```
 
 ## Testing with Firefox
