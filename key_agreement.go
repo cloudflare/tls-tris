@@ -110,7 +110,7 @@ func md5SHA1Hash(slices [][]byte) []byte {
 // hashForServerKeyExchange hashes the given slices and returns their digest
 // and the identifier of the hash function used. The sigAndHash argument is
 // only used for >= TLS 1.2 and precisely identifies the hash function to use.
-func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slices ...[]byte) ([]byte, crypto.Hash, error) {
+func hashForServerKeyExchange(sigAndHash SignatureAndHash, version uint16, slices ...[]byte) ([]byte, crypto.Hash, error) {
 	if version >= VersionTLS12 {
 		if !isSupportedSignatureAndHash(sigAndHash, supportedSignatureAlgorithms) {
 			return nil, crypto.Hash(0), errors.New("tls: unsupported hash function used by peer")
@@ -135,7 +135,7 @@ func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slice
 // pickTLS12HashForSignature returns a TLS 1.2 hash identifier for signing a
 // ServerKeyExchange given the signature type being used and the client's
 // advertised list of supported signature and hash combinations.
-func pickTLS12HashForSignature(sigType uint8, clientList []signatureAndHash) (uint8, error) {
+func pickTLS12HashForSignature(sigType uint8, clientList []SignatureAndHash) (uint8, error) {
 	if len(clientList) == 0 {
 		// If the client didn't specify any signature_algorithms
 		// extension then we can assume that it supports SHA1. See
@@ -220,7 +220,7 @@ NextCandidate:
 	serverECDHParams[3] = byte(len(ecdhePublic))
 	copy(serverECDHParams[4:], ecdhePublic)
 
-	sigAndHash := signatureAndHash{signature: ka.sigType}
+	sigAndHash := SignatureAndHash{signature: ka.sigType}
 
 	if ka.version >= VersionTLS12 {
 		if sigAndHash.hash, err = pickTLS12HashForSignature(ka.sigType, clientHello.signatureAndHashes); err != nil {
@@ -328,10 +328,10 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 		return errServerKeyExchange
 	}
 
-	sigAndHash := signatureAndHash{signature: ka.sigType}
+	sigAndHash := SignatureAndHash{signature: ka.sigType}
 	if ka.version >= VersionTLS12 {
 		// handle SignatureAndHashAlgorithm
-		sigAndHash = signatureAndHash{hash: sig[0], signature: sig[1]}
+		sigAndHash = SignatureAndHash{hash: sig[0], signature: sig[1]}
 		if sigAndHash.signature != ka.sigType {
 			return errServerKeyExchange
 		}

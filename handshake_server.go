@@ -229,11 +229,12 @@ Curves:
 	}
 
 	hs.cert, err = config.getCertificate(&ClientHelloInfo{
-		CipherSuites:    hs.clientHello.cipherSuites,
-		ServerName:      hs.clientHello.serverName,
-		SupportedCurves: hs.clientHello.supportedCurves,
-		SupportedPoints: hs.clientHello.supportedPoints,
-		// TODO(filippo): add signatureAndHashes, version
+		CipherSuites:     hs.clientHello.cipherSuites,
+		ServerName:       hs.clientHello.serverName,
+		SupportedCurves:  hs.clientHello.supportedCurves,
+		SupportedPoints:  hs.clientHello.supportedPoints,
+		SignatureSchemes: hs.clientHello.signatureAndHashes,
+		// TODO(filippo): add version
 	})
 	if err != nil {
 		c.sendAlert(alertInternalError)
@@ -539,7 +540,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 
 		// Determine the signature type.
-		var signatureAndHash signatureAndHash
+		var signatureAndHash SignatureAndHash
 		if certVerify.hasSignatureAndHash {
 			signatureAndHash = certVerify.signatureAndHash
 			if !isSupportedSignatureAndHash(signatureAndHash, supportedSignatureAlgorithms) {

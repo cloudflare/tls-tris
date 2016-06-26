@@ -147,16 +147,16 @@ const (
 	signatureECDSA uint8 = 3
 )
 
-// signatureAndHash mirrors the TLS 1.2, SignatureAndHashAlgorithm struct. See
+// SignatureAndHash mirrors the TLS 1.2, SignatureAndHashAlgorithm struct. See
 // RFC 5246, section A.4.1.
-type signatureAndHash struct {
+type SignatureAndHash struct {
 	hash, signature uint8
 }
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
 // the code advertises as supported in a TLS 1.2 ClientHello and in a TLS 1.2
 // CertificateRequest.
-var supportedSignatureAlgorithms = []signatureAndHash{
+var supportedSignatureAlgorithms = []SignatureAndHash{
 	{hashSHA256, signatureRSA},
 	{hashSHA256, signatureECDSA},
 	{hashSHA384, signatureRSA},
@@ -248,6 +248,13 @@ type ClientHelloInfo struct {
 	// is being used (see
 	// http://tools.ietf.org/html/rfc4492#section-5.1.2).
 	SupportedPoints []uint8
+
+	// SignatureSchemes lists the client's supported signature and hash
+	// pairs for validating digital signatures.
+	// SignatureSchemes is set only if the Signature Algorithms extension
+	// is being used (see
+	// http://tools.ietf.org/html/rfc5246#section-7.4.1.4.1).
+	SignatureSchemes []SignatureAndHash
 }
 
 // RenegotiationSupport enumerates the different levels of support for TLS
@@ -759,7 +766,7 @@ func unexpectedMessageError(wanted, got interface{}) error {
 	return fmt.Errorf("tls: received unexpected handshake message of type %T when waiting for %T", got, wanted)
 }
 
-func isSupportedSignatureAndHash(sigHash signatureAndHash, sigHashes []signatureAndHash) bool {
+func isSupportedSignatureAndHash(sigHash SignatureAndHash, sigHashes []SignatureAndHash) bool {
 	for _, s := range sigHashes {
 		if s == sigHash {
 			return true
