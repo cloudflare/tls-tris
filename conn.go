@@ -30,10 +30,8 @@ type Conn struct {
 	// constant after handshake; protected by handshakeMutex
 	handshakeMutex sync.Mutex // handshakeMutex < in.Mutex, out.Mutex, errMutex
 	handshakeErr   error      // error resulting from handshake
-
-	connId      []byte // Random connection id.
-	clientHello []byte // ClientHello
-
+	connID         []byte     // Random connection id
+	clientHello    []byte     // ClientHello packet contents
 	vers           uint16     // TLS version
 	haveVers       bool       // version has been negotiated
 	config         *Config    // configuration passed to constructor
@@ -1276,8 +1274,10 @@ func (c *Conn) Handshake() error {
 		}
 	}
 
-	c.connId = make([]byte, 8)
-	c.config.rand().Read(c.connId)
+	c.connID = make([]byte, 8)
+	if _, err := io.ReadFull(c.config.rand(), c.connID); err != nil {
+		return err
+	}
 
 	if c.isClient {
 		c.handshakeErr = c.clientHandshake()
@@ -1298,9 +1298,8 @@ func (c *Conn) ConnectionState() ConnectionState {
 	var state ConnectionState
 	state.HandshakeComplete = c.handshakeComplete
 	if c.handshakeComplete {
-		state.ConnectionId = c.connId
+		state.ConnectionID = c.connID
 		state.ClientHello = c.clientHello
-
 		state.Version = c.vers
 		state.NegotiatedProtocol = c.clientProtocol
 		state.DidResume = c.didResume
