@@ -228,13 +228,18 @@ Curves:
 		}
 	}
 
+	sigSchemes := make([]uint16, len(hs.clientHello.signatureAndHashes))
+	for i, sah := range hs.clientHello.signatureAndHashes {
+		sigSchemes[i] = uint16(sah.hash)<<8 + uint16(sah.signature)
+	}
 	hs.cert, err = config.getCertificate(&ClientHelloInfo{
-		CipherSuites:    hs.clientHello.cipherSuites,
-		ServerName:      hs.clientHello.serverName,
-		SupportedCurves: hs.clientHello.supportedCurves,
-		SupportedPoints: hs.clientHello.supportedPoints,
-		LocalAddr:       hs.c.LocalAddr(),
-		// TODO(filippo): add signatureAndHashes, version
+		Version:          c.vers,
+		CipherSuites:     hs.clientHello.cipherSuites,
+		ServerName:       hs.clientHello.serverName,
+		SupportedCurves:  hs.clientHello.supportedCurves,
+		SupportedPoints:  hs.clientHello.supportedPoints,
+		LocalAddr:        hs.c.LocalAddr(),
+		SignatureSchemes: sigSchemes,
 	})
 	if err != nil {
 		c.sendAlert(alertInternalError)

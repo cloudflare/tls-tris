@@ -231,6 +231,10 @@ type ClientSessionCache interface {
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide certificate selection in the GetCertificate callback.
 type ClientHelloInfo struct {
+	// Version is the TLS version being negotiated (the highest supported
+	// by both client and server).
+	Version uint16
+
 	// CipherSuites lists the CipherSuites supported by the client (e.g.
 	// TLS_RSA_WITH_RC4_128_SHA).
 	CipherSuites []uint16
@@ -252,6 +256,12 @@ type ClientHelloInfo struct {
 	// is being used (see
 	// http://tools.ietf.org/html/rfc4492#section-5.1.2).
 	SupportedPoints []uint8
+
+	// SignatureSchemes lists the signature schemes supported by the client
+	// as 16-bit IDs (which before 1.3 are the concatenation of hash
+	// and signature ID). (see
+	// https://tlswg.github.io/tls13-spec/#rfc.section.6.3.2.2).
+	SignatureSchemes []uint16
 
 	// LocalAddr is the address on which the connection was accepted.
 	LocalAddr net.Addr
