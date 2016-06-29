@@ -310,12 +310,12 @@ func (h finishedHash) serverSum(masterSecret []byte) []byte {
 	return out
 }
 
-// selectClientCertSignatureAlgorithm returns a signatureAndHash to sign a
+// selectClientCertSignatureAlgorithm returns a SignatureAndHash to sign a
 // client's CertificateVerify with, or an error if none can be found.
-func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []signatureAndHash, sigType uint8) (signatureAndHash, error) {
+func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []SignatureAndHash, sigType uint8) (SignatureAndHash, error) {
 	if h.version < VersionTLS12 {
 		// Nothing to negotiate before TLS 1.2.
-		return signatureAndHash{signature: sigType}, nil
+		return SignatureAndHash{signature: sigType}, nil
 	}
 
 	for _, v := range serverList {
@@ -323,12 +323,12 @@ func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []signatureA
 			return v, nil
 		}
 	}
-	return signatureAndHash{}, errors.New("tls: no supported signature algorithm found for signing client certificate")
+	return SignatureAndHash{}, errors.New("tls: no supported signature algorithm found for signing client certificate")
 }
 
 // hashForClientCertificate returns a digest, hash function, and TLS 1.2 hash
 // id suitable for signing by a TLS client certificate.
-func (h finishedHash) hashForClientCertificate(signatureAndHash signatureAndHash, masterSecret []byte) ([]byte, crypto.Hash, error) {
+func (h finishedHash) hashForClientCertificate(signatureAndHash SignatureAndHash, masterSecret []byte) ([]byte, crypto.Hash, error) {
 	if (h.version == VersionSSL30 || h.version >= VersionTLS12) && h.buffer == nil {
 		panic("a handshake hash for a client-certificate was requested after discarding the handshake buffer")
 	}
