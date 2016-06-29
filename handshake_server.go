@@ -233,6 +233,7 @@ Curves:
 		ServerName:      hs.clientHello.serverName,
 		SupportedCurves: hs.clientHello.supportedCurves,
 		SupportedPoints: hs.clientHello.supportedPoints,
+		LocalAddr:       hs.c.LocalAddr(),
 		// TODO(filippo): add signatureAndHashes, version
 	})
 	if err != nil {

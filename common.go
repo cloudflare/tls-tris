@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -251,6 +252,9 @@ type ClientHelloInfo struct {
 	// is being used (see
 	// http://tools.ietf.org/html/rfc4492#section-5.1.2).
 	SupportedPoints []uint8
+
+	// LocalAddr is the address on which the connection was accepted.
+	LocalAddr net.Addr
 }
 
 // RenegotiationSupport enumerates the different levels of support for TLS
