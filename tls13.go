@@ -131,13 +131,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	// TODO(filippo): need a new, proper type for 1.3 SignatureScheme
 	// TODO(filippo): check what the client supports, add support for SHA384
-	var opts crypto.SignerOpts
+	var opts crypto.SignerOpts = crypto.SHA256
 	sigType := signatureAndHash{hash: 0x04, signature: 0x03} // ecdsa_secp256r1_sha256
 	if hs.suite.flags&suiteECDSA == 0 {
 		// This is what we are supposed to use, but NSS if off-spec and mint goes with it.
 		//opts = &rsa.PSSOptions{SaltLength: sha256.Size, Hash: crypto.SHA256}
 		//sigType = signatureAndHash{hash: 0x07, signature: 0x00} // rsa_pss_sha256
-		opts = crypto.SHA256
 		sigType = signatureAndHash{hash: 0x04, signature: 0x01} // rsa_pkcs1_sha256
 	}
 
