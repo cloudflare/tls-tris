@@ -82,6 +82,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	dumpKeys("ES:", ES)
 
 	hs.c.cipherSuite, hs.hello.cipherSuite = hs.suite.id, hs.suite.id
+	hs.c.clientHello = hs.clientHello.marshal()
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)
 	hs.finishedHash.discardHandshakeBuffer()
