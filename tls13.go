@@ -48,8 +48,10 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 			}
 		}
 		if !supported {
-			c.sendAlert(alertIllegalParameter)
-			return errors.New("tls: received key share for unsupported curve")
+			// FIXME: NSS is off-spec, so warn instead of failing
+			// https://bugzilla.mozilla.org/show_bug.cgi?id=1283646
+			//c.sendAlert(alertIllegalParameter)
+			//return errors.New("tls: received key share for unsupported curve")
 		}
 	}
 
