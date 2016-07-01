@@ -75,8 +75,6 @@ func main() {
 	switch *ecdsaCurve {
 	case "":
 		priv, err = rsa.GenerateKey(rand.Reader, *rsaBits)
-	case "P224":
-		priv, err = ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 	case "P256":
 		priv, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	case "P384":
