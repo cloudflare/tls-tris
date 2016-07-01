@@ -1,0 +1,335 @@
+# HG changeset patch
+# User Martin Thomson <martin.thomson@gmail.com>
+# Date 1467337804 -36000
+#      Fri Jul 01 11:50:04 2016 +1000
+# Node ID 5ec1f5b66f28de0c2a5d24f5c93a2fe3ffe9d150
+# Parent  e69022fab1dc083f097b84e78fb6dda585bd7b06
+Bug 1283646 - Generate one share for each type of group, r?ekr
+
+Rather than unconditionally generating shares for P-256 and FFDHE-2048,
+only generate EC or FFDHE shares if one of the corresponding types of
+suites is enabled.  As it happens, it's just as easy at that point to
+generate a share on the first enabled group rather than fixed values.
+
+Note: When HelloRetryRequest is implemented, we can only generate
+FFDHE shares if EC is disabled.
+
+diff --git a/external_tests/ssl_gtest/ssl_dhe_unittest.cc b/external_tests/ssl_gtest/ssl_dhe_unittest.cc
+--- a/external_tests/ssl_gtest/ssl_dhe_unittest.cc
++++ b/external_tests/ssl_gtest/ssl_dhe_unittest.cc
+@@ -20,32 +20,91 @@
+ namespace nss_test {
+ 
+ TEST_P(TlsConnectGeneric, ConnectDhe) {
+   EnableOnlyDheCiphers();
+   Connect();
+   CheckKeys(ssl_kea_dh, ssl_auth_rsa_sign);
+ }
+ 
++static void CheckGroups(const DataBuffer& groups,
++                        std::function<void(uint16_t)> assert_group) {
++  // Check the group of each of the supported groups
++  uint32_t tmp;
++  EXPECT_TRUE(groups.Read(0, 2, &tmp));
++  EXPECT_EQ(groups.len() - 2, static_cast<size_t>(tmp));
++  for (size_t i = 2; i < groups.len(); i += 2) {
++    EXPECT_TRUE(groups.Read(i, 2, &tmp));
++    assert_group(static_cast<uint16_t>(tmp));
++  }
++}
++
++static void CheckShares(const DataBuffer& shares,
++                        std::function<void(uint16_t)> assert_group) {
++  // Check the group of each of the shares
++  uint32_t tmp;
++  EXPECT_TRUE(shares.Read(0, 2, &tmp));
++  EXPECT_EQ(shares.len() - 2, static_cast<size_t>(tmp));
++  size_t i = 2;
++  while (i < shares.len()) {
++    ASSERT_TRUE(shares.Read(i, 2, &tmp));
++    assert_group(static_cast<uint16_t>(tmp));
++    i += 2;
++    ASSERT_TRUE(shares.Read(i, 2, &tmp));
++    i += 2 + tmp;
++    EXPECT_GE(shares.len(), i);
++  }
++}
++
++TEST_P(TlsConnectTls13, NoDheOnEcdheConnections) {
++  EnsureTlsSetup();
++  client_->DisableAllCiphers();
++  client_->EnableCiphersByKeyExchange(ssl_kea_ecdh);
++
++  auto groups_capture = new TlsExtensionCapture(ssl_supported_groups_xtn);
++  auto shares_capture = new TlsExtensionCapture(ssl_tls13_key_share_xtn);
++  std::vector<PacketFilter*> captures;
++  captures.push_back(groups_capture);
++  captures.push_back(shares_capture);
++  client_->SetPacketFilter(new ChainedPacketFilter(captures));
++
++  Connect();
++
++  CheckKeys(ssl_kea_ecdh, ssl_auth_rsa_sign);
++  auto is_ecc = [](uint16_t group) {
++                EXPECT_NE(0x100U, group & 0xff00U);
++  };
++  CheckGroups(groups_capture->extension(), is_ecc);
++  CheckShares(shares_capture->extension(), is_ecc);
++}
++
+ TEST_P(TlsConnectGeneric, ConnectFfdheClient) {
+   EnableOnlyDheCiphers();
+   EXPECT_EQ(SECSuccess,
+             SSL_OptionSet(client_->ssl_fd(),
+                           SSL_REQUIRE_DH_NAMED_GROUPS, PR_TRUE));
+-  auto clientCapture = new TlsExtensionCapture(ssl_supported_groups_xtn);
+-  client_->SetPacketFilter(clientCapture);
++  auto groups_capture = new TlsExtensionCapture(ssl_supported_groups_xtn);
++  auto shares_capture = new TlsExtensionCapture(ssl_tls13_key_share_xtn);
++  std::vector<PacketFilter*> captures;
++  captures.push_back(groups_capture);
++  captures.push_back(shares_capture);
++  client_->SetPacketFilter(new ChainedPacketFilter(captures));
+ 
+   Connect();
+ 
+   CheckKeys(ssl_kea_dh, ssl_auth_rsa_sign);
+-
+-  // Extension value: length + FFDHE 2048 group identifier.
+-  const uint8_t val[] = { 0x00, 0x02, 0x01, 0x00 };
+-  DataBuffer expected_groups(val, sizeof(val));
+-  EXPECT_EQ(expected_groups, clientCapture->extension());
++  auto is_ffdhe_2048 = [](uint16_t group) {
++    EXPECT_EQ(0x100U, group);
++  };
++  CheckGroups(groups_capture->extension(), is_ffdhe_2048);
++  if (version_ == SSL_LIBRARY_VERSION_TLS_1_3) {
++    CheckShares(shares_capture->extension(), is_ffdhe_2048);
++  } else {
++    EXPECT_EQ(0U, shares_capture->extension().len());
++  }
+ }
+ 
+ // Requiring the FFDHE extension on the server alone means that clients won't be
+ // able to connect using a DHE suite.  They should still connect in TLS 1.3,
+ // because the client automatically sends the supported groups extension.
+ TEST_P(TlsConnectGenericPre13, ConnectFfdheServer) {
+   EnableOnlyDheCiphers();
+   EXPECT_EQ(SECSuccess,
+@@ -407,39 +466,30 @@ TEST_P(TlsConnectGenericPre13, WeakDHGro
+             SSL_OptionSet(client_->ssl_fd(),
+                           SSL_REQUIRE_DH_NAMED_GROUPS, PR_TRUE));
+   EXPECT_EQ(SECSuccess,
+             SSL_EnableWeakDHEPrimeGroup(server_->ssl_fd(), PR_TRUE));
+ 
+   Connect();
+ }
+ 
+-#ifdef NSS_ENABLE_TLS_1_3
+-
+-// In the absence of HelloRetryRequest, enabling only the 3072-bit group causes
+-// the TLS 1.3 handshake to fail because the client will only add the 2048-bit
+-// group to its ClientHello.
+-TEST_P(TlsConnectTls13, DisableFfdhe2048) {
++TEST_P(TlsConnectGeneric, Ffdhe3072) {
+   EnableOnlyDheCiphers();
+   static const SSLDHEGroupType groups[] = { ssl_ff_dhe_3072_group };
+   EXPECT_EQ(SECSuccess,
+             SSL_DHEGroupPrefSet(client_->ssl_fd(), groups,
+                                 PR_ARRAY_SIZE(groups)));
+   EXPECT_EQ(SECSuccess,
+             SSL_DHEGroupPrefSet(server_->ssl_fd(), groups,
+                                 PR_ARRAY_SIZE(groups)));
+-  EXPECT_EQ(SECSuccess,
+-            SSL_OptionSet(server_->ssl_fd(),
+-                          SSL_REQUIRE_DH_NAMED_GROUPS, PR_TRUE));
+ 
+-  ConnectExpectFail();
++  Connect();
++}
+ 
+-  server_->CheckErrorCode(SSL_ERROR_NO_CYPHER_OVERLAP);
+-  client_->CheckErrorCode(SSL_ERROR_NO_CYPHER_OVERLAP);
+-}
++#ifdef NSS_ENABLE_TLS_1_3
+ 
+ TEST_P(TlsConnectTls13, ResumeFfdhe) {
+   EnableOnlyDheCiphers();
+   ConfigureSessionCache(RESUME_BOTH, RESUME_TICKET);
+   Connect();
+   SendReceive(); // Need to read so that we absorb the session ticket.
+   CheckKeys(ssl_kea_dh, ssl_auth_rsa_sign);
+ 
+diff --git a/lib/ssl/ssl3ecc.c b/lib/ssl/ssl3ecc.c
+--- a/lib/ssl/ssl3ecc.c
++++ b/lib/ssl/ssl3ecc.c
+@@ -960,32 +960,38 @@ ssl_IsSuiteEnabled(sslSocket *ss, const 
+         PORT_Assert(rv == SECSuccess); /* else is coding error */
+         if (rv == SECSuccess && enabled)
+             return PR_TRUE;
+     }
+     return PR_FALSE;
+ }
+ 
+ /* Ask: is ANY ECC cipher suite enabled on this socket? */
+-static PRBool
++PRBool
+ ssl_IsECCEnabled(sslSocket *ss)
+ {
+     PK11SlotInfo *slot;
+ 
+     /* make sure we can do ECC */
+     slot = PK11_GetBestSlot(CKM_ECDH1_DERIVE, ss->pkcs11PinArg);
+     if (!slot) {
+         return PR_FALSE;
+     }
+     PK11_FreeSlot(slot);
+ 
+     /* make sure an ECC cipher is enabled */
+     return ssl_IsSuiteEnabled(ss, ssl_all_ec_suites);
+ }
+ 
++PRBool
++ssl_IsDHEEnabled(sslSocket *ss)
++{
++    return ssl_IsSuiteEnabled(ss, ssl_dhe_suites);
++}
++
+ /* This function already presumes we can do ECC, ssl_IsECCEnabled must be
+  * called before this function. It looks to see if we have a token which
+  * is capable of doing smaller than SuiteB curves. If the token can, we
+  * presume the token can do the whole SSL suite of curves. If it can't we
+  * presume the token that allowed ECC to be enabled can only do suite B
+  * curves. */
+ PRBool
+ ssl_SuiteBOnly(sslSocket *ss)
+@@ -1019,17 +1025,17 @@ ssl_SendSupportedGroupsXtn(sslSocket *ss
+     if (!ss)
+         return 0;
+ 
+     ec = ssl_IsECCEnabled(ss);
+     /* We only send FF supported groups if we require DH named groups or if TLS
+      * 1.3 is a possibility. */
+     if (ss->opt.requireDHENamedGroups ||
+         ss->vrange.max >= SSL_LIBRARY_VERSION_TLS_1_3) {
+-        ff = ssl_IsSuiteEnabled(ss, ssl_dhe_suites);
++        ff = ssl_IsDHEEnabled(ss);
+     }
+     if (!ec && !ff) {
+         return 0;
+     }
+ 
+     PORT_Assert(sizeof(enabledGroups) > ssl_named_group_count * 2);
+     for (i = 0; i < ssl_named_group_count; ++i) {
+         if (ssl_named_groups[i].type == group_type_ec && !ec) {
+diff --git a/lib/ssl/sslimpl.h b/lib/ssl/sslimpl.h
+--- a/lib/ssl/sslimpl.h
++++ b/lib/ssl/sslimpl.h
+@@ -1727,17 +1727,18 @@ extern SECStatus ssl_CreateDHEKeyPair(co
+                                       sslEphemeralKeyPair **keyPair);
+ extern PRBool ssl_IsValidDHEShare(const SECItem *dh_p, const SECItem *dh_Ys);
+ extern SECStatus ssl_ValidateDHENamedGroup(sslSocket *ss,
+                                            const SECItem *dh_p,
+                                            const SECItem *dh_g,
+                                            const namedGroupDef **groupDef,
+                                            const ssl3DHParams **dhParams);
+ 
+-extern PRBool ssl3_IsECCEnabled(sslSocket *ss);
++extern PRBool ssl_IsECCEnabled(sslSocket *ss);
++extern PRBool ssl_IsDHEEnabled(sslSocket *ss);
+ 
+ /* Macro for finding a curve equivalent in strength to RSA key's */
+ /* clang-format off */
+ #define SSL_RSASTRENGTH_TO_ECSTRENGTH(s)                                       \
+         ((s <= 1024) ? 160                                                     \
+                      : ((s <= 2048) ? 224                                      \
+                                     : ((s <= 3072) ? 256                       \
+                                                    : ((s <= 7168) ? 384        \
+diff --git a/lib/ssl/tls13con.c b/lib/ssl/tls13con.c
+--- a/lib/ssl/tls13con.c
++++ b/lib/ssl/tls13con.c
+@@ -308,56 +308,74 @@ tls13_GetHmacMechanism(sslSocket *ss)
+             return CKM_SHA384_HMAC;
+         default:
+             PORT_Assert(0);
+     }
+     return CKM_SHA256_HMAC;
+ }
+ 
+ /*
+- * Called from ssl3_SendClientHello
++ * Generate shares for ECDHE and FFDHE.  This picks the first enabled group of
++ * the requisite type and creates a share for that.
++ *
++ * Called from ssl3_SendClientHello.
+  */
+ SECStatus
+ tls13_SetupClientHello(sslSocket *ss)
+ {
++    unsigned int i;
++    PRBool ecNeeded = ssl_IsECCEnabled(ss);
+     /* This does FFDHE always only while we don't have HelloRetryRequest
+      * support.  FFDHE is too much of a burden for normal requests.  We really
+      * only want it when EC suites are disabled. */
+-    static const NamedGroup groups_to_try[] = { ec_secp256r1, ffdhe_2048 };
+-    unsigned int i;
++    PRBool ffNeeded = ssl_IsDHEEnabled(ss);
+ 
+     PORT_Assert(ss->opt.noLocks || ssl_HaveSSL3HandshakeLock(ss));
+     PORT_Assert(ss->opt.noLocks || ssl_HaveXmitBufLock(ss));
+ 
+     PORT_Assert(PR_CLIST_IS_EMPTY(&ss->ephemeralKeyPairs));
+ 
+-    for (i = 0; i < PR_ARRAY_SIZE(groups_to_try); ++i) {
++    for (i = 0; i < ssl_named_group_count; ++i) {
+         SECStatus rv;
+-        sslEphemeralKeyPair *keyPair;
+-        const namedGroupDef *groupDef = ssl_LookupNamedGroup(groups_to_try[i]);
++        sslEphemeralKeyPair *keyPair = NULL;
++        const namedGroupDef *groupDef = &ssl_named_groups[i];
++        const ssl3DHParams *params;
+         if (!ssl_NamedGroupEnabled(ss, groupDef)) {
+             continue;
+         }
+         switch (groupDef->type) {
+             case group_type_ec:
++                if (!ecNeeded) {
++                    continue;
++                }
+                 rv = ssl_CreateECDHEphemeralKeyPair(groupDef, &keyPair);
++                ecNeeded = PR_FALSE;
+                 break;
+-            case group_type_ff: {
+-                const ssl3DHParams *params = ssl_GetDHEParams(groupDef);
++            case group_type_ff:
++                if (!ffNeeded) {
++                    continue;
++                }
++                params = ssl_GetDHEParams(groupDef);
+                 PORT_Assert(params->name != ffdhe_custom);
+                 rv = ssl_CreateDHEKeyPair(groupDef, params, &keyPair);
++                ffNeeded = PR_FALSE;
+                 break;
+-            }
+         }
+-        if (rv != SECSuccess)
++        if (rv != SECSuccess) {
+             return rv;
++        }
+ 
+         PR_APPEND_LINK(&keyPair->link, &ss->ephemeralKeyPairs);
+     }
++
+     PORT_Assert(!PR_CLIST_IS_EMPTY(&ss->ephemeralKeyPairs));
++    /* We don't permit all groups of a given type to be disabled, so this should
++     * never reach this point wanting for a share of either type. */
++    PORT_Assert(!ecNeeded);
++    PORT_Assert(!ffNeeded);
+ 
+     return SECSuccess;
+ }
+ 
+ static SECStatus
+ tls13_ImportDHEKeyShare(sslSocket *ss, SECKEYPublicKey *peerKey,
+                         SSL3Opaque *b, PRUint32 length,
+                         SECKEYPublicKey *pubKey)
