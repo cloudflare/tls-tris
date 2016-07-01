@@ -7,8 +7,8 @@ RUN apt-get install --yes build-essential libz-dev
 RUN hg clone https://hg.mozilla.org/projects/nspr
 RUN hg clone https://hg.mozilla.org/projects/nss
 
-ADD *.patch .
-RUN patch -p1 -d nss < poll.patch
+ADD *.patch ./
+RUN for p in *.patch; do patch -p1 -d nss < $p; done
 
 ENV USE_64=1 NSS_ENABLE_TLS_1_3=1
 RUN cd nss && make nss_build_all
