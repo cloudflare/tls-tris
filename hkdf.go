@@ -13,13 +13,13 @@ package tls
 // RFC 5869: https://tools.ietf.org/html/rfc5869
 
 import (
+	"crypto"
 	"crypto/hmac"
-	"hash"
 )
 
-func hkdfExpand(hash func() hash.Hash, prk, info []byte, l int) []byte {
+func hkdfExpand(hash crypto.Hash, prk, info []byte, l int) []byte {
 	var (
-		expander = hmac.New(hash, prk)
+		expander = hmac.New(hash.New, prk)
 		res      = make([]byte, l)
 		counter  = byte(1)
 		prev     []byte
@@ -44,11 +44,14 @@ func hkdfExpand(hash func() hash.Hash, prk, info []byte, l int) []byte {
 	return res
 }
 
-func hkdfExtract(hash func() hash.Hash, secret, salt []byte) []byte {
+func hkdfExtract(hash crypto.Hash, secret, salt []byte) []byte {
 	if salt == nil {
-		salt = make([]byte, hash().Size())
+		salt = make([]byte, hash.Size())
 	}
-	extractor := hmac.New(hash, salt)
+	if secret == nil {
+		secret = make([]byte, hash.Size())
+	}
+	extractor := hmac.New(hash.New, salt)
 	extractor.Write(secret)
 	return extractor.Sum(nil)
 }
