@@ -516,9 +516,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				})
 				d = d[4+dataLen:]
 			}
-		case 0xff02: // NSS Draft Version Extension
+		case 0xff02: // Draft Version Extension
 			version := uint16(data[0]<<8) + uint16(data[1])
-			if version != 11 && version != 12 {
+			if version != 13 {
 				m.vers = VersionTLS12
 			}
 		}
