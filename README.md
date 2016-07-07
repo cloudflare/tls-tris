@@ -42,7 +42,7 @@ The environment variable `TLSDEBUG` has three recognized values:
 
 ```
 go run generate_cert.go -ecdsa-curve P256 -host 192.168.64.1 -duration 87600h
-make -C _dev bin/tris-localserver
+./_dev/go.sh build -i -v ./_dev/tris-localserver
 ./_dev/bin/tris-localserver 192.168.64.1:4433
 ```
 
@@ -61,7 +61,7 @@ docker run -i tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
 
 ```
 go run generate_cert.go -ecdsa-curve P256 -host localhost -duration 87600h
-make -C _dev bin/tris-localserver
+./_dev/go.sh build ./_dev/tris-localserver
 ./_dev/bin/tris-localserver 127.0.0.1:4433
 ```
 

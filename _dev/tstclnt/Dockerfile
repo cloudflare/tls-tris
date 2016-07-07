@@ -1,11 +1,15 @@
 FROM debian
 
+# docker run -i tstclnt -D -V tls1.3:tls1.3 -o -O -h $(docker inspect tris-localserver | jq -r '.[0].NetworkSettings.IPAddress') -p 443
+
 RUN apt-get update
 RUN apt-get install --yes mercurial
 RUN apt-get install --yes build-essential libz-dev
 
+ARG REVISION=default
 RUN hg clone https://hg.mozilla.org/projects/nspr
 RUN hg clone https://hg.mozilla.org/projects/nss
+RUN cd nss && hg checkout -C $REVISION
 
 ADD *.patch ./
 RUN for p in *.patch; do patch -p1 -d nss < $p; done

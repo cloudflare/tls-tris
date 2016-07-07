@@ -15,11 +15,3 @@ GOROOT/.ok_$(GOROOTINFO):
 	rm -r GOROOT/src/crypto/tls
 	ln -s ../../../.. GOROOT/src/crypto/tls
 	@touch "$@"
-
-bin:
-	mkdir -p "$@"
-
-bin/tris-publicserver: bin tris-publicserver/* ../*.go GOROOT
-	GOROOT="$(CURDIR)/GOROOT" go build -i -v -o "$@" ./tris-publicserver
-bin/tris-localserver: bin tris-localserver/* ../*.go GOROOT
-	GOROOT="$(CURDIR)/GOROOT" go build -i -v -o "$@" ./tris-localserver
