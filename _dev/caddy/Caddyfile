@@ -1,0 +1,12 @@
+tris.filippo.io {
+	tls bip@filippo.io
+	gzip
+	log stdout
+	proxy / https://blog.filippo.io
+}
+
+cf.tris.filippo.io {
+	tls bip@filippo.io
+	log stdout
+	proxy / https://blog.cloudflare.com
+}
