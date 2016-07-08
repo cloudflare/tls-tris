@@ -2,7 +2,7 @@
 
 BASEDIR=$(cd "$(dirname "$0")" && pwd)
 
-make --quiet -C "$BASEDIR" GOROOT
+GO=${GO:=go} make --quiet -C "$BASEDIR" GOROOT
 export GOROOT="$BASEDIR/GOROOT"
 
-exec go "$@"
+exec $GO "$@"

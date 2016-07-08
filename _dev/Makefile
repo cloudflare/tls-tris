@@ -1,6 +1,7 @@
 all: bin/tris-publicserver bin/tris-localserver
 
-GOROOTINFO := $(shell go version | cut -d' ' -f 3)_$(shell go env GOOS)_$(shell go env GOARCH)
+GO ?= go
+GOROOTINFO := $(shell $(GO) version | cut -d' ' -f 3)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)
 
 .PHONY: GOROOT
 GOROOT: GOROOT/.ok_$(GOROOTINFO)
@@ -9,9 +10,9 @@ GOROOT: GOROOT/.ok_$(GOROOTINFO)
 GOROOT/.ok_$(GOROOTINFO):
 	rm -rf GOROOT
 	mkdir -p GOROOT/pkg
-	cp -r "$(shell go env GOROOT)/src" GOROOT/src
-	cp -r "$(shell go env GOROOT)/pkg/include" GOROOT/pkg/include
-	cp -r "$(shell go env GOROOT)/pkg/tool" GOROOT/pkg/tool
+	cp -r "$(shell $(GO) env GOROOT)/src" GOROOT/src
+	cp -r "$(shell $(GO) env GOROOT)/pkg/include" GOROOT/pkg/include
+	cp -r "$(shell $(GO) env GOROOT)/pkg/tool" GOROOT/pkg/tool
 	rm -r GOROOT/src/crypto/tls
 	ln -s ../../../.. GOROOT/src/crypto/tls
 	@touch "$@"
