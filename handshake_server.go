@@ -140,7 +140,7 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	for _, ks := range hs.clientHello.keyShares {
 		keyShares = append(keyShares, ks.group)
 	}
-	hs.tracef("Version: %x\nCiphersuites: %v\nGroups: %v\nkeyShares: %v\n\n",
+	hs.tracef("Version: %x\nCiphersuites: %x\nGroups: %v\nkeyShares: %v\n\n",
 		hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares)
 
 	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
@@ -275,6 +275,7 @@ Curves:
 	}
 
 	var preferenceList, supportedList []uint16
+
 	if c.config.PreferServerCipherSuites {
 		preferenceList = c.config.cipherSuites()
 		supportedList = hs.clientHello.cipherSuites
@@ -295,6 +296,8 @@ Curves:
 		c.sendAlert(alertHandshakeFailure)
 		return false, errors.New("tls: no cipher suite supported by both client and server")
 	}
+
+	hs.tracef("Server Ciphersuites %x\nPrefer Server Cipher Suites:%v\nChosen Cipher Suite:%x\n", c.config.cipherSuites(), c.config.PreferServerCipherSuites, hs.suite.id)
 
 	// See https://tools.ietf.org/html/rfc7507.
 	for _, id := range hs.clientHello.cipherSuites {
@@ -815,7 +818,7 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 			if version < VersionTLS12 && candidate.flags&suiteTLS12 != 0 {
 				continue
 			}
-			if version == VersionTLS13 && candidate.flags&suiteECDHE == 0 {
+			if version == VersionTLS13 && (candidate.flags&suiteECDHE == 0 || candidate.flags&suiteTLS13 == 0) {
 				continue
 			}
 			hs.suite = candidate

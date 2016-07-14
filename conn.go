@@ -283,24 +283,41 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, typ recordType, a
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case cipher.AEAD:
-			explicitIVLen = 8
-			if len(payload) < explicitIVLen {
-				return false, 0, 0, alertBadRecordMAC
-			}
-			nonce := payload[:8]
-			payload = payload[8:]
+			if hc.version < VersionTLS13 {
+				var nonce []byte
+				if _, ok := c.(*xoredNonceAEAD); ok {
+					explicitIVLen = 0
+					nonce = hc.seq[:]
+				} else {
+					explicitIVLen = 8
+					if len(payload) < explicitIVLen {
+						return false, 0, 0, alertBadRecordMAC
+					}
 
-			copy(hc.additionalData[:], hc.seq[:])
-			copy(hc.additionalData[8:], b.data[:3])
-			n := len(payload) - c.Overhead()
-			hc.additionalData[11] = byte(n >> 8)
-			hc.additionalData[12] = byte(n)
-			var err error
-			payload, err = c.Open(payload[:0], nonce, payload, hc.additionalData[:])
-			if err != nil {
-				return false, 0, 0, alertBadRecordMAC
+					nonce = payload[:8]
+					payload = payload[8:]
+				}
+
+				copy(hc.additionalData[:], hc.seq[:])
+				copy(hc.additionalData[8:], b.data[:3])
+				n := len(payload) - c.Overhead()
+				hc.additionalData[11] = byte(n >> 8)
+				hc.additionalData[12] = byte(n)
+				var err error
+				payload, err = c.Open(payload[:0], nonce, payload, hc.additionalData[:])
+				if err != nil {
+					return false, 0, 0, alertBadRecordMAC
+				}
+				b.resize(recordHeaderLen + explicitIVLen + len(payload))
+			} else {
+				payload, err := c.Open(payload[:0], hc.seq[:], payload, nil)
+				if err != nil {
+					return false, 0, 0, alertBadRecordMAC
+				}
+
+				typ = recordType(payload[len(payload)-1])
+				b.resize(recordHeaderLen + len(payload) - 1)
 			}
-			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
 			if hc.version >= VersionTLS11 {
@@ -333,21 +350,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, typ recordType, a
 			//
 			// However, our behavior matches OpenSSL, so we leak
 			// only as much as they do.
-		case *tls13AEAD:
-			nonce := make([]byte, len(c.IV))
-			copy(nonce, c.IV)
-			offset := len(nonce) - len(hc.seq)
-			for i, s := range hc.seq {
-				nonce[offset+i] = nonce[offset+i] ^ s
-			}
 
-			payload, err := c.aead.Open(payload[:0], nonce, payload, nil)
-			if err != nil {
-				return false, 0, 0, alertBadRecordMAC
-			}
-
-			typ = recordType(payload[len(payload)-1])
-			b.resize(recordHeaderLen + len(payload) - 1)
 		default:
 			panic("unknown cipher type")
 		}
@@ -414,18 +417,39 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case cipher.AEAD:
-			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
-			b.resize(len(b.data) + c.Overhead())
-			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
-			payload := b.data[recordHeaderLen+explicitIVLen:]
-			payload = payload[:payloadLen]
+			if hc.version < VersionTLS13 {
+				var nonce, payload []byte
+				var payloadLen int
+				if _, ok := c.(*xoredNonceAEAD); ok {
+					payloadLen = len(b.data) - recordHeaderLen
+					b.resize(len(b.data) + c.Overhead())
+					nonce = hc.seq[:]
+					payload = b.data[recordHeaderLen:]
+					payload = payload[:payloadLen]
+				} else {
+					payloadLen = len(b.data) - recordHeaderLen - explicitIVLen
+					b.resize(len(b.data) + c.Overhead())
+					nonce = b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
+					payload = b.data[recordHeaderLen+explicitIVLen:]
+					payload = payload[:payloadLen]
+				}
 
-			copy(hc.additionalData[:], hc.seq[:])
-			copy(hc.additionalData[8:], b.data[:3])
-			hc.additionalData[11] = byte(payloadLen >> 8)
-			hc.additionalData[12] = byte(payloadLen)
+				copy(hc.additionalData[:], hc.seq[:])
+				copy(hc.additionalData[8:], b.data[:3])
+				hc.additionalData[11] = byte(payloadLen >> 8)
+				hc.additionalData[12] = byte(payloadLen)
 
-			c.Seal(payload[:0], nonce, payload, hc.additionalData[:])
+				c.Seal(payload[:0], nonce, payload, hc.additionalData[:])
+			} else {
+
+				realType := b.data[0]
+				b.data[0] = byte(recordTypeApplicationData) // opaque_type
+				b.resize(recordHeaderLen + len(payload) + 1 + c.Overhead())
+				payload = b.data[recordHeaderLen : recordHeaderLen+len(payload)+1]
+				payload[len(payload)-1] = realType
+
+				c.Seal(payload[:0], hc.seq[:], payload, nil)
+			}
 		case cbcMode:
 			blockSize := c.BlockSize()
 			if explicitIVLen > 0 {
@@ -436,22 +460,6 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			b.resize(recordHeaderLen + explicitIVLen + len(prefix) + len(finalBlock))
 			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen:], prefix)
 			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen+len(prefix):], finalBlock)
-		case *tls13AEAD:
-			nonce := make([]byte, len(c.IV))
-			copy(nonce, c.IV)
-			offset := len(nonce) - len(hc.seq)
-			for i, s := range hc.seq {
-				nonce[offset+i] = nonce[offset+i] ^ s
-			}
-
-			realType := b.data[0]
-			b.data[0] = byte(recordTypeApplicationData) // opaque_type
-
-			b.resize(recordHeaderLen + len(payload) + 1 + c.aead.Overhead())
-			payload = b.data[recordHeaderLen : recordHeaderLen+len(payload)+1]
-			payload[len(payload)-1] = realType
-
-			c.aead.Seal(payload[:0], nonce, payload, nil)
 		default:
 			panic("unknown cipher type")
 		}
@@ -817,7 +825,11 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 		case cipher.Stream:
 			payloadBytes -= macSize
 		case cipher.AEAD:
-			payloadBytes -= ciph.Overhead()
+			if c.vers < VersionTLS13 {
+				payloadBytes -= ciph.Overhead()
+			} else {
+				payloadBytes -= ciph.Overhead() + 3
+			}
 		case cbcMode:
 			blockSize := ciph.BlockSize()
 			// The payload must fit in a multiple of blockSize, with
@@ -826,8 +838,6 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 			// The MAC is appended before padding so affects the
 			// payload size directly.
 			payloadBytes -= macSize
-		case *tls13AEAD:
-			payloadBytes -= ciph.aead.Overhead() + 3
 		default:
 			panic("unknown cipher type")
 		}
@@ -891,7 +901,10 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			}
 		}
 		if explicitIVLen == 0 {
-			if _, ok := c.out.cipher.(cipher.AEAD); ok {
+			if _, ok := c.out.cipher.(*xoredNonceAEAD); ok {
+				explicitIVLen = 0
+			} else if _, ok := c.out.cipher.(cipher.AEAD); ok {
+
 				explicitIVLen = 8
 				// The AES-GCM construction in TLS has an
 				// explicit nonce so that the nonce can be

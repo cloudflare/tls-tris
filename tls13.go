@@ -3,8 +3,6 @@ package tls
 import (
 	"bytes"
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/subtle"
@@ -110,17 +108,17 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	handshakeTrafficSecret := deriveSecret(hash, handshakeSecret, handshakeCtx, "handshake traffic secret")
 	dumpKeys("Handshake Traffic Secret:", handshakeTrafficSecret)
 
-	cKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write key", 16)
+	cKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write key", hs.suite.keyLen)
 	dumpKeys("Client Write Key:", cKey)
-	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", 12)
+	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", hs.suite.ivLen)
 	dumpKeys("Client Write IV:", cIV)
-	sKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write key", 16)
+	sKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write key", hs.suite.keyLen)
 	dumpKeys("Server Write Key:", sKey)
-	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
+	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", hs.suite.ivLen)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher := aeadTLS13(cKey, cIV)
-	serverCipher := aeadTLS13(sKey, sIV)
+	clientCipher := hs.suite.aead(cKey, cIV)
+	serverCipher := hs.suite.aead(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
@@ -222,17 +220,17 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	trafficSecret0 := deriveSecret(hash, masterSecret, handshakeCtx, "application traffic secret")
 	dumpKeys("Traffic Secret 0:", trafficSecret0)
 
-	cKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write key", 16)
+	cKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write key", hs.suite.keyLen)
 	dumpKeys("Client Write Key:", cKey)
-	cIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write iv", 12)
+	cIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write iv", hs.suite.ivLen)
 	dumpKeys("Client Write IV:", cIV)
-	sKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write key", 16)
+	sKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write key", hs.suite.keyLen)
 	dumpKeys("Server Write Key:", sKey)
-	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", 12)
+	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", hs.suite.ivLen)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher = aeadTLS13(cKey, cIV)
-	serverCipher = aeadTLS13(sKey, sIV)
+	clientCipher = hs.suite.aead(cKey, cIV)
+	serverCipher = hs.suite.aead(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
@@ -309,24 +307,6 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 	dumpKeys("Label:", hkdfLabel)
 
 	return hkdfExpand(hash, secret, hkdfLabel, L)
-}
-
-type tls13AEAD struct {
-	aead cipher.AEAD
-	IV   []byte
-}
-
-func aeadTLS13(key, IV []byte) *tls13AEAD {
-	aes, err := aes.NewCipher(key)
-	if err != nil {
-		panic(err)
-	}
-	aead, err := cipher.NewGCM(aes)
-	if err != nil {
-		panic(err)
-	}
-
-	return &tls13AEAD{aead, IV}
 }
 
 func (hs *serverHandshakeState) tracef(format string, a ...interface{}) {

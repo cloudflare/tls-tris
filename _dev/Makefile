@@ -15,4 +15,5 @@ GOROOT/.ok_$(GOROOTINFO):
 	cp -r "$(shell $(GO) env GOROOT)/pkg/tool" GOROOT/pkg/tool
 	rm -r GOROOT/src/crypto/tls
 	ln -s ../../../.. GOROOT/src/crypto/tls
+	ln -s ../../../../chacha20poly1305 GOROOT/src/crypto/
 	@touch "$@"
