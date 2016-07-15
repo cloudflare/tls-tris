@@ -792,6 +792,10 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 
 			for _, s := range cipherSuites {
 				if s.id == id {
+					if version == VersionTLS13 && s.flags&suiteTLS13 == 0 {
+						continue
+					}
+
 					candidate = s
 					break
 				}

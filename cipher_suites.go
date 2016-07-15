@@ -6,7 +6,6 @@ package tls
 
 import (
 	"crypto/aes"
-	"crypto/chacha20poly1305"
 	"crypto/cipher"
 	"crypto/des"
 	"crypto/hmac"
@@ -81,10 +80,6 @@ var cipherSuites = []*cipherSuite{
 	// and RC4 comes before AES-CBC (because of the Lucky13 attack).
 	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteTLS13, nil, nil, aeadChacha20Poly1305},
 	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12 | suiteTLS13, nil, nil, aeadChacha20Poly1305},
-	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13, nil, nil, aeadAESGCMTLS13},
-	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13, nil, nil, aeadAESGCMTLS13},
-	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
-	{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
@@ -102,6 +97,11 @@ var cipherSuites = []*cipherSuite{
 	{TLS_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, ecdheRSAKA, suiteECDHE, cipher3DES, macSHA1, nil},
 	{TLS_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, rsaKA, 0, cipher3DES, macSHA1, nil},
+
+	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
 }
 
 func cipherRC4(key, iv []byte, isRead bool) interface{} {
@@ -230,7 +230,7 @@ func aeadAESGCMTLS13(key, fixedNonce []byte) cipher.AEAD {
 }
 
 func aeadChacha20Poly1305(key, fixedNonce []byte) cipher.AEAD {
-	aead, err := chacha20poly1305.NewChachaPoly(key)
+	aead, err := NewChachaPoly(key)
 	if err != nil {
 		panic(err)
 	}

@@ -72,7 +72,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 	hs.hello.keyShare = serverKS
 
-	hash := crypto.SHA256 // TODO(filippo)
+	var hash crypto.Hash
+	if hs.suite.flags&suiteSHA384 != 0 {
+		hash = crypto.SHA384
+	} else {
+		hash = crypto.SHA256 // TODO(filippo)
+	}
 
 	resCtxHash := hash.New()
 	resCtxHash.Write(make([]byte, hash.Size()))
@@ -142,14 +147,22 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 
 	// TODO(filippo): need a new, proper type for 1.3 SignatureScheme
-	sigHash := crypto.SHA256 // TODO(filippo): check what the client supports, add support for SHA384
+	var sigHash crypto.Hash
+	var hashType uint8
+	if hs.suite.flags&suiteSHA384 != 0 {
+		sigHash = crypto.SHA384
+		hashType = 0x05
+	} else {
+		sigHash = crypto.SHA256 // TODO(filippo)
+		hashType = 0x04
+	}
 	opts := crypto.SignerOpts(sigHash)
-	sigType := signatureAndHash{hash: 0x04, signature: 0x03} // ecdsa_secp256r1_sha256
+	sigType := signatureAndHash{hash: hashType, signature: 0x03} // ecdsa_secp256r1_sha256
 	if hs.suite.flags&suiteECDSA == 0 {
 		// This is what we are supposed to use, but NSS if off-spec and mint goes with it.
 		//opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
 		//sigType = signatureAndHash{hash: 0x07, signature: 0x00} // rsa_pss_sha256
-		sigType = signatureAndHash{hash: 0x04, signature: 0x01} // rsa_pkcs1_sha256
+		sigType = signatureAndHash{hash: hashType, signature: 0x01} // rsa_pkcs1_sha256
 	}
 
 	hashedData := append(hs.finishedHash.Sum(), resCtx...)

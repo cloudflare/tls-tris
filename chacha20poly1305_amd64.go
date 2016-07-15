@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package chacha20poly1305
+package tls
 
 import (
 	"crypto/cipher"
 	"errors"
+	"strconv"
+	"unsafe"
 )
+
+type chacha20Cipher struct {
+	state [16]uint32
+}
 
 type chacha20poly1305 struct {
 	*chacha20Cipher
@@ -18,6 +24,56 @@ func chacha20Poly1305Open(dst []byte, key []uint32, src, ad []byte) bool
 
 //go:noescape
 func chacha20Poly1305Seal(dst []byte, key []uint32, src, ad []byte)
+
+type KeySizeError int
+type IVSizeError int
+
+func (k KeySizeError) Error() string {
+	return "crypto/chacha20poly1305: invalid key size " + strconv.Itoa(int(k))
+}
+
+func (i IVSizeError) Error() string {
+	return "crypto/chacha20poly1305: invalid iv size " + strconv.Itoa(int(i))
+}
+
+func u8tou32(in []byte) uint32 {
+	if supportsUnaligned {
+		return *(*uint32)(unsafe.Pointer(&in[0]))
+	} else {
+		return uint32(in[0]) ^ uint32(in[1])<<8 ^ uint32(in[2])<<16 ^ uint32(in[3])<<24
+	}
+}
+
+func newChacha(key []byte) (*chacha20Cipher, error) {
+	k := len(key)
+
+	if k != 32 {
+		return nil, KeySizeError(k)
+	}
+
+	c := chacha20Cipher{state: [16]uint32{0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+		u8tou32(key[0:4]), u8tou32(key[4:8]), u8tou32(key[8:12]), u8tou32(key[12:16]),
+		u8tou32(key[16:20]), u8tou32(key[20:24]), u8tou32(key[24:28]), u8tou32(key[28:32]),
+		0, 0, 0, 0},
+	}
+
+	return &c, nil
+}
+
+func (c *chacha20Cipher) setIV(iv []byte, ctr uint32) error {
+	i := len(iv)
+
+	if i != 12 {
+		return IVSizeError(i)
+	}
+
+	c.state[12] = ctr
+	c.state[13] = u8tou32(iv[0:4])
+	c.state[14] = u8tou32(iv[4:8])
+	c.state[15] = u8tou32(iv[8:12])
+
+	return nil
+}
 
 func NewChachaPoly(key []byte) (cipher.AEAD, error) {
 	c, err := newChacha(key)
