@@ -74,7 +74,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 	hs.hello.keyShare = serverKS
 
-	hash := crypto.SHA256 // TODO(filippo)
+	hash := crypto.SHA256
+	if hs.suite.flags&suiteSHA384 != 0 {
+		hash = crypto.SHA384
+	}
+
+	hs.tracef("SignatureScheme: %d CipherSuite: %d\n\n", ks.group, hs.suite.id)
 
 	resCtxHash := hash.New()
 	resCtxHash.Write(make([]byte, hash.Size()))
