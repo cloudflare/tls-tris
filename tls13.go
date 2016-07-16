@@ -76,6 +76,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	hash := crypto.SHA256 // TODO(filippo)
 
+	hs.tracef("SignatureScheme: %d CipherSuite: %d", ks.group, c.cipherSuite)
+
 	resCtxHash := hash.New()
 	resCtxHash.Write(make([]byte, hash.Size()))
 	resCtx := resCtxHash.Sum(nil)
