@@ -48,6 +48,9 @@ const (
 	// suiteTLS12 indicates that the cipher suite should only be advertised
 	// and accepted when using TLS 1.2.
 	suiteTLS12
+	// suiteTLS13 indicates that the cipher suite should only be advertised
+	// and accepted when using TLS 1.3.
+	suiteTLS13
 	// suiteSHA384 indicates that the cipher suite uses SHA384 as the
 	// handshake hash.
 	suiteSHA384
@@ -75,6 +78,8 @@ type cipherSuite struct {
 var cipherSuites = []*cipherSuite{
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA
 	// and RC4 comes before AES-CBC (because of the Lucky13 attack).
+	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteTLS13, nil, nil, aeadChacha20Poly1305},
+	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12 | suiteTLS13, nil, nil, aeadChacha20Poly1305},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM},
 	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
@@ -92,6 +97,11 @@ var cipherSuites = []*cipherSuite{
 	{TLS_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, ecdheRSAKA, suiteECDHE, cipher3DES, macSHA1, nil},
 	{TLS_RSA_WITH_3DES_EDE_CBC_SHA, 24, 20, 8, rsaKA, 0, cipher3DES, macSHA1, nil},
+
+	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCMTLS13},
 }
 
 func cipherRC4(key, iv []byte, isRead bool) interface{} {
@@ -156,6 +166,36 @@ func (f *fixedNonceAEAD) Open(out, nonce, plaintext, additionalData []byte) ([]b
 	return f.aead.Open(out, f.openNonce, plaintext, additionalData)
 }
 
+type xoredNonceAEAD struct {
+	fixedNonce []byte
+	aead       cipher.AEAD
+}
+
+func (f *xoredNonceAEAD) NonceSize() int { return 12 }
+func (f *xoredNonceAEAD) Overhead() int  { return f.aead.Overhead() }
+
+func (f *xoredNonceAEAD) Seal(out, nonce, plaintext, additionalData []byte) []byte {
+	var xoredNonce [12]byte
+	copy(xoredNonce[:], f.fixedNonce)
+
+	for i := 0; i < 8; i++ {
+		xoredNonce[i+4] ^= nonce[i]
+	}
+
+	return f.aead.Seal(out, xoredNonce[:], plaintext, additionalData)
+}
+
+func (f *xoredNonceAEAD) Open(out, nonce, plaintext, additionalData []byte) ([]byte, error) {
+	var xoredNonce [12]byte
+	copy(xoredNonce[:], f.fixedNonce)
+
+	for i := 0; i < 8; i++ {
+		xoredNonce[i+4] ^= nonce[i]
+	}
+
+	return f.aead.Open(out, xoredNonce[:], plaintext, additionalData)
+}
+
 func aeadAESGCM(key, fixedNonce []byte) cipher.AEAD {
 	aes, err := aes.NewCipher(key)
 	if err != nil {
@@ -171,6 +211,34 @@ func aeadAESGCM(key, fixedNonce []byte) cipher.AEAD {
 	copy(nonce2, fixedNonce)
 
 	return &fixedNonceAEAD{nonce1, nonce2, aead}
+}
+
+func aeadAESGCMTLS13(key, fixedNonce []byte) cipher.AEAD {
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	nonce := make([]byte, 12)
+	copy(nonce, fixedNonce)
+
+	return &xoredNonceAEAD{nonce, aead}
+}
+
+func aeadChacha20Poly1305(key, fixedNonce []byte) cipher.AEAD {
+	aead, err := NewChachaPoly(key)
+	if err != nil {
+		panic(err)
+	}
+
+	nonce := make([]byte, 12)
+	copy(nonce, fixedNonce)
+
+	return &xoredNonceAEAD{nonce, aead}
 }
 
 // ssl30MAC implements the SSLv3 MAC function, as defined in
@@ -283,6 +351,8 @@ const (
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 uint16 = 0xc02b
 	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   uint16 = 0xc030
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
+	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
+	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See

@@ -296,6 +296,7 @@ func (test *clientTest) run(t *testing.T, write bool) {
 	if config == nil {
 		config = testConfig
 	}
+	config.CipherSuites = allCipherSuites()[2:]
 	client := Client(clientConn, config)
 
 	doneChan := make(chan bool)

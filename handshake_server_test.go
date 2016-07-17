@@ -39,8 +39,14 @@ var testConfig *Config
 
 func allCipherSuites() []uint16 {
 	ids := make([]uint16, len(cipherSuites))
+	unique := make(map[uint16]bool)
+
 	for i, suite := range cipherSuites {
+		if _, ok := unique[suite.id]; ok {
+			continue
+		}
 		ids[i] = suite.id
+		unique[suite.id] = true
 	}
 
 	return ids
