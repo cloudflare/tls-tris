@@ -283,7 +283,7 @@ func deriveECDHESecret(curve elliptic.Curve, ks, pk []byte) []byte {
 	}
 	x1, _ := curve.ScalarMult(x, y, pk)
 	x1Bytes := x1.Bytes()
-	curveSize := curve.Params().P.BitLen() / 8
+	curveSize := (curve.Params().P.BitLen() + 8 - 1) / 8
 	if len(x1Bytes) != curveSize {
 		buf := make([]byte, curveSize)
 		copy(buf[curveSize-len(x1Bytes):], x1Bytes)
