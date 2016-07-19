@@ -33,28 +33,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	// Conveniently, this logic never affects the cipher suite choice, as
 	// crypto/tls only supports ECDHE.
 
-	for i, keyShare := range hs.clientHello.keyShares {
-		for _, otherKS := range hs.clientHello.keyShares[i+1:] {
-			if keyShare.group == otherKS.group {
-				c.sendAlert(alertIllegalParameter)
-				return errors.New("tls: duplicate key share for the same type")
-			}
-		}
-		supported := false
-		for _, supportedCurve := range hs.clientHello.supportedCurves {
-			if supportedCurve == keyShare.group {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			// FIXME: NSS is off-spec, so warn instead of failing
-			// https://bugzilla.mozilla.org/show_bug.cgi?id=1283646
-			//c.sendAlert(alertIllegalParameter)
-			//return errors.New("tls: received key share for unsupported curve")
-		}
-	}
-
 	var ks *keyShare
 	for _, curveID := range config.curvePreferences() {
 		for _, keyShare := range hs.clientHello.keyShares {
