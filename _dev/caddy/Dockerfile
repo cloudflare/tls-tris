@@ -13,5 +13,6 @@ EXPOSE 80
 EXPOSE 443
 
 ENV TLSDEBUG error
+ENV HOME /root/
 
 CMD [ "/caddy" ]
