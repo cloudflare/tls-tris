@@ -252,7 +252,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 }
 
 func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, crypto.Hash, error) {
-	// XXX NSS doesn't speak PSS, so if PSS is not offered, allow PKCS1
+	// XXX NSS doesn't speak PSS, so if PSS is not offered, allow PKCS1 (off-spec)
 	nssPKCS1Compatibility := true
 	for _, sah := range hs.clientHello.signatureAndHashes {
 		if sah.hash == 0x07 && sah.signature <= 0x02 { // rsa_pss_*
@@ -295,8 +295,16 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, 
 			case 0x02: // rsa_pkcs1_sha1
 				return sah, crypto.SHA1, nil
 			case 0x04: // rsa_pkcs1_sha256
+				// XXX NSS requires PRF hash and signature hash to match (off-spec)
+				if hs.suite.flags&suiteSHA384 != 0 {
+					continue
+				}
 				return sah, crypto.SHA256, nil
 			case 0x05: // rsa_pkcs1_sha384
+				// XXX NSS requires PRF hash and signature hash to match (off-spec)
+				if hs.suite.flags&suiteSHA384 == 0 {
+					continue
+				}
 				return sah, crypto.SHA384, nil
 			case 0x06: // rsa_pkcs1_sha512
 				return sah, crypto.SHA512, nil
