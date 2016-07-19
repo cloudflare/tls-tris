@@ -140,8 +140,8 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	for _, ks := range hs.clientHello.keyShares {
 		keyShares = append(keyShares, ks.group)
 	}
-	hs.tracef("Version: %x\nCiphersuites: %v\nGroups: %v\nkeyShares: %v\n\n",
-		hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares)
+	hs.tracef("Version: %x\nCiphersuites: %v\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
+		hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares, hs.clientHello.signatureAndHashes)
 
 	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
 	if !ok {

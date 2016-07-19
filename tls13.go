@@ -5,8 +5,10 @@ import (
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -79,8 +81,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		hash = crypto.SHA384
 	}
 
-	hs.tracef("SignatureScheme: %d CipherSuite: %d\n\n", ks.group, hs.suite.id)
-
 	resCtxHash := hash.New()
 	resCtxHash.Write(make([]byte, hash.Size()))
 	resCtx := resCtxHash.Sum(nil)
@@ -149,15 +149,19 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 
 	// TODO(filippo): need a new, proper type for 1.3 SignatureScheme
-	sigHash := crypto.SHA256 // TODO(filippo): check what the client supports, add support for SHA384
-	opts := crypto.SignerOpts(sigHash)
-	sigType := signatureAndHash{hash: 0x04, signature: 0x03} // ecdsa_secp256r1_sha256
-	if hs.suite.flags&suiteECDSA == 0 {
-		// This is what we are supposed to use, but NSS if off-spec and mint goes with it.
-		//opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
-		//sigType = signatureAndHash{hash: 0x07, signature: 0x00} // rsa_pss_sha256
-		sigType = signatureAndHash{hash: 0x04, signature: 0x01} // rsa_pkcs1_sha256
+
+	sigScheme, sigHash, err := hs.selectTLS13SignatureScheme()
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return err
 	}
+
+	opts := crypto.SignerOpts(sigHash)
+	if sigScheme.hash == 0x07 && sigScheme.signature <= 0x02 { // rsa_pss_*
+		opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
+	}
+
+	hs.tracef("Group: %d\nCipherSuite: %d\nSigScheme: %d\n\n", ks.group, hs.suite.id, sigScheme)
 
 	hashedData := append(hs.finishedHash.Sum(), resCtx...)
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hashedData)
@@ -168,7 +172,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	verifyMsg := &certificateVerifyMsg{
 		hasSignatureAndHash: true,
-		signatureAndHash:    sigType,
+		signatureAndHash:    sigScheme,
 		signature:           signature,
 	}
 	hs.finishedHash.Write(verifyMsg.marshal())
@@ -245,6 +249,84 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	c.out.changeCipherSpec()
 
 	return nil
+}
+
+func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, crypto.Hash, error) {
+	// XXX NSS doesn't speak PSS, so if PSS is not offered, allow PKCS1
+	nssPKCS1Compatibility := true
+	for _, sah := range hs.clientHello.signatureAndHashes {
+		if sah.hash == 0x07 && sah.signature <= 0x02 { // rsa_pss_*
+			nssPKCS1Compatibility = false
+		}
+	}
+
+	pk := hs.cert.PrivateKey.(crypto.Signer).Public()
+	var pkType string
+	if _, ok := pk.(*rsa.PublicKey); ok {
+		pkType = "rsa"
+	} else if pk, ok := pk.(*ecdsa.PublicKey); ok {
+		switch pk.Curve {
+		case elliptic.P256():
+			pkType = "p256"
+		case elliptic.P384():
+			pkType = "p384"
+		case elliptic.P521():
+			pkType = "p521"
+		default:
+			return signatureAndHash{}, 0, errors.New("tls: unknown ECDSA certificate curve")
+		}
+	} else {
+		return signatureAndHash{}, 0, errors.New("tls: unknown certificate key type")
+	}
+
+	for _, sah := range hs.clientHello.signatureAndHashes {
+		switch {
+		case pkType == "rsa" && sah.hash == 0x07 && sah.signature <= 0x02: // rsa_pss_*
+			switch sah.signature {
+			case 0x00: // rsa_pss_sha256
+				return sah, crypto.SHA256, nil
+			case 0x01: // rsa_pss_sha384
+				return sah, crypto.SHA384, nil
+			case 0x02: // rsa_pss_sha512
+				return sah, crypto.SHA512, nil
+			}
+		case pkType == "rsa" && nssPKCS1Compatibility && sah.signature == 0x01: // rsa_pkcs1_*
+			switch sah.hash {
+			case 0x02: // rsa_pkcs1_sha1
+				return sah, crypto.SHA1, nil
+			case 0x04: // rsa_pkcs1_sha256
+				return sah, crypto.SHA256, nil
+			case 0x05: // rsa_pkcs1_sha384
+				return sah, crypto.SHA384, nil
+			case 0x06: // rsa_pkcs1_sha512
+				return sah, crypto.SHA512, nil
+			}
+
+		case pkType == "p256" && sah.signature == 0x03 && sah.hash == 0x04: // ecdsa_secp256r1_sha256
+			return sah, crypto.SHA256, nil
+		case pkType == "p384" && sah.signature == 0x03 && sah.hash == 0x05: // ecdsa_secp384r1_sha384
+			return sah, crypto.SHA384, nil
+		case pkType == "p521" && sah.signature == 0x03 && sah.hash == 0x06: // ecdsa_secp521r1_sha512
+			return sah, crypto.SHA512, nil
+		}
+	}
+
+	// Fallbacks (https://tlswg.github.io/tls13-spec/#rfc.section.4.3.1.1)
+	switch pkType {
+	case "rsa":
+		if nssPKCS1Compatibility {
+			return signatureAndHash{hash: 0x04, signature: 0x01}, crypto.SHA256, nil // rsa_pkcs1_sha256
+		}
+		return signatureAndHash{hash: 0x07, signature: 0x00}, crypto.SHA256, nil // rsa_pss_sha256
+	case "p256":
+		return signatureAndHash{hash: 0x04, signature: 0x03}, crypto.SHA256, nil // ecdsa_secp256r1_sha256
+	case "p384":
+		return signatureAndHash{hash: 0x05, signature: 0x03}, crypto.SHA384, nil // ecdsa_secp384r1_sha384
+	case "p521":
+		return signatureAndHash{hash: 0x06, signature: 0x03}, crypto.SHA512, nil // ecdsa_secp521r1_sha512
+	default:
+		panic("unreachable")
+	}
 }
 
 func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byte {
