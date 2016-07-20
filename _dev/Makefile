@@ -1,5 +1,3 @@
-all: bin/tris-publicserver bin/tris-localserver
-
 GO ?= go
 GOROOTINFO := $(shell $(GO) version | cut -d' ' -f 3)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)
 
@@ -15,4 +13,10 @@ GOROOT/.ok_$(GOROOTINFO):
 	cp -r "$(shell $(GO) env GOROOT)/pkg/tool" GOROOT/pkg/tool
 	rm -r GOROOT/src/crypto/tls
 	ln -s ../../../.. GOROOT/src/crypto/tls
+	GOROOT="$(CURDIR)/GOROOT" $(GO) install -v std
+	GOROOT="$(CURDIR)/GOROOT" $(GO) install -race -v std
 	@touch "$@"
+
+.PHONY: clean
+clean:
+	rm -rf GOROOT
