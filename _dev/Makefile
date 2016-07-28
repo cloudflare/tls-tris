@@ -14,7 +14,9 @@ GOROOT/.ok_$(GOROOTINFO):
 	rm -r GOROOT/src/crypto/tls
 	ln -s ../../../.. GOROOT/src/crypto/tls
 	GOROOT="$(CURDIR)/GOROOT" $(GO) install -v std
+ifeq ($(shell go env CGO_ENABLED),1)
 	GOROOT="$(CURDIR)/GOROOT" $(GO) install -race -v std
+endif
 	@touch "$@"
 
 .PHONY: clean
