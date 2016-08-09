@@ -145,6 +145,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hashedData)
 	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], opts)
 	if err != nil {
+		c.sendAlert(alertInternalError)
 		return err
 	}
 
