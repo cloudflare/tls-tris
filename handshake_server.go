@@ -17,6 +17,10 @@ import (
 	"io"
 )
 
+type Committer interface {
+	Commit() error
+}
+
 // serverHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
@@ -244,6 +248,9 @@ Curves:
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return false, err
+	}
+	if committer, ok := c.conn.(Committer); ok {
+		committer.Commit()
 	}
 	if hs.clientHello.scts {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
