@@ -250,7 +250,10 @@ Curves:
 		return false, err
 	}
 	if committer, ok := c.conn.(Committer); ok {
-		committer.Commit()
+		err = committer.Commit()
+		if err != nil {
+			return false, err
+		}
 	}
 	if hs.clientHello.scts {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
