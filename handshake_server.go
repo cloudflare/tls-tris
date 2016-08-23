@@ -144,10 +144,17 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	for _, ks := range hs.clientHello.keyShares {
 		keyShares = append(keyShares, ks.group)
 	}
-	hs.tracef("Version: %x\nCiphersuites: %v\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
-		hs.clientHello.vers, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves, keyShares, hs.clientHello.signatureAndHashes)
+	hs.tracef("Version: %x\nDraft Version: %v\nCiphersuites: %v\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
+		hs.clientHello.vers, hs.clientHello.draftVersion, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves,
+		keyShares, hs.clientHello.signatureAndHashes)
 
-	c.vers, ok = config.mutualVersion(hs.clientHello.vers, false)
+	clientVers := hs.clientHello.vers
+	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 0 {
+		hs.tracef("!! client offered an unsupported 1.3 draft version %v\n", hs.clientHello.draftVersion)
+		clientVers = VersionTLS12
+	}
+
+	c.vers, ok = config.mutualVersion(clientVers, false)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
 		return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)

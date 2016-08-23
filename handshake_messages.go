@@ -26,6 +26,7 @@ type clientHelloMsg struct {
 	secureRenegotiationSupported bool
 	alpnProtocols                []string
 	keyShares                    []keyShare
+	draftVersion                 uint16
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -517,10 +518,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				d = d[4+dataLen:]
 			}
 		case 0xff02: // Draft Version Extension
-			version := uint16(data[0]<<8) + uint16(data[1])
-			if version != 13 {
-				m.vers = VersionTLS12
-			}
+			m.draftVersion = uint16(data[0]<<8) + uint16(data[1])
 		}
 		data = data[length:]
 	}
