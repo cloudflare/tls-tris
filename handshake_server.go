@@ -149,7 +149,7 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		keyShares, hs.clientHello.signatureAndHashes)
 
 	clientVers := hs.clientHello.vers
-	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 0 {
+	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 14 && hs.clientHello.draftVersion != 0 {
 		hs.tracef("!! client offered an unsupported 1.3 draft version %v\n", hs.clientHello.draftVersion)
 		clientVers = VersionTLS12
 	}
