@@ -3,8 +3,6 @@ package tls
 import (
 	"bytes"
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
@@ -102,8 +100,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher := aeadTLS13(cKey, cIV)
-	serverCipher := aeadTLS13(sKey, sIV)
+	clientCipher := aeadAESGCM13(cKey, cIV)
+	serverCipher := aeadAESGCM13(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
@@ -219,8 +217,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", 12)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher = aeadTLS13(cKey, cIV)
-	serverCipher = aeadTLS13(sKey, sIV)
+	clientCipher = aeadAESGCM13(cKey, cIV)
+	serverCipher = aeadAESGCM13(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
@@ -383,24 +381,6 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 	dumpKeys("Label:", hkdfLabel)
 
 	return hkdfExpand(hash, secret, hkdfLabel, L)
-}
-
-type tls13AEAD struct {
-	aead cipher.AEAD
-	IV   []byte
-}
-
-func aeadTLS13(key, IV []byte) *tls13AEAD {
-	aes, err := aes.NewCipher(key)
-	if err != nil {
-		panic(err)
-	}
-	aead, err := cipher.NewGCM(aes)
-	if err != nil {
-		panic(err)
-	}
-
-	return &tls13AEAD{aead, IV}
 }
 
 func (hs *serverHandshakeState) tracef(format string, a ...interface{}) {
