@@ -40,8 +40,7 @@ Just use that instead of the `go` tool.
 ./_dev/go.sh build github.com/mholt/caddy
 ```
 
-Since we assume that if you are using tls-tris you want 1.3, a hardcoded MaxVersion
-of 1.2 is overridden to 1.3 automatically.
+*Note: to get Caddy to use TLS 1.3 you'll have to apply the patch at `_dev/caddy/caddy.patch`.*
 
 ## Debugging
 

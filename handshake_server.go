@@ -144,7 +144,7 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	for _, ks := range hs.clientHello.keyShares {
 		keyShares = append(keyShares, ks.group)
 	}
-	hs.tracef("Version: %x\nDraft Version: %v\nCiphersuites: %v\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
+	hs.tracef("Version: %x\nDraft Version: %v\nCiphersuites: %x\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
 		hs.clientHello.vers, hs.clientHello.draftVersion, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves,
 		keyShares, hs.clientHello.signatureAndHashes)
 

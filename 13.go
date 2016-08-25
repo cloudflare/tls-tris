@@ -145,7 +145,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
 	}
 
-	hs.tracef("Group: %d\nCipherSuite: %d\nSigScheme: %d\n\n", ks.group, hs.suite.id, sigScheme)
+	hs.tracef("Group: %d\nCipherSuite: %x\nSigScheme: %d\n\n", ks.group, hs.suite.id, sigScheme)
 
 	hashedData := append(hs.finishedHash.Sum(), resCtx...)
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hashedData)

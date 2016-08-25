@@ -545,11 +545,6 @@ func (c *Config) maxVersion(isClient bool) uint16 {
 	if isClient && c.MaxVersion == VersionTLS13 {
 		return VersionTLS12
 	}
-	if !isClient && c.MaxVersion == VersionTLS12 {
-		// XXX: If you are using tls-tris, we assume you want 1.3 even
-		// if the package hardcoded VersionTLS12.
-		return VersionTLS13
-	}
 	return c.MaxVersion
 }
 
