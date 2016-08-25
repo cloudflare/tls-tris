@@ -508,6 +508,24 @@ func TestHandshakeClientAES256GCMSHA384(t *testing.T) {
 	runClientTestTLS12(t, test)
 }
 
+func TestHandshakeClientRSACHACHA(t *testing.T) {
+	test := &clientTest{
+		name:    "RSA-CHACHA20",
+		command: []string{"openssl", "s_server", "-cipher", "ECDHE-RSA-CHACHA20-POLY1305"},
+	}
+	runClientTestTLS12(t, test)
+}
+
+func TestHandshakeClientECDSACHACHA(t *testing.T) {
+	test := &clientTest{
+		name:    "ECDSA-CHACHA20",
+		command: []string{"openssl", "s_server", "-cipher", "ECDHE-ECDSA-CHACHA20-POLY1305"},
+		cert:    testECDSACertificate,
+		key:     testECDSAPrivateKey,
+	}
+	runClientTestTLS12(t, test)
+}
+
 func TestHandshakeClientCertRSA(t *testing.T) {
 	config := *testConfig
 	cert, _ := X509KeyPair([]byte(clientCertificatePEM), []byte(clientKeyPEM))

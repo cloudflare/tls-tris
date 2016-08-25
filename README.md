@@ -13,6 +13,19 @@ DO NOT USE THIS FOR THE SAKE OF EVERYTHING THAT'S GOOD AND JUST.
 
 [![Build Status](https://travis-ci.org/cloudflare/tls-tris.svg?branch=master)](https://travis-ci.org/cloudflare/tls-tris)
 
+## Important: custom compiler
+
+tls-tris will only build with the modified Go compiler you'll find here:
+
+https://github.com/cloudflare/go/tree/1.7
+
+Simply clone that repository at that branch, run `make.bash` in `src/`,
+and then run the following command in each shell before using tls-tris.
+
+```
+export PATH="/path/to/cloudflare/go/bin:$PATH"
+```
+
 ## Usage
 
 Since `crypto/tls` is very deeply (and not that elegantly) coupled with the Go stdlib,

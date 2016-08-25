@@ -34,6 +34,8 @@ import (
 // to updated a specific test. Since the reference implementation will always
 // generate fresh random numbers, large parts of the reference connection will
 // always change.
+//
+// The ChaCha20 tests require OpenSSL 1.1, while all others assume 1.0.2.
 
 var update = flag.Bool("update", false, "update golden files on disk")
 

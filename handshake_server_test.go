@@ -747,6 +747,14 @@ func TestHandshakeServerECDHEECDSAAES(t *testing.T) {
 	runServerTestTLS12(t, test)
 }
 
+func TestHandshakeServerCHACHA(t *testing.T) {
+	test := &serverTest{
+		name:    "RSA-CHACHA20",
+		command: []string{"openssl", "s_client", "-no_ticket", "-cipher", "ECDHE-RSA-CHACHA20-POLY1305"},
+	}
+	runServerTestTLS12(t, test)
+}
+
 func TestHandshakeServerALPN(t *testing.T) {
 	config := *testConfig
 	config.NextProtos = []string{"proto1", "proto2"}

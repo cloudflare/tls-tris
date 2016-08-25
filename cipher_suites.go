@@ -6,6 +6,7 @@ package tls
 
 import (
 	"crypto/aes"
+	"crypto/chacha20poly1305"
 	"crypto/cipher"
 	"crypto/des"
 	"crypto/hmac"
@@ -75,6 +76,8 @@ type cipherSuite struct {
 var cipherSuites = []*cipherSuite{
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA
 	// and RC4 comes before AES-CBC (because of the Lucky13 attack).
+	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
+	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM12},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM12},
 	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM12},
@@ -220,6 +223,18 @@ func aeadAESGCM13(key, fixedNonce []byte) cipher.AEAD {
 	return &xoredNonceAEAD{nonce, aead}
 }
 
+func aeadChaCha20Poly1305(key, fixedNonce []byte) cipher.AEAD {
+	aead, err := chacha20poly1305.NewAEAD(key)
+	if err != nil {
+		panic(err)
+	}
+
+	nonce := make([]byte, 12)
+	copy(nonce, fixedNonce)
+
+	return &xoredNonceAEAD{nonce, aead}
+}
+
 // ssl30MAC implements the SSLv3 MAC function, as defined in
 // www.mozilla.org/projects/security/pki/nss/ssl/draft302.txt section 5.2.3.1
 type ssl30MAC struct {
@@ -330,6 +345,8 @@ const (
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 uint16 = 0xc02b
 	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   uint16 = 0xc030
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
+	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
+	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See

@@ -3,6 +3,7 @@ package tls
 import (
 	"bytes"
 	"crypto"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
@@ -93,15 +94,22 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	cKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write key", hs.suite.keyLen)
 	dumpKeys("Client Write Key:", cKey)
-	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", 12) // TODO(filippo)
+	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", 12)
 	dumpKeys("Client Write IV:", cIV)
 	sKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write key", hs.suite.keyLen)
 	dumpKeys("Server Write Key:", sKey)
 	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher := aeadAESGCM13(cKey, cIV)
-	serverCipher := aeadAESGCM13(sKey, sIV)
+	var aead func([]byte, []byte) cipher.AEAD
+	if hs.suite.id == TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 || hs.suite.id == TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 {
+		aead = aeadChaCha20Poly1305
+	} else {
+		aead = aeadAESGCM13
+	}
+
+	clientCipher := aead(cKey, cIV)
+	serverCipher := aead(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
@@ -217,8 +225,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", 12)
 	dumpKeys("Server Write IV:", sIV)
 
-	clientCipher = aeadAESGCM13(cKey, cIV)
-	serverCipher = aeadAESGCM13(sKey, sIV)
+	clientCipher = aead(cKey, cIV)
+	serverCipher = aead(sKey, sIV)
 
 	c.in.prepareCipherSpec(c.vers, clientCipher, nil)
 	c.out.prepareCipherSpec(c.vers, serverCipher, nil)
