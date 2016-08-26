@@ -19,6 +19,10 @@ ifeq ($(shell go env CGO_ENABLED),1)
 endif
 	@touch "$@"
 
+go/bin/go:
+	git clone --branch 1.7 --single-branch --depth 1 https://github.com/cloudflare/go
+	cd go/src && ./make.bash
+
 .PHONY: clean
 clean:
-	rm -rf GOROOT
+	rm -rf GOROOT go
