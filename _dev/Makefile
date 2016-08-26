@@ -19,14 +19,17 @@ ifeq ($(shell go env CGO_ENABLED),1)
 endif
 	@touch "$@"
 
-.PHONY: go/bin/go
-go/bin/go: .ok_go_9e44e65c7b869029a70b995e758cb17ce7ed9eec
+GO_COMMIT := 2b0e6a048c49436a3c532e8d5b5aa927452c2d2c
 
-.ok_go_9e44e65c7b869029a70b995e758cb17ce7ed9eec:
+.PHONY: go/bin/go
+go/bin/go: .ok_go_$(GO_COMMIT)
+
+.ok_go_$(GO_COMMIT):
 	git clone --branch 1.7 --single-branch --depth 25 https://github.com/cloudflare/go
-	cd go/src && git checkout 9e44e65c7b869029a70b995e758cb17ce7ed9eec && ./make.bash
+	cd go && git checkout $(GO_COMMIT)
+	cd go/src && GOROOT_BOOTSTRAP="$(shell $(GO) env GOROOT)" ./make.bash
 	@touch "$@"
 
 .PHONY: clean
 clean:
-	rm -rf GOROOT go
+	rm -rf GOROOT go .ok_go_*
