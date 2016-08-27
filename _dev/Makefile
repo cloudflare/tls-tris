@@ -22,9 +22,10 @@ endif
 GO_COMMIT := 2b0e6a048c49436a3c532e8d5b5aa927452c2d2c
 
 .PHONY: go/bin/go
-go/bin/go: .ok_go_$(GO_COMMIT)
+go/bin/go: .ok_go_$(GO_COMMIT)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)
 
-.ok_go_$(GO_COMMIT):
+.ok_go_$(GO_COMMIT)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH):
+	rm -rf go .ok_go_*
 	git clone --branch 1.7 --single-branch --depth 25 https://github.com/cloudflare/go
 	cd go && git checkout $(GO_COMMIT)
 	cd go/src && GOROOT_BOOTSTRAP="$(shell $(GO) env GOROOT)" ./make.bash
