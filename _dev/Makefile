@@ -19,7 +19,7 @@ ifeq ($(shell go env CGO_ENABLED),1)
 endif
 	@touch "$@"
 
-GO_COMMIT := 2b0e6a048c49436a3c532e8d5b5aa927452c2d2c
+GO_COMMIT := 7f0d4506a23398116934a6b2b31bc9cda63402b1
 
 .PHONY: go/bin/go
 go/bin/go: .ok_go_$(GO_COMMIT)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)
