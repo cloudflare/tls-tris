@@ -763,6 +763,9 @@ func (c *Conn) sendAlertLocked(err alert) error {
 	c.tmp[1] = byte(err)
 
 	_, writeErr := c.writeRecordLocked(recordTypeAlert, c.tmp[0:2])
+	if c.buffering {
+		c.flush()
+	}
 	if err == alertCloseNotify {
 		// closeNotify is a special case in that it isn't an error.
 		return writeErr
