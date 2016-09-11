@@ -1282,6 +1282,10 @@ func (c *Conn) Handshake() error {
 	}
 	if c.handshakeErr == nil {
 		c.handshakes++
+	} else {
+		// If an error occurred during the hadshake try to flush the
+		// alert that might be left in the buffer.
+		c.flush()
 	}
 	return c.handshakeErr
 }

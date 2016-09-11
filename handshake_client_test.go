@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -1061,5 +1062,45 @@ func TestBuffering(t *testing.T) {
 
 	if n := serverWCC.numWrites; n != 2 {
 		t.Errorf("expected server handshake to complete with only two writes, but saw %d", n)
+	}
+}
+
+func TestAlertFlushing(t *testing.T) {
+	c, s := net.Pipe()
+	done := make(chan bool)
+
+	clientWCC := &writeCountingConn{Conn: c}
+	serverWCC := &writeCountingConn{Conn: s}
+
+	var serverConfig Config
+	serverConfig = *testConfig
+
+	// Cause a signature-time error
+	brokenKey := rsa.PrivateKey{PublicKey: testRSAPrivateKey.PublicKey}
+	brokenKey.D = big.NewInt(42)
+	serverConfig.Certificates = []Certificate{{
+		Certificate: [][]byte{testRSACertificate},
+		PrivateKey:  &brokenKey,
+	}}
+
+	go func() {
+		Server(serverWCC, &serverConfig).Handshake()
+		serverWCC.Close()
+		done <- true
+	}()
+
+	err := Client(clientWCC, testConfig).Handshake()
+	if err == nil || err == io.EOF {
+		t.Fatal("expected to see a remote error on the client")
+	}
+	clientWCC.Close()
+	<-done
+
+	if n := clientWCC.numWrites; n != 1 {
+		t.Errorf("expected client handshake to complete with one write, but saw %d", n)
+	}
+
+	if n := serverWCC.numWrites; n != 1 {
+		t.Errorf("expected server handshake to complete with one write, but saw %d", n)
 	}
 }
