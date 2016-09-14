@@ -33,11 +33,9 @@ The script also transparently fetches the modified custom CloudFlare Go compiler
 
 ## Debugging
 
-The environment variable `TLSDEBUG` has three recognized values:
+The environment variable `TLSDEBUG` has one recognized values:
 
-  * `live`: print to stderr a handshake trace and error stacks
-  * `keys`: like `live`, but also print key material and derivation steps
-  * `error`: like `live`, but only dump to stderr if an error occurs
+  * `error`: if an handshake error occurs, print the CH and stack trace
 
 ## Running the NSS test client
 

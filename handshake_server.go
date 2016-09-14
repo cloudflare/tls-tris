@@ -5,7 +5,6 @@
 package tls
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
@@ -37,8 +36,6 @@ type serverHandshakeState struct {
 	masterSecret    []byte
 	certsFromClient [][]byte
 	cert            *Certificate
-
-	trace bytes.Buffer
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -144,13 +141,9 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	for _, ks := range hs.clientHello.keyShares {
 		keyShares = append(keyShares, ks.group)
 	}
-	hs.tracef("Version: %x\nDraft Version: %v\nCiphersuites: %x\nGroups: %v\nKeyShares: %v\nSigSchemes: %v\n\n",
-		hs.clientHello.vers, hs.clientHello.draftVersion, hs.clientHello.cipherSuites, hs.clientHello.supportedCurves,
-		keyShares, hs.clientHello.signatureAndHashes)
 
 	clientVers := hs.clientHello.vers
 	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 14 && hs.clientHello.draftVersion != 0 {
-		hs.tracef("!! client offered an unsupported 1.3 draft version %v\n", hs.clientHello.draftVersion)
 		clientVers = VersionTLS12
 	}
 

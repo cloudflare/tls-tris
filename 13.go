@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"runtime/debug"
 )
@@ -20,8 +19,6 @@ import (
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
-
-	hs.dump("ClientHello:", hs.clientHello.marshal())
 
 	// Group choice logic
 	//
@@ -67,7 +64,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
 	}
-	dumpKeys("ecdheSecret:", ecdheSecret)
 
 	hs.c.cipherSuite, hs.hello.cipherSuite = hs.suite.id, hs.suite.id
 	hs.c.clientHello = hs.clientHello.marshal()
@@ -76,30 +72,21 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	hs.finishedHash.discardHandshakeBuffer()
 	hs.finishedHash.Write(hs.clientHello.marshal())
 	hs.finishedHash.Write(hs.hello.marshal())
-	hs.dump("ServerHello:", hs.hello.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 		return err
 	}
 
 	earlySecret := hkdfExtract(hash, nil, nil)
-	dumpKeys("Early Secret:", earlySecret)
 	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
-	dumpKeys("Handshake Secret:", handshakeSecret)
 
 	handshakeCtx := hs.finishedHash.Sum()
-	dumpKeys("Messages Hash:", handshakeCtx)
 
 	handshakeTrafficSecret := deriveSecret(hash, handshakeSecret, handshakeCtx, "handshake traffic secret")
-	dumpKeys("Handshake Traffic Secret:", handshakeTrafficSecret)
 
 	cKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write key", hs.suite.keyLen)
-	dumpKeys("Client Write Key:", cKey)
 	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", 12)
-	dumpKeys("Client Write IV:", cIV)
 	sKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write key", hs.suite.keyLen)
-	dumpKeys("Server Write Key:", sKey)
 	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
-	dumpKeys("Server Write IV:", sIV)
 
 	var aead func([]byte, []byte) cipher.AEAD
 	if hs.suite.id == TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 || hs.suite.id == TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 {
@@ -117,7 +104,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	c.out.changeCipherSpec()
 
 	hs.finishedHash.Write(hs.hello.marshalEncExtensions())
-	hs.dump("EncryptedExtensions:", hs.hello.marshalEncExtensions())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshalEncExtensions()); err != nil {
 		return err
 	}
@@ -127,7 +113,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		certificates:   hs.cert.Certificate,
 	}
 	hs.finishedHash.Write(certMsg.marshal())
-	hs.dump("Certificate:", certMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
 		return err
 	}
@@ -145,8 +130,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
 	}
 
-	hs.tracef("Group: %d\nCipherSuite: %x\nSigScheme: %d\n\n", ks.group, hs.suite.id, sigScheme)
-
 	hashedData := append(hs.finishedHash.Sum(), resCtx...)
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hashedData)
 	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], opts)
@@ -161,15 +144,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		signature:           signature,
 	}
 	hs.finishedHash.Write(verifyMsg.marshal())
-	hs.dump("CertificateVerify", verifyMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
 		return err
 	}
 
 	serverFinishedKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "server finished", hash.Size())
-	dumpKeys("Server Finished Key:", serverFinishedKey)
 	clientFinishedKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "client finished", hash.Size())
-	dumpKeys("Client Finished Key:", clientFinishedKey)
 
 	h := hmac.New(hash.New, serverFinishedKey)
 	h.Write(hs.finishedHash.Sum())
@@ -179,7 +159,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		verifyData: verifyData,
 	}
 	hs.finishedHash.Write(serverFinished.marshal())
-	hs.dump("Finished:", serverFinished.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, serverFinished.marshal()); err != nil {
 		return err
 	}
@@ -198,12 +177,10 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(clientFinished, msg)
 	}
-	hs.dump("Client Finished received:", clientFinished.verifyData)
 	h = hmac.New(hash.New, clientFinishedKey)
 	h.Write(hs.finishedHash.Sum())
 	h.Write(resCtx)
 	expectedVerifyData := h.Sum(nil)
-	hs.dump("Client Finished expected:", expectedVerifyData)
 	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
 		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
 		c.sendAlert(alertHandshakeFailure)
@@ -211,19 +188,13 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 
 	masterSecret := hkdfExtract(hash, nil, handshakeSecret)
-	dumpKeys("Master Secret:", masterSecret)
 	handshakeCtx = hs.finishedHash.Sum()
 	trafficSecret0 := deriveSecret(hash, masterSecret, handshakeCtx, "application traffic secret")
-	dumpKeys("Traffic Secret 0:", trafficSecret0)
 
 	cKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write key", hs.suite.keyLen)
-	dumpKeys("Client Write Key:", cKey)
 	cIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write iv", 12)
-	dumpKeys("Client Write IV:", cIV)
 	sKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write key", hs.suite.keyLen)
-	dumpKeys("Server Write Key:", sKey)
 	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", 12)
-	dumpKeys("Server Write IV:", sIV)
 
 	clientCipher = aead(cKey, cIV)
 	serverCipher = aead(sKey, sIV)
@@ -327,7 +298,6 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	message = append(message, context...)
 	message = append(message, 0)
 	message = append(message, data...)
-	dumpKeys("Padded message to sign:", message)
 	h := hash.New()
 	h.Write(message)
 	return h.Sum(nil)
@@ -386,31 +356,12 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 	z[0] = byte(len(hashValue))
 	copy(z[1:], hashValue)
 
-	dumpKeys("Label:", hkdfLabel)
-
 	return hkdfExpand(hash, secret, hkdfLabel, L)
 }
 
 // QuietError is an error wrapper that prevents the verbose handshake log
 // dump on errors. Exposed for use by GetCertificate.
 type QuietError error
-
-func (hs *serverHandshakeState) tracef(format string, a ...interface{}) {
-	var output io.Writer
-	switch os.Getenv("TLSDEBUG") {
-	case "error":
-		output = &hs.trace
-	case "live", "keys":
-		output = os.Stderr
-	default:
-		return
-	}
-	fmt.Fprintf(output, format, a...)
-}
-
-func (hs *serverHandshakeState) dump(label string, data []byte) {
-	hs.tracef("%s\n%s\n", label, hex.Dump(data))
-}
 
 func (hs *serverHandshakeState) traceErr(err error) {
 	if err == nil {
@@ -419,14 +370,10 @@ func (hs *serverHandshakeState) traceErr(err error) {
 	if _, ok := err.(QuietError); ok {
 		return
 	}
-	hs.tracef("%s\n%v\n", debug.Stack(), err)
 	if os.Getenv("TLSDEBUG") == "error" {
-		io.Copy(os.Stderr, &hs.trace)
-	}
-}
-
-func dumpKeys(label string, data []byte) {
-	if os.Getenv("TLSDEBUG") == "keys" {
-		fmt.Fprintf(os.Stderr, "%s\n%s\n", label, hex.Dump(data))
+		if hs != nil && hs.clientHello != nil {
+			os.Stderr.WriteString(hex.Dump(hs.clientHello.marshal()))
+		}
+		fmt.Fprintf(os.Stderr, "\n%s\n", debug.Stack())
 	}
 }
