@@ -361,7 +361,13 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 
 // QuietError is an error wrapper that prevents the verbose handshake log
 // dump on errors. Exposed for use by GetCertificate.
-type QuietError error
+type QuietError struct {
+	Err error
+}
+
+func (e QuietError) Error() string {
+	return e.Err.Error()
+}
 
 func (hs *serverHandshakeState) traceErr(err error) {
 	if err == nil {
