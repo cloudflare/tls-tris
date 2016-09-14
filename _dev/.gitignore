@@ -1,6 +1,6 @@
 /nss
 /GOROOT
-/go
+/go_*
 /.ok_*
 /tris-localserver/tris-localserver
 /tris-localserver/*.pem
