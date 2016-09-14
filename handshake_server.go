@@ -143,7 +143,8 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	}
 
 	clientVers := hs.clientHello.vers
-	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 14 && hs.clientHello.draftVersion != 0 {
+	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 14 &&
+		hs.clientHello.draftVersion != 15 && hs.clientHello.draftVersion != 0 {
 		clientVers = VersionTLS12
 	}
 
@@ -155,6 +156,10 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	c.haveVers = true
 
 	hs.hello = new(serverHelloMsg)
+
+	if hs.clientHello.draftVersion >= 15 || hs.clientHello.draftVersion == 0 {
+		hs.hello.signatureAlgorithms = true
+	}
 
 	supportedCurve := false
 	preferredCurves := config.curvePreferences()
@@ -292,8 +297,6 @@ Curves:
 		preferenceList = hs.clientHello.cipherSuites
 		supportedList = c.config.cipherSuites()
 	}
-
-	// TODO(filippo): check signature_algorithms
 
 	for _, id := range preferenceList {
 		if hs.setCipherSuite(id, supportedList, c.vers) {
@@ -804,6 +807,13 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 				}
 			}
 			if candidate == nil {
+				continue
+			}
+			if version == VersionTLS13 && candidate.flags&suiteTLS13 != 0 {
+				hs.suite = candidate
+				return true
+			}
+			if version != VersionTLS13 && candidate.flags&suiteTLS13 != 0 {
 				continue
 			}
 			// Don't select a ciphersuite which we can't

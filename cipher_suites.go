@@ -55,6 +55,8 @@ const (
 	// suiteDefaultOff indicates that this cipher suite is not included by
 	// default.
 	suiteDefaultOff
+	// suiteTLS13 indicates that this is a draft 15 1.3 cipher suite
+	suiteTLS13
 )
 
 // A cipherSuite is a specific combination of key agreement, cipher and MAC
@@ -74,6 +76,10 @@ type cipherSuite struct {
 }
 
 var cipherSuites = []*cipherSuite{
+	{TLS_AES_128_GCM_SHA256, 16, 0, 4, nil, suiteTLS13, nil, nil, nil},
+	{TLS_AES_256_GCM_SHA384, 32, 0, 4, nil, suiteTLS13 | suiteSHA384, nil, nil, nil},
+	{TLS_CHACHA20_POLY1305_SHA256, 32, 0, 12, nil, suiteTLS13, nil, nil, nil},
+
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA
 	// and RC4 comes before AES-CBC (because of the Lucky13 attack).
 	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
@@ -328,6 +334,7 @@ func mutualCipherSuite(have []uint16, want uint16) *cipherSuite {
 //
 // Taken from http://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 const (
+	// TLS 1.0 - 1.2 cipher suites.
 	TLS_RSA_WITH_RC4_128_SHA                uint16 = 0x0005
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0x000a
 	TLS_RSA_WITH_AES_128_CBC_SHA            uint16 = 0x002f
@@ -347,6 +354,11 @@ const (
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
 	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
+
+	// TLS 1.3+ cipher suites.
+	TLS_AES_128_GCM_SHA256       uint16 = 0x1301
+	TLS_AES_256_GCM_SHA384       uint16 = 0x1302
+	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See

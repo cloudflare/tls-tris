@@ -543,6 +543,7 @@ type serverHelloMsg struct {
 	secureRenegotiationSupported bool
 	alpnProtocol                 string
 	keyShare                     *keyShare
+	signatureAlgorithms          bool
 }
 
 func (m *serverHelloMsg) equal(i interface{}) bool {
@@ -619,6 +620,9 @@ func (m *serverHelloMsg) marshal() []byte {
 		length = 36
 		numExtensions = 1
 		extensionsLength = 4 + len(m.keyShare.data)
+		if m.signatureAlgorithms {
+			numExtensions++
+		}
 	} else {
 		length = 38 + len(m.sessionId)
 		numExtensions, extensionsLength = m.encExtensionsLen()
@@ -660,6 +664,11 @@ func (m *serverHelloMsg) marshal() []byte {
 	if m.vers != VersionTLS13 {
 		m.writeEncExtensions(z)
 	} else {
+		if m.signatureAlgorithms {
+			z[0] = byte(extensionSignatureAlgorithms >> 8)
+			z[1] = byte(extensionSignatureAlgorithms)
+			z = z[4:]
+		}
 		z[0] = byte(extensionKeyShare >> 8)
 		z[1] = byte(extensionKeyShare)
 		z[2] = byte((len(m.keyShare.data) + 4) >> 8)

@@ -89,7 +89,8 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
 
 	var aead func([]byte, []byte) cipher.AEAD
-	if hs.suite.id == TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 || hs.suite.id == TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 {
+	if hs.suite.id == TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 || hs.suite.id == TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 ||
+		hs.suite.id == TLS_CHACHA20_POLY1305_SHA256 {
 		aead = aeadChaCha20Poly1305
 	} else {
 		aead = aeadAESGCM13
