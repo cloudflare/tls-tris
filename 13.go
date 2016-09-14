@@ -127,7 +127,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	opts := crypto.SignerOpts(sigHash)
 	if sigScheme.hash == 0x07 && sigScheme.signature <= 0x02 { // rsa_pss_*
-		opts = &rsa.PSSOptions{SaltLength: sigHash.Size(), Hash: sigHash}
+		opts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
 	}
 
 	hashedData := append(hs.finishedHash.Sum(), resCtx...)
