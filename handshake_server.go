@@ -251,6 +251,9 @@ Curves:
 		SignatureSchemes: sigSchemes,
 	})
 	if err != nil {
+		if _, ok := err.(QuietError); ok {
+			c.out.traceErr, c.in.traceErr = nil, nil
+		}
 		c.sendAlert(alertInternalError)
 		return false, err
 	}
