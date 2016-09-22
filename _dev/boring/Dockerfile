@@ -23,7 +23,10 @@ RUN cd boringssl && ninja -C build
 # ARG REVISION=e3092d2
 
 # Draft 14.25 (sigalg renumbering)
-ARG REVISION=af56fbd
+# ARG REVISION=af56fbd
+
+# Draft 14.25 w/ x25519 only
+ARG REVISION=c8b6b4f
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION

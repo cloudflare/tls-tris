@@ -163,6 +163,8 @@ func curveForCurveID(id CurveID) (elliptic.Curve, bool) {
 		return elliptic.P384(), true
 	case CurveP521:
 		return elliptic.P521(), true
+	case CurveX25519:
+		return elliptic.X25519(), true
 	default:
 		return nil, false
 	}
