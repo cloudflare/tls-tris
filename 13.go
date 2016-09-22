@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 )
@@ -380,6 +381,8 @@ func (hs *serverHandshakeState) traceErr(err error) {
 	if os.Getenv("TLSDEBUG") == "error" {
 		if hs != nil && hs.clientHello != nil {
 			os.Stderr.WriteString(hex.Dump(hs.clientHello.marshal()))
+		} else if err == io.EOF {
+			return // don't stack trace on EOF before CH
 		}
 		fmt.Fprintf(os.Stderr, "\n%s\n", debug.Stack())
 	}
