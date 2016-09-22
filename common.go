@@ -83,6 +83,7 @@ const (
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
 	extensionKeyShare            uint16 = 40
+	extensionSupportedVersions   uint16 = 46
 
 	extensionNextProtoNeg      uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo uint16 = 0xff01

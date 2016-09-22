@@ -517,7 +517,27 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				})
 				d = d[4+dataLen:]
 			}
+		case extensionSupportedVersions:
+			if length < 2 {
+				return false
+			}
+			l := int(data[0])<<8 | int(data[1])
+			if l%2 == 1 || length != l+2 {
+				return false
+			}
+			n := l / 2
+			d := data[2:]
+			for i := 0; i < n; i++ {
+				v := uint16(d[0]<<8) + uint16(d[1])
+				if v > m.vers {
+					m.vers = v
+				}
+				d = data[2:]
+			}
 		case 0xff02: // Draft Version Extension
+			if length != 2 {
+				return false
+			}
 			m.draftVersion = uint16(data[0]<<8) + uint16(data[1])
 		}
 		data = data[length:]
