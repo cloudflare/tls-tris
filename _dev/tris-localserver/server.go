@@ -16,7 +16,8 @@ func main() {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates:             []tls.Certificate{cert},
+		PreferServerCipherSuites: true,
 	}
 	l, err := tls.Listen("tcp", os.Args[1], tlsConfig)
 	if err != nil {

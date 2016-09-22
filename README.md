@@ -69,7 +69,7 @@ go build github.com/bifurcation/mint/bin/mint-client-https
 ./mint-client-https -url https://localhost:4433
 ```
 
-## Testing with BoringSSL
+## Testing with BoringSSL/BoGo
 
 ```
 ./_dev/tris-localserver/build.sh
@@ -78,4 +78,9 @@ go build github.com/bifurcation/mint/bin/mint-client-https
 ```
 docker build -t bssl _dev/boring
 docker run -i --rm bssl $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
+```
+
+```
+docker build -t bogo _dev/bogo
+docker run -i --rm bogo $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
 ```
