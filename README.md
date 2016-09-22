@@ -68,3 +68,14 @@ go run generate_cert.go -ecdsa-curve P256 -host localhost -duration 87600h
 go build github.com/bifurcation/mint/bin/mint-client-https
 ./mint-client-https -url https://localhost:4433
 ```
+
+## Testing with BoringSSL
+
+```
+./_dev/tris-localserver/build.sh
+```
+
+```
+docker build -t bssl _dev/boring
+docker run -i --rm bssl $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
+```
