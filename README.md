@@ -37,19 +37,6 @@ The environment variable `TLSDEBUG` has one recognized values:
 
   * `error`: if an handshake error occurs, print the CH and stack trace
 
-## Running the NSS test client
-
-```
-go run generate_cert.go -ecdsa-curve P256 -host 192.168.64.1 -duration 87600h
-./_dev/go.sh build -i -v ./_dev/tris-localserver
-./_dev/bin/tris-localserver 192.168.64.1:4433
-```
-
-```
-docker build -t tstclnt _dev/tstclnt
-docker run -i tstclnt -D -V tls1.3:tls1.3 -o -O -h 192.168.64.1 -p 4433
-```
-
 ## Testing with Firefox
 
 1. Download the latest Firefox Nightly
@@ -69,7 +56,7 @@ go build github.com/bifurcation/mint/bin/mint-client-https
 ./mint-client-https -url https://localhost:4433
 ```
 
-## Testing with BoringSSL/BoGo
+## Testing with BoringSSL/BoGo/NSS
 
 ```
 ./_dev/tris-localserver/build.sh
@@ -83,4 +70,9 @@ docker run -i --rm bssl $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' t
 ```
 docker build -t bogo _dev/bogo
 docker run -i --rm bogo $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
+```
+
+```
+docker build -t tstclnt _dev/tstclnt
+docker run -i --rm tstclnt $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
 ```
