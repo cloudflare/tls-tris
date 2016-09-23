@@ -34,5 +34,6 @@ ENV LD_LIBRARY_PATH=/dist/OBJ-PATH/lib
 
 ENV SSLTRACE=100 SSLDEBUG=100
 
+ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
 ENTRYPOINT ["/run.sh"]

@@ -33,5 +33,6 @@ RUN cd boringssl && git checkout $REVISION
 RUN cd boringssl/build && cmake -GNinja ..
 RUN cd boringssl && ninja -C build
 
+ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
 ENTRYPOINT ["/run.sh"]

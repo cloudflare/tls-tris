@@ -5,4 +5,4 @@ shift
 HOST="${ADDR[0]}"
 PORT="${ADDR[1]}"
 
-/dist/OBJ-PATH/bin/tstclnt -D -V tls1.3:tls1.3 -o -O -h $HOST -p $PORT "$@"
+/dist/OBJ-PATH/bin/tstclnt -D -V tls1.3:tls1.3 -o -O -h $HOST -p $PORT -v "$@" < /httpreq.txt

@@ -74,5 +74,5 @@ docker run -i --rm bogo $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' t
 
 ```
 docker build -t tstclnt _dev/tstclnt
-docker run -i --rm tstclnt $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
+docker run -i --rm tstclnt $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443 -c :1303
 ```
