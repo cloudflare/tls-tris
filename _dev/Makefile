@@ -23,15 +23,16 @@ endif
 GO_COMMIT := 0101ee6a26adbec874a4253dc90bdd049e403e57
 
 .PHONY: go
-go: .ok_go_$(GO_COMMIT)_$(GOENV)
+go: go/.ok_$(GO_COMMIT)_$(GOENV)
 
-.ok_go_$(GO_COMMIT)_$(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH):
-	rm -rf go_$(GOENV)
-	git clone --branch 1.7 --single-branch --depth 25 https://github.com/cloudflare/go go_$(GOENV)
-	cd go_$(GOENV) && git checkout $(GO_COMMIT)
-	cd go_$(GOENV)/src && GOROOT_BOOTSTRAP="$(shell $(GO) env GOROOT)" ./make.bash
+go/.ok_$(GO_COMMIT)_$(GOENV):
+	rm -rf go/.ok_*_$(GOENV) go/$(GOENV)
+	mkdir -p go
+	git clone --branch 1.7 --single-branch --depth 25 https://github.com/cloudflare/go go/$(GOENV)
+	cd go/$(GOENV) && git checkout $(GO_COMMIT)
+	cd go/$(GOENV)/src && GOROOT_BOOTSTRAP="$(shell $(GO) env GOROOT)" ./make.bash
 	@touch "$@"
 
 .PHONY: clean
 clean:
-	rm -rf GOROOT go_* .ok_go_*
+	rm -rf GOROOT go

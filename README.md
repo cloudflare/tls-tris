@@ -59,7 +59,7 @@ go build github.com/bifurcation/mint/bin/mint-client-https
 ## Testing with BoringSSL/BoGo/NSS
 
 ```
-./_dev/tris-localserver/build.sh
+./_dev/tris-localserver/start.sh --rm
 ```
 
 ```

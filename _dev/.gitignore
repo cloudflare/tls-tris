@@ -1,7 +1,4 @@
-/nss
 /GOROOT
-/go_*
-/.ok_*
+/go
 /tris-localserver/tris-localserver
-/tris-localserver/*.pem
 /caddy/caddy
