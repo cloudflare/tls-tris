@@ -1,4 +1,31 @@
+sudo: required
 language: go
 
+services:
+  - docker
+
 go:
-  - 1.7beta1
+  - 1.7
+
+env:
+  - MODE=gotest
+  - MODE=interop CLIENT=boring
+  - MODE=interop CLIENT=bogo
+  - MODE=interop CLIENT=tstclnt
+
+install:
+  - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
+  - if [ "$MODE" = "interop" ]; then docker build -t filosottile/tls-tris:$CLIENT _dev/$CLIENT; fi
+
+script:
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh $CLIENT 443; fi # ECDSA
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh $CLIENT 4443; fi # RSA
+  - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test .; fi
+
+after_script:
+  - if [ "$MODE" = "interop" ]; then docker ps -a; docker logs tris-localserver; fi
+
+cache:
+  directories:
+    - _dev/GOROOT
+    - _dev/go

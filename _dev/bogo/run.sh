@@ -1,3 +1,3 @@
 #! /bin/sh
 
-go run /bogo-client.go "$@"
+exec /bogo-client "$@"

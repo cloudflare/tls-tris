@@ -26,5 +26,7 @@ RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
 
 ADD bogo-client.go /bogo-client.go
+RUN go build /bogo-client.go
+
 ADD run.sh /run.sh
 ENTRYPOINT ["/run.sh"]

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -23,5 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	io.Copy(os.Stdout, resp.Body)
+	if err := resp.Write(os.Stdout); err != nil {
+		log.Fatal(err)
+	}
 }
