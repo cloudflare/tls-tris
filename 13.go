@@ -211,15 +211,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 }
 
 func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, crypto.Hash, error) {
-	// XXX NSS doesn't speak PSS, so if PSS is not offered, allow PKCS1 (off-spec)
-	nssPKCS1Compatibility := true
-	for _, sah := range hs.clientHello.signatureAndHashes {
-		if sah.hash == 0x07 && sah.signature <= 0x02 ||
-			sah.hash == 0x08 && sah.signature <= 0x06 { // rsa_pss_*
-			nssPKCS1Compatibility = false
-		}
-	}
-
 	pk := hs.cert.PrivateKey.(crypto.Signer).Public()
 	var pkType string
 	if _, ok := pk.(*rsa.PublicKey); ok {
@@ -252,26 +243,6 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, 
 			case 0x02, 0x06: // rsa_pss_sha512
 				return sah, crypto.SHA512, nil
 			}
-		case pkType == "rsa" && nssPKCS1Compatibility && sah.signature == 0x01: // rsa_pkcs1_*
-			switch sah.hash {
-			case 0x02: // rsa_pkcs1_sha1
-				return sah, crypto.SHA1, nil
-			case 0x04: // rsa_pkcs1_sha256
-				// XXX NSS requires PRF hash and signature hash to match (off-spec)
-				if hs.suite.flags&suiteSHA384 != 0 {
-					continue
-				}
-				return sah, crypto.SHA256, nil
-			case 0x05: // rsa_pkcs1_sha384
-				// XXX NSS requires PRF hash and signature hash to match (off-spec)
-				if hs.suite.flags&suiteSHA384 == 0 {
-					continue
-				}
-				return sah, crypto.SHA384, nil
-			case 0x06: // rsa_pkcs1_sha512
-				return sah, crypto.SHA512, nil
-			}
-
 		case pkType == "p256" && sah.signature == 0x03 && sah.hash == 0x04: // ecdsa_secp256r1_sha256
 			return sah, crypto.SHA256, nil
 		case pkType == "p384" && sah.signature == 0x03 && sah.hash == 0x05: // ecdsa_secp384r1_sha384
@@ -284,9 +255,6 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (signatureAndHash, 
 	// Fallbacks (https://tlswg.github.io/tls13-spec/#rfc.section.4.3.1.1)
 	switch pkType {
 	case "rsa":
-		if nssPKCS1Compatibility {
-			return signatureAndHash{hash: 0x04, signature: 0x01}, crypto.SHA256, nil // rsa_pkcs1_sha256
-		}
 		return signatureAndHash{hash: 0x08, signature: 0x04}, crypto.SHA256, nil // rsa_pss_sha256
 	case "p256":
 		return signatureAndHash{hash: 0x04, signature: 0x03}, crypto.SHA256, nil // ecdsa_secp256r1_sha256
