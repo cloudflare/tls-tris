@@ -143,21 +143,28 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	}
 
 	clientVers := hs.clientHello.vers
-	if hs.clientHello.draftVersion != 13 && hs.clientHello.draftVersion != 14 &&
-		hs.clientHello.draftVersion != 15 && hs.clientHello.draftVersion != 0 {
-		clientVers = VersionTLS12
+	var extVers uint16
+	for _, v := range hs.clientHello.versions {
+		switch {
+		case v == VersionTLS13:
+			fallthrough
+		case v >= 0x7f00+13 && v <= 0x7f00+16:
+			clientVers = VersionTLS13
+			extVers = v
+		}
 	}
 
 	c.vers, ok = config.mutualVersion(clientVers, false)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
-		return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
+		return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", clientVers)
 	}
 	c.haveVers = true
 
 	hs.hello = new(serverHelloMsg)
 
-	if hs.clientHello.draftVersion >= 15 || hs.clientHello.draftVersion == 0 {
+	hs.hello.realVers = extVers
+	if extVers != 0x7f00+13 && extVers != 0x7f00+14 {
 		hs.hello.signatureAlgorithms = true
 	}
 

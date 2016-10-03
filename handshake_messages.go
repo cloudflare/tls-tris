@@ -26,7 +26,7 @@ type clientHelloMsg struct {
 	secureRenegotiationSupported bool
 	alpnProtocols                []string
 	keyShares                    []keyShare
-	draftVersion                 uint16
+	versions                     []uint16
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -518,27 +518,20 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				d = d[4+dataLen:]
 			}
 		case extensionSupportedVersions:
-			if length < 2 {
+			if length < 1 {
 				return false
 			}
-			l := int(data[0])<<8 | int(data[1])
-			if l%2 == 1 || length != l+2 {
+			l := int(data[0])
+			if l%2 == 1 || length != l+1 {
 				return false
 			}
 			n := l / 2
-			d := data[2:]
+			d := data[1:]
 			for i := 0; i < n; i++ {
-				v := uint16(d[0]<<8) + uint16(d[1])
-				if v > m.vers {
-					m.vers = v
-				}
-				d = data[2:]
+				v := uint16(d[0])<<8 + uint16(d[1])
+				m.versions = append(m.versions, v)
+				d = d[2:]
 			}
-		case 0xff02: // Draft Version Extension
-			if length != 2 {
-				return false
-			}
-			m.draftVersion = uint16(data[0]<<8) + uint16(data[1])
 		}
 		data = data[length:]
 	}
@@ -550,6 +543,7 @@ type serverHelloMsg struct {
 	raw                          []byte
 	rawEncExtensions             []byte
 	vers                         uint16
+	realVers                     uint16
 	random                       []byte
 	sessionId                    []byte
 	cipherSuite                  uint16
@@ -660,6 +654,10 @@ func (m *serverHelloMsg) marshal() []byte {
 	x[3] = uint8(length)
 	x[4] = uint8(m.vers >> 8)
 	x[5] = uint8(m.vers)
+	if m.realVers != 0 {
+		x[4] = uint8(m.realVers >> 8)
+		x[5] = uint8(m.realVers)
+	}
 	copy(x[6:38], m.random)
 	z := x[38:]
 	if m.vers != VersionTLS13 {
