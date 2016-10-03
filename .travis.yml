@@ -10,16 +10,18 @@ go:
 env:
   - MODE=gotest
   - MODE=interop CLIENT=boring
+  - MODE=interop CLIENT=boring REVISION=draft15
   - MODE=interop CLIENT=bogo
+  - MODE=interop CLIENT=bogo REVISION=draft15
   - MODE=interop CLIENT=tstclnt
 
 install:
   - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
-  - if [ "$MODE" = "interop" ]; then docker build -t filosottile/tls-tris:$CLIENT _dev/$CLIENT; fi
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh INSTALL $CLIENT $REVISION; fi
 
 script:
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh $CLIENT 443; fi # ECDSA
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh $CLIENT 4443; fi # RSA
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 443; fi # ECDSA
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 4443; fi # RSA
   - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test .; fi
 
 after_script:

@@ -2,14 +2,28 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 )
 
+var tlsVersionToName = map[uint16]string{
+	tls.VersionTLS10: "1.0",
+	tls.VersionTLS11: "1.1",
+	tls.VersionTLS12: "1.2",
+	tls.VersionTLS13: "1.3",
+}
+
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("<!DOCTYPE html><p>Hello TLS 1.3 _o/\n"))
+		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s _o/\n", tlsVersionToName[r.TLS.Version])
+	})
+
+	http.HandleFunc("/ch", func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "Client Hello packet (%d bytes):\n%s", len(r.TLS.ClientHello), hex.Dump(r.TLS.ClientHello))
 	})
 
 	go func() {
