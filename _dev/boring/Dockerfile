@@ -19,14 +19,17 @@ RUN cd boringssl && ninja -C build
 # ARG REVISION=88536c3
 
 # Draft 15
-# RUN cd boringssl && git fetch https://boringssl.googlesource.com/boringssl refs/changes/45/8745/31
-# ARG REVISION=e3092d2
+RUN cd boringssl && git fetch https://boringssl.googlesource.com/boringssl refs/changes/40/10840/11:draft15
+# ARG REVISION=cae930d
 
-# Draft 14.25 (sigalg renumbering)
+# Draft "14.25" (sigalg renumbering)
 # ARG REVISION=af56fbd
 
-# Draft 14.25 w/ x25519 only
-ARG REVISION=c8b6b4f
+# Draft "14.25" w/ x25519 only
+# ARG REVISION=c8b6b4f
+
+# Draft "14.5" (sigalg, x25519, version ext)
+ARG REVISION=54afdab
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION

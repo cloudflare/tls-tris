@@ -11,16 +11,10 @@ RUN apk add --update \
   && rm -rf /var/cache/apk/*
 
 RUN git clone https://boringssl.googlesource.com/boringssl
+RUN cd boringssl && git fetch https://boringssl.googlesource.com/boringssl refs/changes/40/10840/11:draft15
 
-# Draft 14
-# ARG REVISION=88536c3
-
-# Draft 15
-# RUN cd boringssl && git fetch https://boringssl.googlesource.com/boringssl refs/changes/45/8745/31
-# ARG REVISION=e3092d2
-
-# Draft 14.25 (sigalg renumbering)
-ARG REVISION=af56fbd
+# see _dev/boring for REVISION info
+ARG REVISION=54afdab
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
