@@ -77,17 +77,24 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
+	clientLabel, serverLabel := "", ""
+	clientExpandLabel, serverExpandLabel := "client write ", "server write "
+	if hs.hello.realVers >= 0x7f00+16 {
+		clientLabel, serverLabel = "client ", "server "
+		clientExpandLabel, serverExpandLabel = "", ""
+	}
+
 	earlySecret := hkdfExtract(hash, nil, nil)
 	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
 
 	handshakeCtx := hs.finishedHash.Sum()
 
-	handshakeTrafficSecret := deriveSecret(hash, handshakeSecret, handshakeCtx, "handshake traffic secret")
-
-	cKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write key", hs.suite.keyLen)
-	cIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, client write iv", 12)
-	sKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write key", hs.suite.keyLen)
-	sIV := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "handshake key expansion, server write iv", 12)
+	cHandshakeTS := deriveSecret(hash, handshakeSecret, handshakeCtx, clientLabel+"handshake traffic secret")
+	cKey := hkdfExpandLabel(hash, cHandshakeTS, nil, "handshake key expansion, "+clientExpandLabel+"key", hs.suite.keyLen)
+	cIV := hkdfExpandLabel(hash, cHandshakeTS, nil, "handshake key expansion, "+clientExpandLabel+"iv", 12)
+	sHandshakeTS := deriveSecret(hash, handshakeSecret, handshakeCtx, serverLabel+"handshake traffic secret")
+	sKey := hkdfExpandLabel(hash, sHandshakeTS, nil, "handshake key expansion, "+serverExpandLabel+"key", hs.suite.keyLen)
+	sIV := hkdfExpandLabel(hash, sHandshakeTS, nil, "handshake key expansion, "+serverExpandLabel+"iv", 12)
 
 	var aead func([]byte, []byte) cipher.AEAD
 	if hs.suite.id == TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305 || hs.suite.id == TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305 ||
@@ -151,8 +158,13 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	serverFinishedKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "server finished", hash.Size())
-	clientFinishedKey := hkdfExpandLabel(hash, handshakeTrafficSecret, nil, "client finished", hash.Size())
+	clientFinishedLabel, serverFinishedLabel := "client ", "server "
+	if hs.hello.realVers >= 0x7f00+16 {
+		clientFinishedLabel, serverFinishedLabel = "", ""
+	}
+
+	serverFinishedKey := hkdfExpandLabel(hash, sHandshakeTS, nil, serverFinishedLabel+"finished", hash.Size())
+	clientFinishedKey := hkdfExpandLabel(hash, cHandshakeTS, nil, clientFinishedLabel+"finished", hash.Size())
 
 	h := hmac.New(hash.New, serverFinishedKey)
 	h.Write(hs.finishedHash.Sum())
@@ -192,12 +204,13 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	masterSecret := hkdfExtract(hash, nil, handshakeSecret)
 	handshakeCtx = hs.finishedHash.Sum()
-	trafficSecret0 := deriveSecret(hash, masterSecret, handshakeCtx, "application traffic secret")
 
-	cKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write key", hs.suite.keyLen)
-	cIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, client write iv", 12)
-	sKey = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write key", hs.suite.keyLen)
-	sIV = hkdfExpandLabel(hash, trafficSecret0, nil, "application data key expansion, server write iv", 12)
+	cTrafficSecret0 := deriveSecret(hash, masterSecret, handshakeCtx, clientLabel+"application traffic secret")
+	cKey = hkdfExpandLabel(hash, cTrafficSecret0, nil, "application data key expansion, "+clientExpandLabel+"key", hs.suite.keyLen)
+	cIV = hkdfExpandLabel(hash, cTrafficSecret0, nil, "application data key expansion, "+clientExpandLabel+"iv", 12)
+	sTrafficSecret0 := deriveSecret(hash, masterSecret, handshakeCtx, serverLabel+"application traffic secret")
+	sKey = hkdfExpandLabel(hash, sTrafficSecret0, nil, "application data key expansion, "+serverExpandLabel+"key", hs.suite.keyLen)
+	sIV = hkdfExpandLabel(hash, sTrafficSecret0, nil, "application data key expansion, "+serverExpandLabel+"iv", 12)
 
 	clientCipher = aead(cKey, cIV)
 	serverCipher = aead(sKey, sIV)
