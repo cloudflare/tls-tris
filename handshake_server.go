@@ -154,6 +154,13 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		}
 	}
 
+	// Old 1.3 clients used to send {03,04} in the legacy_version.
+	// Don't consider them as valid 1.3 clients.
+	if hs.clientHello.vers > VersionTLS12 {
+		clientVers = VersionTLS12
+		extVers = 0
+	}
+
 	c.vers, ok = config.mutualVersion(clientVers, false)
 	if !ok {
 		c.sendAlert(alertProtocolVersion)
