@@ -10,13 +10,10 @@ go:
 env:
   - MODE=gotest
   - MODE=interop CLIENT=boring
-  - MODE=interop CLIENT=boring REVISION=draft15
   - MODE=interop CLIENT=boring REVISION=origin/master
   - MODE=interop CLIENT=bogo
-  - MODE=interop CLIENT=bogo REVISION=draft15
   - MODE=interop CLIENT=bogo REVISION=origin/master
   - MODE=interop CLIENT=tstclnt
-  - MODE=interop CLIENT=tstclnt REVISION=c483e5f9e0bc
   - MODE=interop CLIENT=tstclnt REVISION=default
 
 matrix:
