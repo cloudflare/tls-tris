@@ -1,0 +1,42 @@
+sudo: required
+language: go
+
+services:
+  - docker
+
+go:
+  - 1.7
+
+env:
+  - MODE=gotest
+  - MODE=interop CLIENT=boring
+  - MODE=interop CLIENT=boring REVISION=origin/master
+  - MODE=interop CLIENT=bogo
+  - MODE=interop CLIENT=bogo REVISION=origin/master
+  - MODE=interop CLIENT=tstclnt
+  - MODE=interop CLIENT=tstclnt REVISION=default
+  - MODE=interop CLIENT=mint
+
+matrix:
+  fast_finish: true
+  allow_failures:
+    - env: MODE=interop CLIENT=bogo REVISION=origin/master
+    - env: MODE=interop CLIENT=boring REVISION=origin/master
+    - env: MODE=interop CLIENT=tstclnt REVISION=default
+
+install:
+  - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh INSTALL $CLIENT $REVISION; fi
+
+script:
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 443; fi # ECDSA
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 4443; fi # RSA
+  - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test crypto/tls; fi
+
+after_script:
+  - if [ "$MODE" = "interop" ]; then docker ps -a; docker logs tris-localserver; fi
+
+cache:
+  directories:
+    - _dev/GOROOT
+    - _dev/go
