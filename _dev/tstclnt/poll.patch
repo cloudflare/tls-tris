@@ -1,0 +1,37 @@
+diff -r 15c6a01b9fe8 cmd/tstclnt/tstclnt.c
+--- a/cmd/tstclnt/tstclnt.c	Fri Jun 10 18:34:00 2016 +0100
++++ b/cmd/tstclnt/tstclnt.c	Thu Jun 16 16:26:29 2016 +0100
+@@ -713,7 +713,6 @@
+     return NSS_GetClientAuthData(arg, socket, caNames, pRetCert, pRetKey);
+ }
+ 
+-#if defined(WIN32) || defined(OS2)
+ void
+ thread_main(void *arg)
+ {
+@@ -746,7 +745,6 @@
+     PR_Close(ps);
+ }
+ 
+-#endif
+ 
+ static void
+ printHostNameAndAddr(const char *host, const PRNetAddr *addr)
+@@ -1545,7 +1543,8 @@
+     npds = 2;
+     std_out = PR_GetSpecialFD(PR_StandardOutput);
+ 
+-#if defined(WIN32) || defined(OS2)
++    // Enabled PR_Poll compatibility mode for running in docker run. (sigh).
++
+     /* PR_Poll cannot be used with stdin on Windows or OS/2.  (sigh).
+     ** But use of PR_Poll and non-blocking sockets is a major feature
+     ** of this program.  So, we simulate a pollable stdin with a
+@@ -1573,7 +1572,6 @@
+             goto done;
+         }
+     }
+-#endif
+ 
+     if (serverCertAuth.testFreshStatusFromSideChannel) {
+         SSL_ForceHandshake(s);
