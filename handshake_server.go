@@ -16,6 +16,10 @@ import (
 	"io"
 )
 
+type Committer interface {
+	Commit() error
+}
+
 // serverHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
@@ -273,6 +277,13 @@ Curves:
 	}
 	if hs.clientHello.scts && hs.hello != nil { // TODO: TLS 1.3 SCTs
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
+	}
+
+	if committer, ok := c.conn.(Committer); ok {
+		err = committer.Commit()
+		if err != nil {
+			return false, err
+		}
 	}
 
 	if priv, ok := hs.cert.PrivateKey.(crypto.Signer); ok {
