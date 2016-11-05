@@ -34,6 +34,8 @@ type Conn struct {
 	// to wait for the handshake can wait on this, under handshakeMutex.
 	handshakeCond *sync.Cond
 	handshakeErr  error   // error resulting from handshake
+	connID        []byte  // Random connection id
+	clientHello   []byte  // ClientHello packet contents
 	vers          uint16  // TLS version
 	haveVers      bool    // version has been negotiated
 	config        *Config // configuration passed to constructor
@@ -1363,6 +1365,11 @@ func (c *Conn) Handshake() error {
 		panic("handshake should not have been able to complete after handshakeCond was set")
 	}
 
+	c.connID = make([]byte, 8)
+	if _, err := io.ReadFull(c.config.rand(), c.connID); err != nil {
+		return err
+	}
+
 	if c.isClient {
 		c.handshakeErr = c.clientHandshake()
 	} else {
@@ -1398,6 +1405,8 @@ func (c *Conn) ConnectionState() ConnectionState {
 	state.ServerName = c.serverName
 
 	if c.handshakeComplete {
+		state.ConnectionID = c.connID
+		state.ClientHello = c.clientHello
 		state.Version = c.vers
 		state.NegotiatedProtocol = c.clientProtocol
 		state.DidResume = c.didResume

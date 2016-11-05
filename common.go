@@ -174,6 +174,7 @@ var supportedSignatureAlgorithms = []signatureAndHash{
 
 // ConnectionState records basic TLS details about the connection.
 type ConnectionState struct {
+	ConnectionID                []byte                // Random unique connection id
 	Version                     uint16                // TLS version used by the connection (e.g. VersionTLS12)
 	HandshakeComplete           bool                  // TLS handshake is complete
 	DidResume                   bool                  // connection resumes a previous TLS connection
@@ -193,6 +194,8 @@ type ConnectionState struct {
 	// future versions of Go once the TLS master-secret fix has been
 	// standardized and implemented.
 	TLSUnique []byte
+
+	ClientHello []byte // ClientHello packet
 }
 
 // ClientAuthType declares the policy the server will follow for
