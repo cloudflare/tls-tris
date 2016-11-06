@@ -185,6 +185,14 @@ func (hc *halfConn) changeCipherSpec() error {
 	return nil
 }
 
+func (hc *halfConn) setCipher(version uint16, cipher interface{}) {
+	hc.version = version
+	hc.cipher = cipher
+	for i := range hc.seq {
+		hc.seq[i] = 0
+	}
+}
+
 // incSeq increments the sequence number.
 func (hc *halfConn) incSeq() {
 	for i := 7; i >= 0; i-- {
