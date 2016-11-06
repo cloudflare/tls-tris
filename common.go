@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	VersionSSL30 = 0x0300
-	VersionTLS10 = 0x0301
-	VersionTLS11 = 0x0302
-	VersionTLS12 = 0x0303
-	VersionTLS13 = 0x0304
+	VersionSSL30        = 0x0300
+	VersionTLS10        = 0x0301
+	VersionTLS11        = 0x0302
+	VersionTLS12        = 0x0303
+	VersionTLS13        = 0x0304
+	VersionTLS13Draft18 = 0x7f00 | 18
 )
 
 const (
