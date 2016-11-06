@@ -323,14 +323,14 @@ func (ka *ecdheKeyAgreement) processClientKeyExchange(config *Config, cert *Cert
 	if x == nil {
 		return nil, errClientKeyExchange
 	}
-	if !curve.IsOnCurve(x, y) {
-		return nil, errClientKeyExchange
-	}
 	x, _ = curve.ScalarMult(x, y, ka.privateKey)
-	preMasterSecret := make([]byte, (curve.Params().BitSize+7)>>3)
+	curveSize := (curve.Params().BitSize + 7) >> 3
 	xBytes := x.Bytes()
+	if len(xBytes) == curveSize {
+		return xBytes, nil
+	}
+	preMasterSecret := make([]byte, curveSize)
 	copy(preMasterSecret[len(preMasterSecret)-len(xBytes):], xBytes)
-
 	return preMasterSecret, nil
 }
 

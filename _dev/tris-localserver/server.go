@@ -10,12 +10,11 @@ import (
 )
 
 var tlsVersionToName = map[uint16]string{
-	tls.VersionTLS10: "1.0",
-	tls.VersionTLS11: "1.1",
-	tls.VersionTLS12: "1.2",
-	tls.VersionTLS13: "1.3",
-	0x7f00 | 16:      "1.3 (draft 16)",
-	0x7f00 | 18:      "1.3 (draft 18)",
+	tls.VersionTLS10:        "1.0",
+	tls.VersionTLS11:        "1.1",
+	tls.VersionTLS12:        "1.2",
+	tls.VersionTLS13:        "1.3",
+	tls.VersionTLS13Draft18: "1.3 (draft 18)",
 }
 
 func main() {

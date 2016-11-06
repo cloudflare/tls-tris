@@ -122,6 +122,13 @@ var clientFinishedLabel = []byte("client finished")
 var serverFinishedLabel = []byte("server finished")
 
 func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secret, label, seed []byte), crypto.Hash) {
+	if version >= VersionTLS13 {
+		if suite.flags&suiteSHA384 != 0 {
+			return prf12(sha512.New384), crypto.SHA384
+		}
+		return prf12(sha256.New), crypto.SHA256
+	}
+
 	switch version {
 	case VersionSSL30:
 		return prf30, crypto.Hash(0)
