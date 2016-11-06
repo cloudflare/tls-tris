@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	VersionSSL30 = 0x0300
-	VersionTLS10 = 0x0301
-	VersionTLS11 = 0x0302
-	VersionTLS12 = 0x0303
-	VersionTLS13 = 0x0304
+	VersionSSL30        = 0x0300
+	VersionTLS10        = 0x0301
+	VersionTLS11        = 0x0302
+	VersionTLS12        = 0x0303
+	VersionTLS13        = 0x0304
+	VersionTLS13Draft18 = 0x7f00 | 18
 )
 
 const (
@@ -727,10 +728,15 @@ func (c *Config) curvePreferences() []CurveID {
 }
 
 // mutualVersion returns the protocol version to use given the advertised
-// version of the peer.
+// version of the peer using the legacy non-extension methos.
 func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
 	minVersion := c.minVersion()
 	maxVersion := c.maxVersion()
+
+	// Version 1.3 and higher are not negotiated via this mechanism.
+	if maxVersion > VersionTLS12 {
+		maxVersion = VersionTLS12
+	}
 
 	if vers < minVersion {
 		return 0, false
@@ -739,6 +745,33 @@ func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
 		vers = maxVersion
 	}
 	return vers, true
+}
+
+// pickVersion returns the protocol version to use given the addvertised
+// versions of the peer using the Supported Versions extension.
+func (c *Config) pickVersion(supportedVersions []uint16) (uint16, bool) {
+	minVersion := c.minVersion()
+	maxVersion := c.maxVersion()
+	if c == nil || c.MaxVersion == 0 {
+		maxVersion = VersionTLS13 // override the default if pickVersion is used
+	}
+
+	tls13Enabled := maxVersion >= VersionTLS13
+	if maxVersion > VersionTLS12 {
+		maxVersion = VersionTLS12
+	}
+
+	var vers uint16
+	for _, v := range supportedVersions {
+		if v >= minVersion && v <= maxVersion ||
+			(tls13Enabled && v == VersionTLS13Draft18) {
+			if v > vers {
+				vers = v
+			}
+		}
+	}
+
+	return vers, vers != 0
 }
 
 // getCertificate returns the best certificate for the given ClientHelloInfo,

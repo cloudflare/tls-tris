@@ -22,6 +22,8 @@ type serverHandshakeState struct {
 	c                     *Conn
 	clientHello           *clientHelloMsg
 	hello                 *serverHelloMsg
+	hello13               *serverHelloMsg13
+	hello13Enc            *encryptedExtensionsMsg
 	suite                 *cipherSuite
 	ellipticOk            bool
 	ecdsaOk               bool
@@ -52,7 +54,11 @@ func (c *Conn) serverHandshake() error {
 
 	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
 	c.buffering = true
-	if isResume {
+	if hs.hello13 != nil {
+		if err := hs.doTLS13Handshake(); err != nil {
+			return err
+		}
+	} else if isResume {
 		// The client has included a session ticket and so we do an abbreviated handshake.
 		if err := hs.doResumeHandshake(); err != nil {
 			return err
@@ -138,35 +144,52 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 		}
 	}
 
-	c.vers, ok = c.config.mutualVersion(hs.clientHello.vers)
-	if !ok {
-		c.sendAlert(alertProtocolVersion)
-		return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
+	var keyShares []CurveID
+	for _, ks := range hs.clientHello.keyShares {
+		keyShares = append(keyShares, ks.group)
+	}
+
+	if hs.clientHello.supportedVersions != nil {
+		c.vers, ok = c.config.pickVersion(hs.clientHello.supportedVersions)
+		if !ok {
+			c.sendAlert(alertProtocolVersion)
+			return false, fmt.Errorf("tls: none of the client versions (%x) are supported", hs.clientHello.supportedVersions)
+		}
+	} else {
+		c.vers, ok = c.config.mutualVersion(hs.clientHello.vers)
+		if !ok {
+			c.sendAlert(alertProtocolVersion)
+			return false, fmt.Errorf("tls: client offered an unsupported, maximum protocol version of %x", hs.clientHello.vers)
+		}
 	}
 	c.haveVers = true
 
-	hs.hello = new(serverHelloMsg)
-
-	supportedCurve := false
 	preferredCurves := c.config.curvePreferences()
 Curves:
 	for _, curve := range hs.clientHello.supportedCurves {
 		for _, supported := range preferredCurves {
 			if supported == curve {
-				supportedCurve = true
+				hs.ellipticOk = true
 				break Curves
 			}
 		}
 	}
 
-	supportedPointFormat := false
-	for _, pointFormat := range hs.clientHello.supportedPoints {
-		if pointFormat == pointFormatUncompressed {
-			supportedPointFormat = true
-			break
+	// If present, the supported points extension must include uncompressed.
+	// Can be absent. This behavior mirrors BoringSSL.
+	if hs.clientHello.supportedPoints != nil {
+		supportedPointFormat := false
+		for _, pointFormat := range hs.clientHello.supportedPoints {
+			if pointFormat == pointFormatUncompressed {
+				supportedPointFormat = true
+				break
+			}
+		}
+		if !supportedPointFormat {
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: client does not support uncompressed points")
 		}
 	}
-	hs.ellipticOk = supportedCurve && supportedPointFormat
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
@@ -181,13 +204,9 @@ Curves:
 		c.sendAlert(alertHandshakeFailure)
 		return false, errors.New("tls: client does not support uncompressed connections")
 	}
-
-	hs.hello.vers = c.vers
-	hs.hello.random = make([]byte, 32)
-	_, err = io.ReadFull(c.config.rand(), hs.hello.random)
-	if err != nil {
-		c.sendAlert(alertInternalError)
-		return false, err
+	if len(hs.clientHello.compressionMethods) != 1 && c.vers >= VersionTLS13 {
+		c.sendAlert(alertIllegalParameter)
+		return false, errors.New("tls: 1.3 client offered compression")
 	}
 
 	if len(hs.clientHello.secureRenegotiation) != 0 {
@@ -195,15 +214,40 @@ Curves:
 		return false, errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
-	hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
-	hs.hello.compressionMethod = compressionNone
+	if c.vers < VersionTLS13 {
+		hs.hello = new(serverHelloMsg)
+		hs.hello.vers = c.vers
+		hs.hello.random = make([]byte, 32)
+		_, err = io.ReadFull(c.config.rand(), hs.hello.random)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return false, err
+		}
+		hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
+		hs.hello.compressionMethod = compressionNone
+	} else {
+		hs.hello13 = new(serverHelloMsg13)
+		hs.hello13Enc = new(encryptedExtensionsMsg)
+		hs.hello13.vers = c.vers
+		hs.hello13.random = make([]byte, 32)
+		_, err = io.ReadFull(c.config.rand(), hs.hello13.random)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return false, err
+		}
+	}
+
 	if len(hs.clientHello.serverName) > 0 {
 		c.serverName = hs.clientHello.serverName
 	}
 
 	if len(hs.clientHello.alpnProtocols) > 0 {
 		if selectedProto, fallback := mutualProtocol(hs.clientHello.alpnProtocols, c.config.NextProtos); !fallback {
-			hs.hello.alpnProtocol = selectedProto
+			if hs.hello != nil {
+				hs.hello.alpnProtocol = selectedProto
+			} else {
+				hs.hello13Enc.alpnProtocol = selectedProto
+			}
 			c.clientProtocol = selectedProto
 		}
 	} else {
@@ -211,7 +255,7 @@ Curves:
 		// had a bug around this. Best to send nothing at all if
 		// c.config.NextProtos is empty. See
 		// https://golang.org/issue/5445.
-		if hs.clientHello.nextProtoNeg && len(c.config.NextProtos) > 0 {
+		if hs.clientHello.nextProtoNeg && len(c.config.NextProtos) > 0 && c.vers < VersionTLS13 {
 			hs.hello.nextProtoNeg = true
 			hs.hello.nextProtos = c.config.NextProtos
 		}
@@ -222,7 +266,7 @@ Curves:
 		c.sendAlert(alertInternalError)
 		return false, err
 	}
-	if hs.clientHello.scts {
+	if hs.clientHello.scts && hs.hello != nil {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
 	}
 
@@ -247,7 +291,7 @@ Curves:
 		}
 	}
 
-	if hs.checkForResumption() {
+	if c.vers != VersionTLS13 && hs.checkForResumption() {
 		return true, nil
 	}
 
@@ -275,7 +319,7 @@ Curves:
 	for _, id := range hs.clientHello.cipherSuites {
 		if id == TLS_FALLBACK_SCSV {
 			// The client is doing a fallback connection.
-			if hs.clientHello.vers < c.config.maxVersion() {
+			if c.vers < c.config.maxVersion() {
 				c.sendAlert(alertInappropriateFallback)
 				return false, errors.New("tls: client using inappropriate protocol fallback")
 			}
@@ -825,7 +869,9 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 	}
 
 	var supportedVersions []uint16
-	if hs.clientHello.vers > VersionTLS12 {
+	if hs.clientHello.supportedVersions != nil {
+		supportedVersions = hs.clientHello.supportedVersions
+	} else if hs.clientHello.vers > VersionTLS12 {
 		supportedVersions = suppVersArray[:]
 	} else if hs.clientHello.vers >= VersionSSL30 {
 		supportedVersions = suppVersArray[VersionTLS12-hs.clientHello.vers:]
