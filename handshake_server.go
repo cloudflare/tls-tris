@@ -51,6 +51,9 @@ func (c *Conn) serverHandshake() error {
 	hs := serverHandshakeState{
 		c: c,
 	}
+	c.in.traceErr = hs.traceErr
+	c.out.traceErr = hs.traceErr
+	defer func() { c.in.traceErr, c.out.traceErr = nil, nil }()
 	isResume, err := hs.readClientHello()
 	if err != nil {
 		return err
@@ -272,6 +275,9 @@ Curves:
 
 	hs.cert, err = c.config.getCertificate(hs.clientHelloInfo())
 	if err != nil {
+		if _, ok := err.(QuietError); ok {
+			c.out.traceErr, c.in.traceErr = nil, nil
+		}
 		c.sendAlert(alertInternalError)
 		return false, err
 	}

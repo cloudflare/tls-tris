@@ -8,8 +8,12 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"runtime/debug"
 
 	"golang_org/x/crypto/curve25519"
 )
@@ -332,4 +336,31 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 	copy(z[1:], hashValue)
 
 	return hkdfExpand(hash, secret, hkdfLabel, L)
+}
+
+// QuietError is an error wrapper that prevents the verbose handshake log
+// dump on errors. Exposed for use by GetCertificate.
+type QuietError struct {
+	Err error
+}
+
+func (e QuietError) Error() string {
+	return e.Err.Error()
+}
+
+func (hs *serverHandshakeState) traceErr(err error) {
+	if err == nil {
+		return
+	}
+	if _, ok := err.(QuietError); ok {
+		return
+	}
+	if os.Getenv("TLSDEBUG") == "error" {
+		if hs != nil && hs.clientHello != nil {
+			os.Stderr.WriteString(hex.Dump(hs.clientHello.marshal()))
+		} else if err == io.EOF {
+			return // don't stack trace on EOF before CH
+		}
+		fmt.Fprintf(os.Stderr, "\n%s\n", debug.Stack())
+	}
 }
