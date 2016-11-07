@@ -156,10 +156,15 @@ type halfConn struct {
 
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
+
+	traceErr func(error)
 }
 
 func (hc *halfConn) setErrorLocked(err error) error {
 	hc.err = err
+	if hc.traceErr != nil {
+		hc.traceErr(err)
+	}
 	return err
 }
 
