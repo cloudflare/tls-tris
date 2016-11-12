@@ -297,13 +297,17 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 				nonce = hc.seq[:]
 			}
 
-			copy(hc.additionalData[:], hc.seq[:])
-			copy(hc.additionalData[8:], b.data[:3])
-			n := len(payload) - c.Overhead()
-			hc.additionalData[11] = byte(n >> 8)
-			hc.additionalData[12] = byte(n)
+			var additionalData []byte
+			if hc.version < VersionTLS13 {
+				copy(hc.additionalData[:], hc.seq[:])
+				copy(hc.additionalData[8:], b.data[:3])
+				n := len(payload) - c.Overhead()
+				hc.additionalData[11] = byte(n >> 8)
+				hc.additionalData[12] = byte(n)
+				additionalData = hc.additionalData[:]
+			}
 			var err error
-			payload, err = c.Open(payload[:0], nonce, payload, hc.additionalData[:])
+			payload, err = c.Open(payload[:0], nonce, payload, additionalData)
 			if err != nil {
 				return false, 0, alertBadRecordMAC
 			}
@@ -404,20 +408,36 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			c.XORKeyStream(payload, payload)
 		case aead:
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
-			b.resize(len(b.data) + c.Overhead())
+			overhead := c.Overhead()
+			if hc.version >= VersionTLS13 {
+				overhead++
+			}
+			b.resize(len(b.data) + overhead)
+
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
-			payload := b.data[recordHeaderLen+explicitIVLen:]
+			payload = b.data[recordHeaderLen+explicitIVLen:]
 			payload = payload[:payloadLen]
 
-			copy(hc.additionalData[:], hc.seq[:])
-			copy(hc.additionalData[8:], b.data[:3])
-			hc.additionalData[11] = byte(payloadLen >> 8)
-			hc.additionalData[12] = byte(payloadLen)
+			var additionalData []byte
+			if hc.version < VersionTLS13 {
+				copy(hc.additionalData[:], hc.seq[:])
+				copy(hc.additionalData[8:], b.data[:3])
+				hc.additionalData[11] = byte(payloadLen >> 8)
+				hc.additionalData[12] = byte(payloadLen)
+				additionalData = hc.additionalData[:]
+			}
 
-			c.Seal(payload[:0], nonce, payload, hc.additionalData[:])
+			if hc.version >= VersionTLS13 {
+				// opaque type
+				payload = payload[:len(payload)+1]
+				payload[len(payload)-1] = b.data[0]
+				b.data[0] = byte(recordTypeApplicationData)
+			}
+
+			c.Seal(payload[:0], nonce, payload, additionalData)
 		case cbcMode:
 			blockSize := c.BlockSize()
 			if explicitIVLen > 0 {
@@ -612,11 +632,6 @@ Again:
 
 	vers := uint16(b.data[1])<<8 | uint16(b.data[2])
 	n := int(b.data[3])<<8 | int(b.data[4])
-	if c.haveVers && vers != c.vers {
-		c.sendAlert(alertProtocolVersion)
-		msg := fmt.Sprintf("received record with version %x when expecting version %x", vers, c.vers)
-		return c.in.setErrorLocked(c.newRecordHeaderError(msg))
-	}
 	if n > maxCiphertext {
 		c.sendAlert(alertRecordOverflow)
 		msg := fmt.Sprintf("oversized record received with length %d", n)
@@ -652,9 +667,28 @@ Again:
 	b.off = off
 	data := b.data[b.off:]
 	if len(data) > maxPlaintext {
-		err := c.sendAlert(alertRecordOverflow)
 		c.in.freeBlock(b)
-		return c.in.setErrorLocked(err)
+		return c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
+	}
+
+	// After checking the plaintext length, remove 1.3 padding and
+	// extract the real content type.
+	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-5.4.
+	if c.vers >= VersionTLS13 {
+		i := len(data) - 1
+		for i >= 0 {
+			if data[i] != 0 {
+				break
+			}
+			i--
+		}
+		if i < 0 {
+			c.in.freeBlock(b)
+			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+		}
+		typ = recordType(data[i])
+		data = data[:i]
+		b.resize(b.off + i) // shrinks, guaranteed not to reallocate
 	}
 
 	switch typ {
@@ -795,6 +829,9 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 			payloadBytes -= macSize
 		case cipher.AEAD:
 			payloadBytes -= ciph.Overhead()
+			if c.vers >= VersionTLS13 {
+				payloadBytes -= 1 // ContentType
+			}
 		case cbcMode:
 			blockSize := ciph.BlockSize()
 			// The payload must fit in a multiple of blockSize, with
@@ -888,6 +925,11 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		if vers == 0 {
 			// Some TLS servers fail if the record version is
 			// greater than TLS 1.0 for the initial ClientHello.
+			vers = VersionTLS10
+		}
+		if c.vers >= VersionTLS13 {
+			// TLS 1.3 froze the record layer version at { 3, 1 }.
+			// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-5.1.
 			vers = VersionTLS10
 		}
 		b.data[1] = byte(vers >> 8)
