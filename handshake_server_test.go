@@ -1168,7 +1168,7 @@ var getConfigForClientTests = []struct {
 			config.MaxVersion = VersionTLS11
 			return config, nil
 		},
-		"version 301 when expecting version 302",
+		"protocol version not supported",
 		nil,
 	},
 	{
