@@ -51,19 +51,20 @@ const (
 
 // TLS handshake message types.
 const (
-	typeHelloRequest       uint8 = 0
-	typeClientHello        uint8 = 1
-	typeServerHello        uint8 = 2
-	typeNewSessionTicket   uint8 = 4
-	typeCertificate        uint8 = 11
-	typeServerKeyExchange  uint8 = 12
-	typeCertificateRequest uint8 = 13
-	typeServerHelloDone    uint8 = 14
-	typeCertificateVerify  uint8 = 15
-	typeClientKeyExchange  uint8 = 16
-	typeFinished           uint8 = 20
-	typeCertificateStatus  uint8 = 22
-	typeNextProtocol       uint8 = 67 // Not IANA assigned
+	typeHelloRequest        uint8 = 0
+	typeClientHello         uint8 = 1
+	typeServerHello         uint8 = 2
+	typeNewSessionTicket    uint8 = 4
+	typeEncryptedExtensions uint8 = 8
+	typeCertificate         uint8 = 11
+	typeServerKeyExchange   uint8 = 12
+	typeCertificateRequest  uint8 = 13
+	typeServerHelloDone     uint8 = 14
+	typeCertificateVerify   uint8 = 15
+	typeClientKeyExchange   uint8 = 16
+	typeFinished            uint8 = 20
+	typeCertificateStatus   uint8 = 22
+	typeNextProtocol        uint8 = 67 // Not IANA assigned
 )
 
 // TLS compression types.
@@ -75,12 +76,14 @@ const (
 const (
 	extensionServerName          uint16 = 0
 	extensionStatusRequest       uint16 = 5
-	extensionSupportedCurves     uint16 = 10
+	extensionSupportedCurves     uint16 = 10 // Supported Groups in 1.3 nomenclature
 	extensionSupportedPoints     uint16 = 11
 	extensionSignatureAlgorithms uint16 = 13
 	extensionALPN                uint16 = 16
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
+	extensionKeyShare            uint16 = 40
+	extensionSupportedVersions   uint16 = 43
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 )
@@ -92,6 +95,9 @@ const (
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
 // http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
+//
+// TLS 1.3 refers to these as Groups, but this library implements only
+// curve-based ones anyway. See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.4.
 type CurveID uint16
 
 const (
@@ -100,6 +106,13 @@ const (
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
 )
+
+// TLS 1.3 Key Share
+// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.5
+type keyShare struct {
+	group CurveID
+	data  []byte
+}
 
 // TLS Elliptic Curve Point Formats
 // http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
