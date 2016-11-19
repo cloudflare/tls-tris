@@ -24,6 +24,9 @@ var tests = []interface{}{
 	&nextProtoMsg{},
 	&newSessionTicketMsg{},
 	&sessionState{},
+	&serverHelloMsg13{},
+	&encryptedExtensionsMsg{},
+	&certificateMsg13{},
 }
 
 type testMessage interface {
@@ -53,13 +56,13 @@ func TestMarshalUnmarshal(t *testing.T) {
 			marshaled := m1.marshal()
 			m2 := iface.(testMessage)
 			if !m2.unmarshal(marshaled) {
-				t.Errorf("#%d failed to unmarshal %#v %x", i, m1, marshaled)
+				t.Errorf("#%d.%d failed to unmarshal %#v %x", i, j, m1, marshaled)
 				break
 			}
 			m2.marshal() // to fill any marshal cache in the message
 
 			if !m1.equal(m2) {
-				t.Errorf("#%d got:%#v want:%#v %x", i, m2, m1, marshaled)
+				t.Errorf("#%d.%d got:%#v want:%#v %x", i, j, m2, m1, marshaled)
 				break
 			}
 
@@ -145,6 +148,15 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	if rand.Intn(10) > 5 {
 		m.scts = true
 	}
+	m.keyShares = make([]keyShare, rand.Intn(4))
+	for i := range m.keyShares {
+		m.keyShares[i].group = CurveID(rand.Intn(30000))
+		m.keyShares[i].data = randomBytes(rand.Intn(300), rand)
+	}
+	m.supportedVersions = make([]uint16, rand.Intn(5))
+	for i := range m.supportedVersions {
+		m.supportedVersions[i] = uint16(rand.Intn(30000))
+	}
 
 	return reflect.ValueOf(m)
 }
@@ -186,6 +198,24 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	return reflect.ValueOf(m)
 }
 
+func (*serverHelloMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &serverHelloMsg13{}
+	m.vers = uint16(rand.Intn(65536))
+	m.random = randomBytes(32, rand)
+	m.cipherSuite = uint16(rand.Int31())
+	m.keyShare.group = CurveID(rand.Intn(30000))
+	m.keyShare.data = randomBytes(rand.Intn(300), rand)
+
+	return reflect.ValueOf(m)
+}
+
+func (*encryptedExtensionsMsg) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &encryptedExtensionsMsg{}
+	m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+
+	return reflect.ValueOf(m)
+}
+
 func (*certificateMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &certificateMsg{}
 	numCerts := rand.Intn(20)
@@ -193,6 +223,17 @@ func (*certificateMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	for i := 0; i < numCerts; i++ {
 		m.certificates[i] = randomBytes(rand.Intn(10)+1, rand)
 	}
+	return reflect.ValueOf(m)
+}
+
+func (*certificateMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &certificateMsg13{}
+	numCerts := rand.Intn(20)
+	m.certificates = make([][]byte, numCerts)
+	for i := 0; i < numCerts; i++ {
+		m.certificates[i] = randomBytes(rand.Intn(10)+1, rand)
+	}
+	m.requestContext = randomBytes(rand.Intn(5), rand)
 	return reflect.ValueOf(m)
 }
 
