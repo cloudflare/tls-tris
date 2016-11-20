@@ -51,6 +51,9 @@ const (
 	// suiteTLS12 indicates that the cipher suite should only be advertised
 	// and accepted when using TLS 1.2.
 	suiteTLS12
+	// suiteTLS13 indicates that the ones and only cipher suites to be
+	// advertised and accepted when using TLS 1.3.
+	suiteTLS13
 	// suiteSHA384 indicates that the cipher suite uses SHA384 as the
 	// handshake hash.
 	suiteSHA384
@@ -76,22 +79,27 @@ type cipherSuite struct {
 }
 
 var cipherSuites = []*cipherSuite{
+	// TLS 1.3 ciphersuites specify only the AEAD and the HKDF hash.
+	{TLS_CHACHA20_POLY1305_SHA256, 32, 0, 12, nil, suiteTLS13, nil, nil, aeadChaCha20Poly1305},
+	{TLS_AES_128_GCM_SHA256, 16, 0, 4, nil, suiteTLS13, nil, nil, aeadAESGCM13},
+	{TLS_AES_256_GCM_SHA384, 32, 0, 4, nil, suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCM13},
+
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA and
 	// AEADs are the top preference.
 	{TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
 	{TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, 32, 0, 12, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadChaCha20Poly1305},
-	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM},
-	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM},
-	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
-	{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
+	{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12, nil, nil, aeadAESGCM12},
+	{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, nil, nil, aeadAESGCM12},
+	{TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheRSAKA, suiteECDHE | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM12},
+	{TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM12},
 	{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256, 16, 32, 16, ecdheRSAKA, suiteECDHE | suiteTLS12, cipherAES, macSHA256, nil},
 	{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, 16, 20, 16, ecdheRSAKA, suiteECDHE, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, 16, 32, 16, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteTLS12, cipherAES, macSHA256, nil},
 	{TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, 16, 20, 16, ecdheECDSAKA, suiteECDHE | suiteECDSA, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, ecdheRSAKA, suiteECDHE, cipherAES, macSHA1, nil},
 	{TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, 32, 20, 16, ecdheECDSAKA, suiteECDHE | suiteECDSA, cipherAES, macSHA1, nil},
-	{TLS_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESGCM},
-	{TLS_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, rsaKA, suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM},
+	{TLS_RSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, rsaKA, suiteTLS12, nil, nil, aeadAESGCM12},
+	{TLS_RSA_WITH_AES_256_GCM_SHA384, 32, 0, 4, rsaKA, suiteTLS12 | suiteSHA384, nil, nil, aeadAESGCM12},
 	{TLS_RSA_WITH_AES_128_CBC_SHA256, 16, 32, 16, rsaKA, suiteTLS12, cipherAES, macSHA256, nil},
 	{TLS_RSA_WITH_AES_128_CBC_SHA, 16, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
 	{TLS_RSA_WITH_AES_256_CBC_SHA, 32, 20, 16, rsaKA, 0, cipherAES, macSHA1, nil},
@@ -215,7 +223,7 @@ func (f *xorNonceAEAD) Open(out, nonce, plaintext, additionalData []byte) ([]byt
 	return result, err
 }
 
-func aeadAESGCM(key, fixedNonce []byte) cipher.AEAD {
+func aeadAESGCM12(key, fixedNonce []byte) cipher.AEAD {
 	aes, err := aes.NewCipher(key)
 	if err != nil {
 		panic(err)
@@ -227,6 +235,21 @@ func aeadAESGCM(key, fixedNonce []byte) cipher.AEAD {
 
 	ret := &fixedNonceAEAD{aead: aead}
 	copy(ret.nonce[:], fixedNonce)
+	return ret
+}
+
+func aeadAESGCM13(key, fixedNonce []byte) cipher.AEAD {
+	aes, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	aead, err := cipher.NewGCM(aes)
+	if err != nil {
+		panic(err)
+	}
+
+	ret := &xorNonceAEAD{aead: aead}
+	copy(ret.nonceMask[:], fixedNonce)
 	return ret
 }
 
@@ -366,6 +389,7 @@ func mutualCipherSuite(have []uint16, want uint16) *cipherSuite {
 //
 // Taken from http://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 const (
+	// TLS 1.0 - 1.2 cipher suites. To be used in Config.CipherSuites.
 	TLS_RSA_WITH_RC4_128_SHA                uint16 = 0x0005
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0x000a
 	TLS_RSA_WITH_AES_128_CBC_SHA            uint16 = 0x002f
@@ -388,6 +412,11 @@ const (
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
 	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
+
+	// TLS 1.3+ cipher suites. To be used in Config.TLS13CipherSuites.
+	TLS_AES_128_GCM_SHA256       uint16 = 0x1301
+	TLS_AES_256_GCM_SHA384       uint16 = 0x1302
+	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See
