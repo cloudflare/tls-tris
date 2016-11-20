@@ -653,6 +653,7 @@ func TestCloneNonFuncFields(t *testing.T) {
 		case "SessionTicketKey":
 			f.Set(reflect.ValueOf([32]byte{}))
 		case "CipherSuites":
+		case "TLS13CipherSuites":
 			f.Set(reflect.ValueOf([]uint16{1, 2}))
 		case "CurvePreferences":
 			f.Set(reflect.ValueOf([]CurveID{CurveP256}))
