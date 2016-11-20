@@ -73,7 +73,7 @@ func (c *Conn) clientHandshake() error {
 		hello.secureRenegotiation = c.clientFinished[:]
 	}
 
-	possibleCipherSuites := c.config.cipherSuites()
+	possibleCipherSuites := c.config.cipherSuites(c.vers)
 	hello.cipherSuites = make([]uint16, 0, len(possibleCipherSuites))
 
 NextCipherSuite:
