@@ -8,21 +8,22 @@ go:
   - 1.7
 
 env:
-  - MODE=gotest
   - MODE=interop CLIENT=boring
-  - MODE=interop CLIENT=boring REVISION=origin/master
   - MODE=interop CLIENT=bogo
-  - MODE=interop CLIENT=bogo REVISION=origin/master
   - MODE=interop CLIENT=tstclnt
-  - MODE=interop CLIENT=tstclnt REVISION=default
   - MODE=interop CLIENT=mint
+  - MODE=gotest
+  - MODE=interop CLIENT=boring REVISION=origin/master
+  - MODE=interop CLIENT=bogo REVISION=origin/master
+  - MODE=interop CLIENT=tstclnt REVISION=default
 
 matrix:
   fast_finish: true
   allow_failures:
-    - env: MODE=interop CLIENT=bogo REVISION=origin/master
     - env: MODE=interop CLIENT=boring REVISION=origin/master
+    - env: MODE=interop CLIENT=bogo REVISION=origin/master
     - env: MODE=interop CLIENT=tstclnt REVISION=default
+    - env: MODE=interop CLIENT=mint # broken resumption client
 
 install:
   - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
