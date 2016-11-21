@@ -19,7 +19,11 @@ var tlsVersionToName = map[uint16]string{
 
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s _o/\n", tlsVersionToName[r.TLS.Version])
+		resumed := ""
+		if r.TLS.DidResume {
+			resumed = " [resumed]"
+		}
+		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed)
 	})
 
 	http.HandleFunc("/ch", func(w http.ResponseWriter, r *http.Request) {
