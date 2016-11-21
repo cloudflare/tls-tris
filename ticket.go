@@ -193,8 +193,7 @@ func (s *sessionState13) unmarshal(data []byte) bool {
 	return int(l) == len(s.resumptionSecret)
 }
 
-func (c *Conn) encryptTicket(state *sessionState) ([]byte, error) {
-	serialized := state.marshal()
+func (c *Conn) encryptTicket(serialized []byte) ([]byte, error) {
 	encrypted := make([]byte, ticketKeyNameLen+aes.BlockSize+len(serialized)+sha256.Size)
 	keyName := encrypted[:ticketKeyNameLen]
 	iv := encrypted[ticketKeyNameLen : ticketKeyNameLen+aes.BlockSize]
@@ -218,7 +217,7 @@ func (c *Conn) encryptTicket(state *sessionState) ([]byte, error) {
 	return encrypted, nil
 }
 
-func (c *Conn) decryptTicket(encrypted []byte) (*sessionState, bool) {
+func (c *Conn) decryptTicket(encrypted []byte) (serialized []byte, usedOldKey bool) {
 	if c.config.SessionTicketsDisabled ||
 		len(encrypted) < ticketKeyNameLen+aes.BlockSize+sha256.Size {
 		return nil, false
@@ -258,7 +257,5 @@ func (c *Conn) decryptTicket(encrypted []byte) (*sessionState, bool) {
 	plaintext := ciphertext
 	cipher.NewCTR(block, iv).XORKeyStream(plaintext, ciphertext)
 
-	state := &sessionState{usedOldKey: keyIndex > 0}
-	ok := state.unmarshal(plaintext)
-	return state, ok
+	return plaintext, keyIndex > 0
 }
