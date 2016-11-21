@@ -27,6 +27,8 @@ var tests = []interface{}{
 	&serverHelloMsg13{},
 	&encryptedExtensionsMsg{},
 	&certificateMsg13{},
+	&newSessionTicketMsg13{},
+	&sessionState13{},
 }
 
 type testMessage interface {
@@ -161,6 +163,9 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	for i := range m.supportedVersions {
 		m.supportedVersions[i] = uint16(rand.Intn(30000))
 	}
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+	}
 
 	return reflect.ValueOf(m)
 }
@@ -209,13 +214,22 @@ func (*serverHelloMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 	m.cipherSuite = uint16(rand.Int31())
 	m.keyShare.group = CurveID(rand.Intn(30000))
 	m.keyShare.data = randomBytes(rand.Intn(300), rand)
+	if rand.Intn(10) > 5 {
+		m.psk = true
+		m.pskIdentity = uint16(rand.Int31())
+	}
 
 	return reflect.ValueOf(m)
 }
 
 func (*encryptedExtensionsMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &encryptedExtensionsMsg{}
-	m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+	if rand.Intn(10) > 5 {
+		m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+	}
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+	}
 
 	return reflect.ValueOf(m)
 }
@@ -293,6 +307,18 @@ func (*newSessionTicketMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	return reflect.ValueOf(m)
 }
 
+func (*newSessionTicketMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &newSessionTicketMsg13{}
+	m.ageAdd = uint32(rand.Intn(0xffffffff))
+	m.lifetime = uint32(rand.Intn(0xffffffff))
+	m.ticket = randomBytes(rand.Intn(40), rand)
+	if rand.Intn(10) > 5 {
+		m.withEarlyDataInfo = true
+		m.maxEarlyDataLength = uint32(rand.Intn(0xffffffff))
+	}
+	return reflect.ValueOf(m)
+}
+
 func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	s := &sessionState{}
 	s.vers = uint16(rand.Intn(10000))
@@ -303,5 +329,18 @@ func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	for i := 0; i < numCerts; i++ {
 		s.certificates[i] = randomBytes(rand.Intn(10)+1, rand)
 	}
+	return reflect.ValueOf(s)
+}
+
+func (*sessionState13) Generate(rand *rand.Rand, size int) reflect.Value {
+	s := &sessionState13{}
+	s.vers = uint16(rand.Intn(10000))
+	s.suite = uint16(rand.Intn(10000))
+	s.ageAdd = uint32(rand.Intn(0xffffffff))
+	s.maxEarlyDataLen = uint32(rand.Intn(0xffffffff))
+	s.createdAt = uint64(rand.Int63n(0xfffffffffffffff))
+	s.resumptionSecret = randomBytes(rand.Intn(100), rand)
+	s.alpnProtocol = randomString(rand.Intn(100), rand)
+	s.SNI = randomString(rand.Intn(100), rand)
 	return reflect.ValueOf(s)
 }

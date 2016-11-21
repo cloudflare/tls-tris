@@ -17,6 +17,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 type clientHandshakeState struct {
@@ -251,6 +252,8 @@ NextCipherSuite:
 	}
 
 	c.didResume = isResume
+	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
 	c.handshakeComplete = true
 	c.cipherSuite = suite.id
 	return nil

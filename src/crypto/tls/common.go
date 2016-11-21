@@ -84,7 +84,11 @@ const (
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
 	extensionKeyShare            uint16 = 40
+	extensionPreSharedKey        uint16 = 41
+	extensionEarlyData           uint16 = 42
 	extensionSupportedVersions   uint16 = 43
+	extensionPSKKeyExchangeModes uint16 = 45
+	extensionTicketEarlyDataInfo uint16 = 46
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 )
@@ -92,6 +96,12 @@ const (
 // TLS signaling cipher suite values
 const (
 	scsvRenegotiation uint16 = 0x00ff
+)
+
+// PSK Key Exchange Modes
+// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.7
+const (
+	pskDHEKeyExchange uint8 = 1
 )
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
@@ -113,6 +123,15 @@ const (
 type keyShare struct {
 	group CurveID
 	data  []byte
+}
+
+// TLS 1.3 PSK Identity and Binder, as sent by the client
+// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
+
+type psk struct {
+	identity     []byte
+	obfTicketAge uint32
+	binder       []byte
 }
 
 // TLS Elliptic Curve Point Formats
@@ -193,6 +212,16 @@ type ConnectionState struct {
 	// future versions of Go once the TLS master-secret fix has been
 	// standardized and implemented.
 	TLSUnique []byte
+
+	// HandshakeConfirmed is true once all data returned by Read
+	// (past and future) is guaranteed not to be replayed.
+	HandshakeConfirmed bool
+
+	// The Fingerprint is an sequence of bytes unique to this Client Hello.
+	// It can be used to prevent or mitigate 0-RTT data replays as it's
+	// guaranteed that a replayed connection will have the same Fingerprint.
+	// Fingerprint is only present if HandshakeConfirmed is false.
+	Fingerprint []byte
 }
 
 // ClientAuthType declares the policy the server will follow for
@@ -300,6 +329,18 @@ type ClientHelloInfo struct {
 	// from, or write to, this connection; that will cause the TLS
 	// connection to fail.
 	Conn net.Conn
+
+	// Offered0RTTData is true if the client announced that it will send
+	// 0-RTT data. If the server Config.Accept0RTTData is true, and the
+	// client offered a session ticket valid for that purpose, it will
+	// be notified that the 0-RTT data is accepted and it will be made
+	// immediately available for Read.
+	Offered0RTTData bool
+
+	// The Fingerprint is an sequence of bytes unique to this Client Hello.
+	// It can be used to prevent or mitigate 0-RTT data replays as it's
+	// guaranteed that a replayed connection will have the same Fingerprint.
+	Fingerprint []byte
 }
 
 // CertificateRequestInfo contains information from a server's
@@ -526,6 +567,28 @@ type Config struct {
 	// used for debugging.
 	KeyLogWriter io.Writer
 
+	// If Max0RTTDataSize is not zero, the client will be allowed to use
+	// session tickets to send at most this number of bytes of 0-RTT data.
+	// 0-RTT data is subject to replay and has memory DoS implications.
+	// The server will later be able to refuse the 0-RTT data with
+	// Accept0RTTData, or wait for the client to prove that it's not
+	// replayed with Conn.ConfirmHandshake.
+	//
+	// It has no meaning on the client.
+	//
+	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2.3.
+	Max0RTTDataSize uint32
+
+	// Accept0RTTData makes the 0-RTT data received from the client
+	// immediately available to Read. 0-RTT data is subject to replay.
+	// Use Conn.ConfirmHandshake to wait until the data is known not
+	// to be replayed after reading it.
+	//
+	// It has no meaning on the client.
+	//
+	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2.3.
+	Accept0RTTData bool
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys and originalConfig.
@@ -603,6 +666,8 @@ func (c *Config) Clone() *Config {
 		DynamicRecordSizingDisabled: c.DynamicRecordSizingDisabled,
 		Renegotiation:               c.Renegotiation,
 		KeyLogWriter:                c.KeyLogWriter,
+		Accept0RTTData:              c.Accept0RTTData,
+		Max0RTTDataSize:             c.Max0RTTDataSize,
 		sessionTicketKeys:           sessionTicketKeys,
 		// originalConfig is deliberately not duplicated.
 	}

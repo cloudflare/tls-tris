@@ -129,8 +129,108 @@ func (s *sessionState) unmarshal(data []byte) bool {
 	return len(data) == 0
 }
 
-func (c *Conn) encryptTicket(state *sessionState) ([]byte, error) {
-	serialized := state.marshal()
+type sessionState13 struct {
+	vers             uint16
+	suite            uint16
+	ageAdd           uint32
+	createdAt        uint64
+	maxEarlyDataLen  uint32
+	resumptionSecret []byte
+	alpnProtocol     string
+	SNI              string
+}
+
+func (s *sessionState13) equal(i interface{}) bool {
+	s1, ok := i.(*sessionState13)
+	if !ok {
+		return false
+	}
+
+	return s.vers == s1.vers &&
+		s.suite == s1.suite &&
+		s.ageAdd == s1.ageAdd &&
+		s.createdAt == s1.createdAt &&
+		s.maxEarlyDataLen == s1.maxEarlyDataLen &&
+		bytes.Equal(s.resumptionSecret, s1.resumptionSecret) &&
+		s.alpnProtocol == s1.alpnProtocol &&
+		s.SNI == s1.SNI
+}
+
+func (s *sessionState13) marshal() []byte {
+	length := 2 + 2 + 4 + 8 + 4 + 2 + len(s.resumptionSecret) + 2 + len(s.alpnProtocol) + 2 + len(s.SNI)
+
+	x := make([]byte, length)
+	x[0] = byte(s.vers >> 8)
+	x[1] = byte(s.vers)
+	x[2] = byte(s.suite >> 8)
+	x[3] = byte(s.suite)
+	x[4] = byte(s.ageAdd >> 24)
+	x[5] = byte(s.ageAdd >> 16)
+	x[6] = byte(s.ageAdd >> 8)
+	x[7] = byte(s.ageAdd)
+	x[8] = byte(s.createdAt >> 56)
+	x[9] = byte(s.createdAt >> 48)
+	x[10] = byte(s.createdAt >> 40)
+	x[11] = byte(s.createdAt >> 32)
+	x[12] = byte(s.createdAt >> 24)
+	x[13] = byte(s.createdAt >> 16)
+	x[14] = byte(s.createdAt >> 8)
+	x[15] = byte(s.createdAt)
+	x[16] = byte(s.maxEarlyDataLen >> 24)
+	x[17] = byte(s.maxEarlyDataLen >> 16)
+	x[18] = byte(s.maxEarlyDataLen >> 8)
+	x[19] = byte(s.maxEarlyDataLen)
+	x[20] = byte(len(s.resumptionSecret) >> 8)
+	x[21] = byte(len(s.resumptionSecret))
+	copy(x[22:], s.resumptionSecret)
+	z := x[22+len(s.resumptionSecret):]
+	z[0] = byte(len(s.alpnProtocol) >> 8)
+	z[1] = byte(len(s.alpnProtocol))
+	copy(z[2:], s.alpnProtocol)
+	z = z[2+len(s.alpnProtocol):]
+	z[0] = byte(len(s.SNI) >> 8)
+	z[1] = byte(len(s.SNI))
+	copy(z[2:], s.SNI)
+
+	return x
+}
+
+func (s *sessionState13) unmarshal(data []byte) bool {
+	if len(data) < 24 {
+		return false
+	}
+
+	s.vers = uint16(data[0])<<8 | uint16(data[1])
+	s.suite = uint16(data[2])<<8 | uint16(data[3])
+	s.ageAdd = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
+	s.createdAt = uint64(data[8])<<56 | uint64(data[9])<<48 | uint64(data[10])<<40 | uint64(data[11])<<32 |
+		uint64(data[12])<<24 | uint64(data[13])<<16 | uint64(data[14])<<8 | uint64(data[15])
+	s.maxEarlyDataLen = uint32(data[16])<<24 | uint32(data[17])<<16 | uint32(data[18])<<8 | uint32(data[19])
+
+	l := int(data[20])<<8 | int(data[21])
+	if len(data) < 22+l+2 {
+		return false
+	}
+	s.resumptionSecret = data[22 : 22+l]
+	z := data[22+l:]
+
+	l = int(z[0])<<8 | int(z[1])
+	if len(z) < 2+l+2 {
+		return false
+	}
+	s.alpnProtocol = string(z[2 : 2+l])
+	z = z[2+l:]
+
+	l = int(z[0])<<8 | int(z[1])
+	if len(z) != 2+l {
+		return false
+	}
+	s.SNI = string(z[2 : 2+l])
+
+	return true
+}
+
+func (c *Conn) encryptTicket(serialized []byte) ([]byte, error) {
 	encrypted := make([]byte, ticketKeyNameLen+aes.BlockSize+len(serialized)+sha256.Size)
 	keyName := encrypted[:ticketKeyNameLen]
 	iv := encrypted[ticketKeyNameLen : ticketKeyNameLen+aes.BlockSize]
@@ -154,7 +254,7 @@ func (c *Conn) encryptTicket(state *sessionState) ([]byte, error) {
 	return encrypted, nil
 }
 
-func (c *Conn) decryptTicket(encrypted []byte) (*sessionState, bool) {
+func (c *Conn) decryptTicket(encrypted []byte) (serialized []byte, usedOldKey bool) {
 	if c.config.SessionTicketsDisabled ||
 		len(encrypted) < ticketKeyNameLen+aes.BlockSize+sha256.Size {
 		return nil, false
@@ -194,7 +294,5 @@ func (c *Conn) decryptTicket(encrypted []byte) (*sessionState, bool) {
 	plaintext := ciphertext
 	cipher.NewCTR(block, iv).XORKeyStream(plaintext, ciphertext)
 
-	state := &sessionState{usedOldKey: keyIndex > 0}
-	ok := state.unmarshal(plaintext)
-	return state, ok
+	return plaintext, keyIndex > 0
 }

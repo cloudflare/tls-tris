@@ -13,28 +13,38 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
+	"sync/atomic"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
 	c                     *Conn
-	clientHello           *clientHelloMsg
-	hello                 *serverHelloMsg
-	hello13               *serverHelloMsg13
-	hello13Enc            *encryptedExtensionsMsg
 	suite                 *cipherSuite
-	ellipticOk            bool
-	ecdsaOk               bool
-	rsaDecryptOk          bool
-	rsaSignOk             bool
-	sessionState          *sessionState
-	finishedHash          finishedHash
 	masterSecret          []byte
-	certsFromClient       [][]byte
-	cert                  *Certificate
 	cachedClientHelloInfo *ClientHelloInfo
+	clientHello           *clientHelloMsg
+	cert                  *Certificate
+
+	// TLS 1.0-1.2 fields
+	hello           *serverHelloMsg
+	ellipticOk      bool
+	ecdsaOk         bool
+	rsaDecryptOk    bool
+	rsaSignOk       bool
+	sessionState    *sessionState
+	finishedHash    finishedHash
+	certsFromClient [][]byte
+
+	// TLS 1.3 fields
+	hello13           *serverHelloMsg13
+	hello13Enc        *encryptedExtensionsMsg
+	finishedHash13    hash.Hash
+	clientFinishedKey []byte
+	hsClientCipher    interface{}
+	appClientCipher   interface{}
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -53,11 +63,18 @@ func (c *Conn) serverHandshake() error {
 	}
 
 	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
+	// and https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2
 	c.buffering = true
 	if hs.hello13 != nil {
 		if err := hs.doTLS13Handshake(); err != nil {
 			return err
 		}
+		if _, err := c.flush(); err != nil {
+			return err
+		}
+		c.hs = &hs
+		c.handshakeComplete = true
+		return nil
 	} else if isResume {
 		// The client has included a session ticket and so we do an abbreviated handshake.
 		if err := hs.doResumeHandshake(); err != nil {
@@ -109,6 +126,8 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 	}
+	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
 	c.handshakeComplete = true
 
 	return nil
@@ -338,9 +357,10 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 		return false
 	}
 
-	var ok bool
-	var sessionTicket = append([]uint8{}, hs.clientHello.sessionTicket...)
-	if hs.sessionState, ok = c.decryptTicket(sessionTicket); !ok {
+	sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
+	serializedState, usedOldKey := c.decryptTicket(sessionTicket)
+	hs.sessionState = &sessionState{usedOldKey: usedOldKey}
+	if ok := hs.sessionState.unmarshal(serializedState); !ok {
 		return false
 	}
 
@@ -715,7 +735,7 @@ func (hs *serverHandshakeState) sendSessionTicket() error {
 		masterSecret: hs.masterSecret,
 		certificates: hs.certsFromClient,
 	}
-	m.ticket, err = c.encryptTicket(&state)
+	m.ticket, err = c.encryptTicket(state.marshal())
 	if err != nil {
 		return err
 	}
@@ -882,6 +902,11 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		signatureSchemes = append(signatureSchemes, SignatureScheme(sah.hash)<<8+SignatureScheme(sah.signature))
 	}
 
+	var pskBinder []byte
+	if len(hs.clientHello.psks) > 0 {
+		pskBinder = hs.clientHello.psks[0].binder
+	}
+
 	hs.cachedClientHelloInfo = &ClientHelloInfo{
 		CipherSuites:      hs.clientHello.cipherSuites,
 		ServerName:        hs.clientHello.serverName,
@@ -891,6 +916,8 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		SupportedProtos:   hs.clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
 		Conn:              hs.c.conn,
+		Offered0RTTData:   hs.clientHello.earlyData,
+		Fingerprint:       pskBinder,
 	}
 
 	return hs.cachedClientHelloInfo
