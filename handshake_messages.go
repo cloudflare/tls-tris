@@ -8,6 +8,7 @@ import "bytes"
 
 type clientHelloMsg struct {
 	raw                          []byte
+	rawTruncated                 []byte // for PSK binding
 	vers                         uint16
 	random                       []byte
 	sessionId                    []byte
@@ -27,6 +28,8 @@ type clientHelloMsg struct {
 	alpnProtocols                []string
 	keyShares                    []keyShare
 	supportedVersions            []uint16
+	psks                         []psk
+	pskKeyExchangeModes          []uint8
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -363,6 +366,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	}
 	m.sessionId = data[39 : 39+sessionIdLen]
 	data = data[39+sessionIdLen:]
+	bindersOffset := 39 + sessionIdLen
 	if len(data) < 2 {
 		return false
 	}
@@ -381,6 +385,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		}
 	}
 	data = data[2+cipherSuiteLen:]
+	bindersOffset += 2 + cipherSuiteLen
 	if len(data) < 1 {
 		return false
 	}
@@ -391,6 +396,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	m.compressionMethods = data[1 : 1+compressionMethodsLen]
 
 	data = data[1+compressionMethodsLen:]
+	bindersOffset += 1 + compressionMethodsLen
 
 	m.nextProtoNeg = false
 	m.serverName = ""
@@ -402,6 +408,8 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	m.scts = false
 	m.keyShares = nil
 	m.supportedVersions = nil
+	m.psks = nil
+	m.pskKeyExchangeModes = nil
 
 	if len(data) == 0 {
 		// ClientHello is optionally followed by extension data
@@ -413,6 +421,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 
 	extensionsLength := int(data[0])<<8 | int(data[1])
 	data = data[2:]
+	bindersOffset += 2
 	if extensionsLength != len(data) {
 		return false
 	}
@@ -424,6 +433,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
+		bindersOffset += 4
 		if len(data) < length {
 			return false
 		}
@@ -588,8 +598,70 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 				m.supportedVersions = append(m.supportedVersions, v)
 				d = d[2:]
 			}
+		case extensionPreSharedKey:
+			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
+			if length < 43 {
+				return false
+			}
+			li := int(data[0])<<8 | int(data[1])
+			if li > length-37 {
+				return false
+			}
+			d := data[2 : 2+li]
+			bindersOffset += 2 + li
+			for len(d) > 0 {
+				if len(d) < 6 {
+					return false
+				}
+				l := int(d[0])<<8 | int(d[1])
+				if len(d) < 2+l+4 {
+					return false
+				}
+				m.psks = append(m.psks, psk{
+					identity: d[2 : 2+l],
+					obfTicketAge: uint32(d[l+2])<<24 | uint32(d[l+3])<<16 |
+						uint32(d[l+4])<<8 | uint32(d[l+5]),
+				})
+				d = d[2+l+4:]
+			}
+			lb := int(data[li+2])<<8 | int(data[li+3])
+			d = data[2+li+2:]
+			if lb != len(d) {
+				return false
+			}
+			i := 0
+			for len(d) > 0 {
+				if len(d) < 1 {
+					return false
+				}
+				l := int(d[0])
+				if l > len(d)-1 {
+					return false
+				}
+				m.psks[i].binder = d[1 : 1+l]
+				d = d[1+l:]
+				i++
+			}
+			if i != len(m.psks) {
+				return false
+			}
+			// Ensure this extension is the last one in the Client Hello
+			if len(data) != length {
+				return false
+			}
+			m.rawTruncated = m.raw[:bindersOffset]
+		case extensionPSKKeyExchangeModes:
+			if length < 2 {
+				return false
+			}
+			l := int(data[0])
+			if length != l+1 {
+				return false
+			}
+			m.pskKeyExchangeModes = data[1:length]
 		}
 		data = data[length:]
+		bindersOffset += length
 	}
 
 	return true
@@ -936,6 +1008,8 @@ type serverHelloMsg13 struct {
 	cipherSuite         uint16
 	signatureAlgorithms bool
 	keyShare            keyShare
+	psk                 bool
+	pskIdentity         uint16
 }
 
 func (m *serverHelloMsg13) equal(i interface{}) bool {
@@ -950,7 +1024,9 @@ func (m *serverHelloMsg13) equal(i interface{}) bool {
 		m.cipherSuite == m1.cipherSuite &&
 		m.signatureAlgorithms == m1.signatureAlgorithms &&
 		m.keyShare.group == m1.keyShare.group &&
-		bytes.Equal(m.keyShare.data, m1.keyShare.data)
+		bytes.Equal(m.keyShare.data, m1.keyShare.data) &&
+		m.psk == m1.psk &&
+		m.pskIdentity == m1.pskIdentity
 }
 
 func (m *serverHelloMsg13) marshal() []byte {
@@ -964,6 +1040,9 @@ func (m *serverHelloMsg13) marshal() []byte {
 	}
 	if m.keyShare.group != 0 {
 		length += 8 + len(m.keyShare.data)
+	}
+	if m.psk {
+		length += 6
 	}
 
 	x := make([]byte, 4+length)
@@ -985,6 +1064,15 @@ func (m *serverHelloMsg13) marshal() []byte {
 		z[0] = byte(extensionSignatureAlgorithms >> 8)
 		z[1] = byte(extensionSignatureAlgorithms)
 		z = z[4:]
+	}
+
+	if m.psk {
+		z[0] = byte(extensionPreSharedKey >> 8)
+		z[1] = byte(extensionPreSharedKey)
+		z[3] = 2
+		z[4] = byte(m.pskIdentity >> 8)
+		z[5] = byte(m.pskIdentity)
+		z = z[6:]
 	}
 
 	if m.keyShare.group != 0 {
@@ -1013,6 +1101,8 @@ func (m *serverHelloMsg13) unmarshal(data []byte) bool {
 	m.vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	m.cipherSuite = uint16(data[38])<<8 | uint16(data[39])
+	m.psk = false
+	m.pskIdentity = 0
 
 	extensionsLength := int(data[40])<<8 | int(data[41])
 	data = data[42:]
@@ -1039,6 +1129,12 @@ func (m *serverHelloMsg13) unmarshal(data []byte) bool {
 				return false
 			}
 			m.signatureAlgorithms = true
+		case extensionPreSharedKey:
+			if length != 2 {
+				return false
+			}
+			m.psk = true
+			m.pskIdentity = uint16(data[0])<<8 | uint16(data[1])
 		case extensionKeyShare:
 			if length < 2 {
 				return false
@@ -1931,6 +2027,131 @@ func (m *newSessionTicketMsg) unmarshal(data []byte) bool {
 	}
 
 	m.ticket = data[10:]
+
+	return true
+}
+
+type newSessionTicketMsg13 struct {
+	raw                []byte
+	lifetime           uint32
+	ageAdd             uint32
+	ticket             []byte
+	withEarlyDataInfo  bool
+	maxEarlyDataLength uint32
+}
+
+func (m *newSessionTicketMsg13) equal(i interface{}) bool {
+	m1, ok := i.(*newSessionTicketMsg13)
+	if !ok {
+		return false
+	}
+
+	return bytes.Equal(m.raw, m1.raw) &&
+		m.lifetime == m1.lifetime &&
+		m.ageAdd == m1.ageAdd &&
+		bytes.Equal(m.ticket, m1.ticket) &&
+		m.withEarlyDataInfo == m1.withEarlyDataInfo &&
+		m.maxEarlyDataLength == m1.maxEarlyDataLength
+}
+
+func (m *newSessionTicketMsg13) marshal() (x []byte) {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
+	ticketLen := len(m.ticket)
+	length := 12 + ticketLen
+	if m.withEarlyDataInfo {
+		length += 8
+	}
+	x = make([]byte, 4+length)
+	x[0] = typeNewSessionTicket
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+
+	x[4] = uint8(m.lifetime >> 24)
+	x[5] = uint8(m.lifetime >> 16)
+	x[6] = uint8(m.lifetime >> 8)
+	x[7] = uint8(m.lifetime)
+	x[8] = uint8(m.ageAdd >> 24)
+	x[9] = uint8(m.ageAdd >> 16)
+	x[10] = uint8(m.ageAdd >> 8)
+	x[11] = uint8(m.ageAdd)
+
+	x[12] = uint8(ticketLen >> 8)
+	x[13] = uint8(ticketLen)
+	copy(x[14:], m.ticket)
+
+	if m.withEarlyDataInfo {
+		z := x[14+ticketLen:]
+		z[1] = 8
+		z[2] = uint8(extensionTicketEarlyDataInfo >> 8)
+		z[3] = uint8(extensionTicketEarlyDataInfo)
+		z[5] = 4
+		z[6] = uint8(m.maxEarlyDataLength >> 24)
+		z[7] = uint8(m.maxEarlyDataLength >> 16)
+		z[8] = uint8(m.maxEarlyDataLength >> 8)
+		z[9] = uint8(m.maxEarlyDataLength)
+	}
+
+	m.raw = x
+
+	return
+}
+
+func (m *newSessionTicketMsg13) unmarshal(data []byte) bool {
+	m.raw = data
+	m.maxEarlyDataLength = 0
+	m.withEarlyDataInfo = false
+
+	if len(data) < 16 {
+		return false
+	}
+
+	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	if uint32(len(data))-4 != length {
+		return false
+	}
+
+	m.lifetime = uint32(data[4])<<24 | uint32(data[5])<<16 |
+		uint32(data[6])<<8 | uint32(data[7])
+	m.ageAdd = uint32(data[8])<<24 | uint32(data[9])<<16 |
+		uint32(data[10])<<8 | uint32(data[11])
+
+	ticketLen := int(data[12])<<8 + int(data[13])
+	if 14+ticketLen > len(data) {
+		return false
+	}
+	m.ticket = data[14 : 14+ticketLen]
+
+	data = data[14+ticketLen:]
+	extLen := int(data[0])<<8 + int(data[1])
+	if extLen != len(data)-2 {
+		return false
+	}
+
+	data = data[2:]
+	for len(data) > 0 {
+		if len(data) < 4 {
+			return false
+		}
+		extType := uint16(data[0])<<8 + uint16(data[1])
+		length := int(data[2])<<8 + int(data[3])
+		data = data[4:]
+
+		switch extType {
+		case extensionTicketEarlyDataInfo:
+			if length != 4 {
+				return false
+			}
+			m.withEarlyDataInfo = true
+			m.maxEarlyDataLength = uint32(data[0])<<24 | uint32(data[1])<<16 |
+				uint32(data[2])<<8 | uint32(data[3])
+		}
+		data = data[length:]
+	}
 
 	return true
 }
