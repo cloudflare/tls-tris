@@ -129,6 +129,70 @@ func (s *sessionState) unmarshal(data []byte) bool {
 	return len(data) == 0
 }
 
+type sessionState13 struct {
+	vers             uint16
+	hash             uint16 // crypto.Hash value
+	ageAdd           uint32
+	createdAt        uint64
+	resumptionSecret []byte
+}
+
+func (s *sessionState13) equal(i interface{}) bool {
+	s1, ok := i.(*sessionState13)
+	if !ok {
+		return false
+	}
+
+	return s.vers == s1.vers &&
+		s.hash == s1.hash &&
+		s.ageAdd == s1.ageAdd &&
+		bytes.Equal(s.resumptionSecret, s1.resumptionSecret)
+}
+
+func (s *sessionState13) marshal() []byte {
+	length := 2 + 2 + 4 + 8 + 2 + len(s.resumptionSecret)
+
+	x := make([]byte, length)
+	x[0] = byte(s.vers >> 8)
+	x[1] = byte(s.vers)
+	x[2] = byte(s.hash >> 8)
+	x[3] = byte(s.hash)
+	x[4] = byte(s.ageAdd >> 24)
+	x[5] = byte(s.ageAdd >> 16)
+	x[6] = byte(s.ageAdd >> 8)
+	x[7] = byte(s.ageAdd)
+	x[8] = byte(s.createdAt >> 56)
+	x[9] = byte(s.createdAt >> 48)
+	x[10] = byte(s.createdAt >> 40)
+	x[11] = byte(s.createdAt >> 32)
+	x[12] = byte(s.createdAt >> 24)
+	x[13] = byte(s.createdAt >> 16)
+	x[14] = byte(s.createdAt >> 8)
+	x[15] = byte(s.createdAt)
+	x[16] = byte(len(s.resumptionSecret) >> 8)
+	x[17] = byte(len(s.resumptionSecret))
+
+	copy(x[18:], s.resumptionSecret)
+
+	return x
+}
+
+func (s *sessionState13) unmarshal(data []byte) bool {
+	if len(data) < 18 {
+		return false
+	}
+
+	s.vers = uint16(data[0])<<8 | uint16(data[1])
+	s.hash = uint16(data[2])<<8 | uint16(data[3])
+	s.ageAdd = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
+	s.createdAt = uint64(data[8])<<56 | uint64(data[9])<<48 | uint64(data[10])<<40 | uint64(data[11])<<32 |
+		uint64(data[12])<<24 | uint64(data[13])<<16 | uint64(data[14])<<8 | uint64(data[15])
+	l := uint16(data[16])<<8 | uint16(data[17])
+	s.resumptionSecret = data[18:]
+
+	return int(l) == len(s.resumptionSecret)
+}
+
 func (c *Conn) encryptTicket(state *sessionState) ([]byte, error) {
 	serialized := state.marshal()
 	encrypted := make([]byte, ticketKeyNameLen+aes.BlockSize+len(serialized)+sha256.Size)
