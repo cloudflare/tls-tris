@@ -84,7 +84,10 @@ const (
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
 	extensionKeyShare            uint16 = 40
+	extensionPreSharedKey        uint16 = 41
 	extensionSupportedVersions   uint16 = 43
+	extensionPSKKeyExchangeModes uint16 = 45
+	extensionTicketEarlyDataInfo uint16 = 46
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 )
@@ -92,6 +95,12 @@ const (
 // TLS signaling cipher suite values
 const (
 	scsvRenegotiation uint16 = 0x00ff
+)
+
+// PSK Key Exchange Modes
+// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.7
+const (
+	pskDHEKeyExchange uint8 = 1
 )
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
@@ -113,6 +122,15 @@ const (
 type keyShare struct {
 	group CurveID
 	data  []byte
+}
+
+// TLS 1.3 PSK Identity and Binder, as sent by the client
+// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
+
+type psk struct {
+	identity     []byte
+	obfTicketAge uint32
+	binder       []byte
 }
 
 // TLS Elliptic Curve Point Formats
