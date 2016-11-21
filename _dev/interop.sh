@@ -11,7 +11,8 @@ if [ "$1" = "INSTALL" ]; then
 
 elif [ "$1" = "RUN" ]; then
 		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver)
-		docker run -i --rm tls-tris:$2 $IP:$3 | tee output.txt
-		grep "Hello TLS 1.3" output.txt
+		docker run --rm tls-tris:$2 $IP:$3 | tee output.txt
+		grep "Hello TLS 1.3" output.txt | grep -v "resumed"
+		grep "Hello TLS 1.3" output.txt | grep "resumed"
 
 fi

@@ -285,7 +285,7 @@ Curves:
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
 	}
 
-	if committer, ok := c.conn.(Committer); ok {
+	if committer, ok := c.conn.(Committer); ok { // TODO: probably committing too early
 		err = committer.Commit()
 		if err != nil {
 			return false, err
@@ -360,9 +360,10 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 		return false
 	}
 
-	var ok bool
-	var sessionTicket = append([]uint8{}, hs.clientHello.sessionTicket...)
-	if hs.sessionState, ok = c.decryptTicket(sessionTicket); !ok {
+	sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
+	serializedState, usedOldKey := c.decryptTicket(sessionTicket)
+	hs.sessionState = &sessionState{usedOldKey: usedOldKey}
+	if ok := hs.sessionState.unmarshal(serializedState); !ok {
 		return false
 	}
 
@@ -737,7 +738,7 @@ func (hs *serverHandshakeState) sendSessionTicket() error {
 		masterSecret: hs.masterSecret,
 		certificates: hs.certsFromClient,
 	}
-	m.ticket, err = c.encryptTicket(&state)
+	m.ticket, err = c.encryptTicket(state.marshal())
 	if err != nil {
 		return err
 	}

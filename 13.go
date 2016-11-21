@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"golang_org/x/crypto/curve25519"
 )
@@ -55,6 +56,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 	hashSize := hash.Size()
 
+	earlySecret, isPSK := hs.checkPSK(hash)
+	if !isPSK {
+		earlySecret = hkdfExtract(hash, nil, nil)
+	}
+	c.didResume = isPSK
+
 	ecdheSecret := deriveECDHESecret(ks, privateKey)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
@@ -69,9 +76,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	earlySecret := hkdfExtract(hash, nil, nil)
 	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
-
 	handshakeCtx := hs.finishedHash.Sum()
 
 	cHandshakeTS := hkdfExpandLabel(hash, handshakeSecret, handshakeCtx, "client handshake traffic secret", hashSize)
@@ -90,6 +95,76 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13Enc.marshal()); err != nil {
 		return err
 	}
+
+	if !isPSK {
+		if err := hs.sendCertificate13(); err != nil {
+			return err
+		}
+	}
+
+	serverFinishedKey := hkdfExpandLabel(hash, sHandshakeTS, nil, "finished", hashSize)
+	clientFinishedKey := hkdfExpandLabel(hash, cHandshakeTS, nil, "finished", hashSize)
+
+	h := hmac.New(hash.New, serverFinishedKey)
+	h.Write(hs.finishedHash.Sum())
+	verifyData := h.Sum(nil)
+	serverFinished := &finishedMsg{
+		verifyData: verifyData,
+	}
+	hs.finishedHash.Write(serverFinished.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, serverFinished.marshal()); err != nil {
+		return err
+	}
+
+	hs.masterSecret = hkdfExtract(hash, nil, handshakeSecret)
+	handshakeCtx = hs.finishedHash.Sum()
+
+	cTrafficSecret0 := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "client application traffic secret", hashSize)
+	cKey = hkdfExpandLabel(hash, cTrafficSecret0, nil, "key", hs.suite.keyLen)
+	cIV = hkdfExpandLabel(hash, cTrafficSecret0, nil, "iv", 12)
+	sTrafficSecret0 := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "server application traffic secret", hashSize)
+	sKey = hkdfExpandLabel(hash, sTrafficSecret0, nil, "key", hs.suite.keyLen)
+	sIV = hkdfExpandLabel(hash, sTrafficSecret0, nil, "iv", 12)
+
+	serverCipher = hs.suite.aead(sKey, sIV)
+	c.out.setCipher(c.vers, serverCipher)
+
+	// TODO(filippo): here we are ready to send Application Data, but we might want it opt-in.
+	// It will be refactored anyway for 0-RTT.
+
+	if _, err := c.flush(); err != nil {
+		return err
+	}
+
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+
+	clientFinished, ok := msg.(*finishedMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(clientFinished, msg)
+	}
+
+	h = hmac.New(hash.New, clientFinishedKey)
+	h.Write(hs.finishedHash.Sum())
+	expectedVerifyData := h.Sum(nil)
+	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
+		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: client's Finished message is incorrect")
+	}
+	hs.finishedHash.Write(clientFinished.marshal())
+
+	clientCipher = hs.suite.aead(cKey, cIV)
+	c.in.setCipher(c.vers, clientCipher)
+
+	return hs.sendSessionTicket13(hash)
+}
+
+func (hs *serverHandshakeState) sendCertificate13() error {
+	c := hs.c
 
 	certMsg := &certificateMsg13{
 		certificates: hs.cert.Certificate,
@@ -112,7 +187,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hs.finishedHash.Sum())
-	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(config.rand(), toSign[:], opts)
+	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), toSign[:], opts)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -127,58 +202,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
 		return err
 	}
-
-	serverFinishedKey := hkdfExpandLabel(hash, sHandshakeTS, nil, "finished", hashSize)
-	clientFinishedKey := hkdfExpandLabel(hash, cHandshakeTS, nil, "finished", hashSize)
-
-	h := hmac.New(hash.New, serverFinishedKey)
-	h.Write(hs.finishedHash.Sum())
-	verifyData := h.Sum(nil)
-	serverFinished := &finishedMsg{
-		verifyData: verifyData,
-	}
-	hs.finishedHash.Write(serverFinished.marshal())
-	if _, err := c.writeRecord(recordTypeHandshake, serverFinished.marshal()); err != nil {
-		return err
-	}
-
-	if _, err := c.flush(); err != nil {
-		return err
-	}
-
-	msg, err := c.readHandshake()
-	if err != nil {
-		return err
-	}
-
-	clientFinished, ok := msg.(*finishedMsg)
-	if !ok {
-		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(clientFinished, msg)
-	}
-	h = hmac.New(hash.New, clientFinishedKey)
-	h.Write(hs.finishedHash.Sum())
-	expectedVerifyData := h.Sum(nil)
-	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
-		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
-		c.sendAlert(alertHandshakeFailure)
-		return errors.New("tls: client's Finished message is incorrect")
-	}
-
-	masterSecret := hkdfExtract(hash, nil, handshakeSecret)
-	handshakeCtx = hs.finishedHash.Sum()
-
-	cTrafficSecret0 := hkdfExpandLabel(hash, masterSecret, handshakeCtx, "client application traffic secret", hashSize)
-	cKey = hkdfExpandLabel(hash, cTrafficSecret0, nil, "key", hs.suite.keyLen)
-	cIV = hkdfExpandLabel(hash, cTrafficSecret0, nil, "iv", 12)
-	sTrafficSecret0 := hkdfExpandLabel(hash, masterSecret, handshakeCtx, "server application traffic secret", hashSize)
-	sKey = hkdfExpandLabel(hash, sTrafficSecret0, nil, "key", hs.suite.keyLen)
-	sIV = hkdfExpandLabel(hash, sTrafficSecret0, nil, "iv", 12)
-
-	clientCipher = hs.suite.aead(cKey, cIV)
-	c.in.setCipher(c.vers, clientCipher)
-	serverCipher = hs.suite.aead(sKey, sIV)
-	c.out.setCipher(c.vers, serverCipher)
 
 	return nil
 }
@@ -336,6 +359,121 @@ func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L
 	copy(z[1:], hashValue)
 
 	return hkdfExpand(hash, secret, hkdfLabel, L)
+}
+
+// Maximum allowed mismatch between the stated age of a ticket
+// and the server-observed one. See
+// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8.2.
+const ticketAgeSkewAllowance = 10 * time.Second
+
+func (hs *serverHandshakeState) checkPSK(hash crypto.Hash) (earlySecret []byte, ok bool) {
+	if hs.c.config.SessionTicketsDisabled {
+		return nil, false
+	}
+
+	foundDHE := false
+	for _, mode := range hs.clientHello.pskKeyExchangeModes {
+		if mode == pskDHEKeyExchange {
+			foundDHE = true
+			break
+		}
+	}
+	if !foundDHE {
+		return nil, false
+	}
+
+	hashSize := hash.Size()
+	for i := range hs.clientHello.psks {
+		sessionTicket := append([]uint8{}, hs.clientHello.psks[i].identity...)
+		serializedTicket, _ := hs.c.decryptTicket(sessionTicket)
+		if serializedTicket == nil {
+			continue
+		}
+		s := &sessionState13{}
+		if ok := s.unmarshal(serializedTicket); !ok {
+			continue
+		}
+		if s.vers != hs.c.vers {
+			continue
+		}
+		clientAge := time.Duration(hs.clientHello.psks[i].obfTicketAge-s.ageAdd) * time.Millisecond
+		serverAge := time.Since(time.Unix(int64(s.createdAt), 0))
+		if clientAge-serverAge > ticketAgeSkewAllowance || clientAge-serverAge < -ticketAgeSkewAllowance {
+			continue
+		}
+		if s.hash != uint16(hash) {
+			continue
+		}
+
+		earlySecret := hkdfExtract(hash, s.resumptionSecret, nil)
+		handshakeCtx := hash.New().Sum(nil)
+		binderKey := hkdfExpandLabel(hash, earlySecret, handshakeCtx, "resumption psk binder key", hashSize)
+		binderFinishedKey := hkdfExpandLabel(hash, binderKey, nil, "finished", hashSize)
+		chHash := hash.New()
+		chHash.Write(hs.clientHello.rawTruncated)
+		h := hmac.New(hash.New, binderFinishedKey)
+		h.Write(chHash.Sum(nil))
+		expectedBinder := h.Sum(nil)
+
+		if subtle.ConstantTimeCompare(expectedBinder, hs.clientHello.psks[i].binder) == 1 {
+			hs.hello13.psk = true
+			hs.hello13.pskIdentity = uint16(i)
+			return earlySecret, true
+		}
+	}
+
+	return nil, false
+}
+
+func (hs *serverHandshakeState) sendSessionTicket13(hash crypto.Hash) error {
+	c := hs.c
+	if c.config.SessionTicketsDisabled {
+		return nil
+	}
+
+	foundDHE := false
+	for _, mode := range hs.clientHello.pskKeyExchangeModes {
+		if mode == pskDHEKeyExchange {
+			foundDHE = true
+			break
+		}
+	}
+	if !foundDHE {
+		return nil
+	}
+
+	handshakeCtx := hs.finishedHash.Sum()
+	resumptionSecret := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "resumption master secret", hash.Size())
+
+	ageAddBuf := make([]byte, 4)
+	if _, err := io.ReadFull(c.config.rand(), ageAddBuf); err != nil {
+		c.sendAlert(alertInternalError)
+		return err
+	}
+	sessionState := &sessionState13{
+		vers: c.vers,
+		hash: uint16(hash),
+		ageAdd: uint32(ageAddBuf[0])<<24 | uint32(ageAddBuf[1])<<16 |
+			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3]),
+		createdAt:        uint64(time.Now().Unix()),
+		resumptionSecret: resumptionSecret,
+	}
+
+	ticket, err := c.encryptTicket(sessionState.marshal())
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return err
+	}
+	ticketMsg := &newSessionTicketMsg13{
+		lifetime: 21600, // TODO(filippo)
+		ageAdd:   sessionState.ageAdd,
+		ticket:   ticket,
+	}
+	if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // QuietError is an error wrapper that prevents the verbose handshake log
