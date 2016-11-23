@@ -27,6 +27,8 @@ type Conn struct {
 	conn     net.Conn
 	isClient bool
 
+	phase handshakePhase
+
 	// constant after handshake; protected by handshakeMutex
 	handshakeMutex sync.Mutex // handshakeMutex < in.Mutex, out.Mutex, errMutex
 	// handshakeCond, if not nil, indicates that a goroutine is committed
@@ -39,9 +41,6 @@ type Conn struct {
 	vers          uint16  // TLS version
 	haveVers      bool    // version has been negotiated
 	config        *Config // configuration passed to constructor
-	// handshakeComplete is true if the connection is currently transfering
-	// application data (i.e. is not currently processing a handshake).
-	handshakeComplete bool
 	// handshakes counts the number of handshakes performed on the
 	// connection so far. If renegotiation is disabled then this is either
 	// zero or one.
@@ -101,8 +100,20 @@ type Conn struct {
 	// in Conn.Write.
 	activeCall int32
 
+	// TLS 1.3 needs the server state until it reaches the Client Finished
+	hs *serverHandshakeState
+
 	tmp [16]byte
 }
+
+type handshakePhase int
+
+const (
+	earlyHandshake handshakePhase = iota
+	waitingClientFinished
+	readingClientFinished
+	handshakeComplete
+)
 
 // Access to net.Conn methods.
 // Cannot just embed net.Conn because that would
@@ -604,12 +615,12 @@ func (c *Conn) readRecord(want recordType) error {
 		c.sendAlert(alertInternalError)
 		return c.in.setErrorLocked(errors.New("tls: unknown record type requested"))
 	case recordTypeHandshake, recordTypeChangeCipherSpec:
-		if c.handshakeComplete {
+		if c.phase != earlyHandshake && c.phase != readingClientFinished {
 			c.sendAlert(alertInternalError)
 			return c.in.setErrorLocked(errors.New("tls: handshake or ChangeCipherSpec requested while not in handshake"))
 		}
 	case recordTypeApplicationData:
-		if !c.handshakeComplete {
+		if c.phase == earlyHandshake || c.phase == earlyHandshake {
 			c.sendAlert(alertInternalError)
 			return c.in.setErrorLocked(errors.New("tls: application data record requested while in handshake"))
 		}
@@ -741,6 +752,10 @@ Again:
 		}
 
 	case recordTypeApplicationData:
+		if c.phase == waitingClientFinished {
+			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+			break
+		}
 		if typ != want {
 			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 			break
@@ -750,10 +765,18 @@ Again:
 
 	case recordTypeHandshake:
 		// TODO(rsc): Should at least pick off connection close.
-		if typ != want && !(c.isClient && c.config.Renegotiation != RenegotiateNever) {
+		if typ != want && !(c.isClient && c.config.Renegotiation != RenegotiateNever) &&
+			c.phase != waitingClientFinished {
 			return c.in.setErrorLocked(c.sendAlert(alertNoRenegotiation))
 		}
 		c.hand.Write(data)
+		if typ != want && c.phase == waitingClientFinished {
+			if err := c.hs.readClientFinished13(); err != nil {
+				c.in.setErrorLocked(err)
+				break
+			}
+			goto Again
+		}
 	}
 
 	if b != nil {
@@ -1108,7 +1131,7 @@ func (c *Conn) Write(b []byte) (int, error) {
 		return 0, err
 	}
 
-	if !c.handshakeComplete {
+	if c.phase == earlyHandshake {
 		return 0, alertInternalError
 	}
 
@@ -1175,7 +1198,7 @@ func (c *Conn) handleRenegotiation() error {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 
-	c.handshakeComplete = false
+	c.phase = earlyHandshake
 	if c.handshakeErr = c.clientHandshake(); c.handshakeErr == nil {
 		c.handshakes++
 	}
@@ -1278,7 +1301,7 @@ func (c *Conn) Close() error {
 
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
-	if c.handshakeComplete {
+	if c.phase != earlyHandshake {
 		alertErr = c.closeNotify()
 	}
 
@@ -1296,7 +1319,7 @@ var errEarlyCloseWrite = errors.New("tls: CloseWrite called before handshake com
 func (c *Conn) CloseWrite() error {
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
-	if !c.handshakeComplete {
+	if c.phase == earlyHandshake {
 		return errEarlyCloseWrite
 	}
 
@@ -1319,7 +1342,7 @@ func (c *Conn) closeNotify() error {
 // Most uses of this package need not call Handshake
 // explicitly: the first Read or Write will call it automatically.
 func (c *Conn) Handshake() error {
-	// c.handshakeErr and c.handshakeComplete are protected by
+	// c.handshakeErr and c.phase == earlyHandshake are protected by
 	// c.handshakeMutex. In order to perform a handshake, we need to lock
 	// c.in also and c.handshakeMutex must be locked after c.in.
 	//
@@ -1348,7 +1371,7 @@ func (c *Conn) Handshake() error {
 		if err := c.handshakeErr; err != nil {
 			return err
 		}
-		if c.handshakeComplete {
+		if c.phase != earlyHandshake {
 			return nil
 		}
 		if c.handshakeCond == nil {
@@ -1370,7 +1393,7 @@ func (c *Conn) Handshake() error {
 
 	// The handshake cannot have completed when handshakeMutex was unlocked
 	// because this goroutine set handshakeCond.
-	if c.handshakeErr != nil || c.handshakeComplete {
+	if c.handshakeErr != nil || c.phase != earlyHandshake {
 		panic("handshake should not have been able to complete after handshakeCond was set")
 	}
 
@@ -1392,7 +1415,7 @@ func (c *Conn) Handshake() error {
 		c.flush()
 	}
 
-	if c.handshakeErr == nil && !c.handshakeComplete {
+	if c.handshakeErr == nil && c.phase == earlyHandshake {
 		panic("handshake should have had a result.")
 	}
 
@@ -1410,10 +1433,10 @@ func (c *Conn) ConnectionState() ConnectionState {
 	defer c.handshakeMutex.Unlock()
 
 	var state ConnectionState
-	state.HandshakeComplete = c.handshakeComplete
+	state.HandshakeComplete = c.phase != earlyHandshake
 	state.ServerName = c.serverName
 
-	if c.handshakeComplete {
+	if state.HandshakeComplete {
 		state.ConnectionID = c.connID
 		state.ClientHello = c.clientHello
 		state.Version = c.vers
@@ -1455,7 +1478,7 @@ func (c *Conn) VerifyHostname(host string) error {
 	if !c.isClient {
 		return errors.New("tls: VerifyHostname called on TLS server connection")
 	}
-	if !c.handshakeComplete {
+	if c.phase == earlyHandshake {
 		return errors.New("tls: handshake has not yet been performed")
 	}
 	if len(c.verifiedChains) == 0 {
