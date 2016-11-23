@@ -13,6 +13,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 )
 
@@ -24,21 +25,28 @@ type Committer interface {
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
 	c                     *Conn
-	clientHello           *clientHelloMsg
-	hello                 *serverHelloMsg
-	hello13               *serverHelloMsg13
-	hello13Enc            *encryptedExtensionsMsg
 	suite                 *cipherSuite
-	ellipticOk            bool
-	ecdsaOk               bool
-	rsaDecryptOk          bool
-	rsaSignOk             bool
-	sessionState          *sessionState
-	finishedHash          finishedHash
 	masterSecret          []byte
-	certsFromClient       [][]byte
-	cert                  *Certificate
 	cachedClientHelloInfo *ClientHelloInfo
+	clientHello           *clientHelloMsg
+	cert                  *Certificate
+
+	// TLS 1.0-1.2 fields
+	hello           *serverHelloMsg
+	ellipticOk      bool
+	ecdsaOk         bool
+	rsaDecryptOk    bool
+	rsaSignOk       bool
+	sessionState    *sessionState
+	finishedHash    finishedHash
+	certsFromClient [][]byte
+
+	// TLS 1.3 fields
+	hello13           *serverHelloMsg13
+	hello13Enc        *encryptedExtensionsMsg
+	finishedHash13    hash.Hash
+	clientFinishedKey []byte
+	clientCipher      interface{}
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -60,11 +68,16 @@ func (c *Conn) serverHandshake() error {
 	}
 
 	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
+	// and https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2
 	c.buffering = true
 	if hs.hello13 != nil {
 		if err := hs.doTLS13Handshake(); err != nil {
 			return err
 		}
+		if _, err := c.flush(); err != nil {
+			return err
+		}
+		c.hs = &hs
 	} else if isResume {
 		// The client has included a session ticket and so we do an abbreviated handshake.
 		if err := hs.doResumeHandshake(); err != nil {
@@ -92,6 +105,7 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 		c.didResume = true
+		c.phase = handshakeComplete
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -115,8 +129,8 @@ func (c *Conn) serverHandshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
+		c.phase = handshakeComplete
 	}
-	c.handshakeComplete = true
 
 	return nil
 }
