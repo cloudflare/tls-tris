@@ -32,7 +32,7 @@ install:
 script:
   - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 443; fi # ECDSA
   - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 4443; fi # RSA
-  - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test crypto/tls; fi
+  - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test -race crypto/tls; fi
 
 after_script:
   - if [ "$MODE" = "interop" ]; then docker ps -a; docker logs tris-localserver; fi
