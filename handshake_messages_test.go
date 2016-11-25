@@ -159,6 +159,9 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	for i := range m.supportedVersions {
 		m.supportedVersions[i] = uint16(rand.Intn(30000))
 	}
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+	}
 
 	return reflect.ValueOf(m)
 }
@@ -218,7 +221,12 @@ func (*serverHelloMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 
 func (*encryptedExtensionsMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &encryptedExtensionsMsg{}
-	m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+	if rand.Intn(10) > 5 {
+		m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
+	}
+	if rand.Intn(10) > 5 {
+		m.earlyData = true
+	}
 
 	return reflect.ValueOf(m)
 }
@@ -324,9 +332,10 @@ func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 func (*sessionState13) Generate(rand *rand.Rand, size int) reflect.Value {
 	s := &sessionState13{}
 	s.vers = uint16(rand.Intn(10000))
-	s.hash = uint16(rand.Intn(10000))
+	s.suite = uint16(rand.Intn(10000))
 	s.ageAdd = uint32(rand.Intn(0xffffffff))
 	s.createdAt = uint64(rand.Int63n(0xfffffffffffffff))
 	s.resumptionSecret = randomBytes(rand.Intn(100), rand)
+	s.alpnProtocol = randomString(rand.Intn(100), rand)
 	return reflect.ValueOf(s)
 }

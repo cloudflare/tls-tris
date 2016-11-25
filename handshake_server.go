@@ -46,7 +46,8 @@ type serverHandshakeState struct {
 	hello13Enc        *encryptedExtensionsMsg
 	finishedHash13    hash.Hash
 	clientFinishedKey []byte
-	clientCipher      interface{}
+	hsClientCipher    interface{}
+	appClientCipher   interface{}
 }
 
 // serverHandshake performs a TLS handshake as a server.
@@ -61,7 +62,6 @@ func (c *Conn) serverHandshake() error {
 	}
 	c.in.traceErr = hs.traceErr
 	c.out.traceErr = hs.traceErr
-	defer func() { c.in.traceErr, c.out.traceErr = nil, nil }()
 	isResume, err := hs.readClientHello()
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 		c.didResume = true
-		c.phase = handshakeComplete
+		c.phase = handshakeConfirmed
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -129,7 +129,7 @@ func (c *Conn) serverHandshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
-		c.phase = handshakeComplete
+		c.phase = handshakeConfirmed
 	}
 
 	return nil
@@ -917,6 +917,11 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		signatureSchemes = append(signatureSchemes, SignatureScheme(sah.hash)<<8+SignatureScheme(sah.signature))
 	}
 
+	var pskBinder []byte
+	if len(hs.clientHello.psks) > 0 {
+		pskBinder = hs.clientHello.psks[0].binder
+	}
+
 	hs.cachedClientHelloInfo = &ClientHelloInfo{
 		CipherSuites:      hs.clientHello.cipherSuites,
 		ServerName:        hs.clientHello.serverName,
@@ -926,6 +931,8 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		SupportedProtos:   hs.clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
 		Conn:              hs.c.conn,
+		Offered0RTTData:   hs.clientHello.earlyData,
+		Fingerprint:       pskBinder,
 	}
 
 	return hs.cachedClientHelloInfo

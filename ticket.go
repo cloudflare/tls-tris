@@ -131,10 +131,13 @@ func (s *sessionState) unmarshal(data []byte) bool {
 
 type sessionState13 struct {
 	vers             uint16
-	hash             uint16 // crypto.Hash value
+	suite            uint16
 	ageAdd           uint32
 	createdAt        uint64
 	resumptionSecret []byte
+	alpnProtocol     string
+	// TODO(filippo): add and check SNI
+	// TODO(filippo): add and check maxEarlyDataLength
 }
 
 func (s *sessionState13) equal(i interface{}) bool {
@@ -144,19 +147,20 @@ func (s *sessionState13) equal(i interface{}) bool {
 	}
 
 	return s.vers == s1.vers &&
-		s.hash == s1.hash &&
+		s.suite == s1.suite &&
+		s.alpnProtocol == s1.alpnProtocol &&
 		s.ageAdd == s1.ageAdd &&
 		bytes.Equal(s.resumptionSecret, s1.resumptionSecret)
 }
 
 func (s *sessionState13) marshal() []byte {
-	length := 2 + 2 + 4 + 8 + 2 + len(s.resumptionSecret)
+	length := 2 + 2 + 4 + 8 + 2 + len(s.resumptionSecret) + 2 + len(s.alpnProtocol)
 
 	x := make([]byte, length)
 	x[0] = byte(s.vers >> 8)
 	x[1] = byte(s.vers)
-	x[2] = byte(s.hash >> 8)
-	x[3] = byte(s.hash)
+	x[2] = byte(s.suite >> 8)
+	x[3] = byte(s.suite)
 	x[4] = byte(s.ageAdd >> 24)
 	x[5] = byte(s.ageAdd >> 16)
 	x[6] = byte(s.ageAdd >> 8)
@@ -171,8 +175,11 @@ func (s *sessionState13) marshal() []byte {
 	x[15] = byte(s.createdAt)
 	x[16] = byte(len(s.resumptionSecret) >> 8)
 	x[17] = byte(len(s.resumptionSecret))
-
 	copy(x[18:], s.resumptionSecret)
+	z := x[18+len(s.resumptionSecret):]
+	z[0] = byte(len(s.alpnProtocol) >> 8)
+	z[1] = byte(len(s.alpnProtocol))
+	copy(z[2:], s.alpnProtocol)
 
 	return x
 }
@@ -183,14 +190,19 @@ func (s *sessionState13) unmarshal(data []byte) bool {
 	}
 
 	s.vers = uint16(data[0])<<8 | uint16(data[1])
-	s.hash = uint16(data[2])<<8 | uint16(data[3])
+	s.suite = uint16(data[2])<<8 | uint16(data[3])
 	s.ageAdd = uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
 	s.createdAt = uint64(data[8])<<56 | uint64(data[9])<<48 | uint64(data[10])<<40 | uint64(data[11])<<32 |
 		uint64(data[12])<<24 | uint64(data[13])<<16 | uint64(data[14])<<8 | uint64(data[15])
-	l := uint16(data[16])<<8 | uint16(data[17])
-	s.resumptionSecret = data[18:]
-
-	return int(l) == len(s.resumptionSecret)
+	l := int(data[16])<<8 | int(data[17])
+	if len(data) < 18+l+2 {
+		return false
+	}
+	s.resumptionSecret = data[18 : 18+l]
+	z := data[18+l:]
+	l = int(z[0])<<8 | int(z[1])
+	s.alpnProtocol = string(z[2:])
+	return l == len(s.alpnProtocol)
 }
 
 func (c *Conn) encryptTicket(serialized []byte) ([]byte, error) {
