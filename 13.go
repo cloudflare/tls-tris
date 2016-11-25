@@ -60,33 +60,32 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	}
 	c.didResume = isPSK
 
+	hs.finishedHash13 = hash.New()
+	hs.finishedHash13.Write(hs.clientHello.marshal())
+
+	handshakeCtx := hs.finishedHash13.Sum(nil)
+	earlyClientCipher, _ := hs.prepareCipher(handshakeCtx, earlySecret, "client early traffic secret")
+
 	ecdheSecret := deriveECDHESecret(ks, privateKey)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
 	}
 
-	hs.finishedHash13 = hash.New()
-	hs.finishedHash13.Write(hs.clientHello.marshal())
 	hs.finishedHash13.Write(hs.hello13.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13.marshal()); err != nil {
 		return err
 	}
 
 	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
-	handshakeCtx := hs.finishedHash13.Sum(nil)
-
-	cHandshakeTS := hkdfExpandLabel(hash, handshakeSecret, handshakeCtx, "client handshake traffic secret", hashSize)
-	cKey := hkdfExpandLabel(hash, cHandshakeTS, nil, "key", hs.suite.keyLen)
-	cIV := hkdfExpandLabel(hash, cHandshakeTS, nil, "iv", 12)
-	sHandshakeTS := hkdfExpandLabel(hash, handshakeSecret, handshakeCtx, "server handshake traffic secret", hashSize)
-	sKey := hkdfExpandLabel(hash, sHandshakeTS, nil, "key", hs.suite.keyLen)
-	sIV := hkdfExpandLabel(hash, sHandshakeTS, nil, "iv", 12)
-
-	clientCipher := hs.suite.aead(cKey, cIV)
-	c.in.setCipher(c.vers, clientCipher)
-	serverCipher := hs.suite.aead(sKey, sIV)
+	handshakeCtx = hs.finishedHash13.Sum(nil)
+	clientCipher, cTrafficSecret := hs.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
+	hs.hsClientCipher = clientCipher
+	serverCipher, sTrafficSecret := hs.prepareCipher(handshakeCtx, handshakeSecret, "server handshake traffic secret")
 	c.out.setCipher(c.vers, serverCipher)
+
+	serverFinishedKey := hkdfExpandLabel(hash, sTrafficSecret, nil, "finished", hashSize)
+	hs.clientFinishedKey = hkdfExpandLabel(hash, cTrafficSecret, nil, "finished", hashSize)
 
 	hs.finishedHash13.Write(hs.hello13Enc.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13Enc.marshal()); err != nil {
@@ -99,9 +98,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 		}
 	}
 
-	serverFinishedKey := hkdfExpandLabel(hash, sHandshakeTS, nil, "finished", hashSize)
-	hs.clientFinishedKey = hkdfExpandLabel(hash, cHandshakeTS, nil, "finished", hashSize)
-
 	verifyData := hmacOfSum(hash, hs.finishedHash13, serverFinishedKey)
 	serverFinished := &finishedMsg{
 		verifyData: verifyData,
@@ -113,19 +109,20 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 
 	hs.masterSecret = hkdfExtract(hash, nil, handshakeSecret)
 	handshakeCtx = hs.finishedHash13.Sum(nil)
-
-	cTrafficSecret0 := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "client application traffic secret", hashSize)
-	cKey = hkdfExpandLabel(hash, cTrafficSecret0, nil, "key", hs.suite.keyLen)
-	cIV = hkdfExpandLabel(hash, cTrafficSecret0, nil, "iv", 12)
-	sTrafficSecret0 := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "server application traffic secret", hashSize)
-	sKey = hkdfExpandLabel(hash, sTrafficSecret0, nil, "key", hs.suite.keyLen)
-	sIV = hkdfExpandLabel(hash, sTrafficSecret0, nil, "iv", 12)
-
-	hs.clientCipher = hs.suite.aead(cKey, cIV)
-	serverCipher = hs.suite.aead(sKey, sIV)
+	hs.appClientCipher, _ = hs.prepareCipher(handshakeCtx, hs.masterSecret, "client application traffic secret")
+	serverCipher, _ = hs.prepareCipher(handshakeCtx, hs.masterSecret, "server application traffic secret")
 	c.out.setCipher(c.vers, serverCipher)
 
-	c.phase = waitingClientFinished
+	if hs.hello13Enc.earlyData {
+		c.in.setCipher(c.vers, earlyClientCipher)
+		c.phase = readingEarlyData
+	} else if hs.clientHello.earlyData {
+		c.in.setCipher(c.vers, hs.hsClientCipher)
+		c.phase = discardingEarlyData
+	} else {
+		c.in.setCipher(c.vers, hs.hsClientCipher)
+		c.phase = waitingClientFinished
+	}
 
 	return nil
 }
@@ -157,11 +154,10 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	}
 	hs.finishedHash13.Write(clientFinished.marshal())
 
-	c.in.setCipher(c.vers, hs.clientCipher)
-
-	// Discard the server handshake state
-	c.hs = nil
-	c.phase = handshakeComplete
+	c.hs = nil // Discard the server handshake state
+	c.phase = handshakeConfirmed
+	c.in.setCipher(c.vers, hs.appClientCipher)
+	c.in.traceErr, c.out.traceErr = nil, nil
 
 	return hs.sendSessionTicket13()
 }
@@ -207,6 +203,15 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	}
 
 	return nil
+}
+
+func (c *Conn) handleEndOfEarlyData() {
+	if c.phase != readingEarlyData || c.vers < VersionTLS13 {
+		c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+		return
+	}
+	c.phase = waitingClientFinished
+	c.in.setCipher(c.vers, c.hs.hsClientCipher)
 }
 
 // selectTLS13SignatureScheme chooses the SignatureScheme for the CertificateVerify
@@ -377,6 +382,14 @@ func hmacOfSum(f crypto.Hash, hash hash.Hash, key []byte) []byte {
 	return h.Sum(nil)
 }
 
+func (hs *serverHandshakeState) prepareCipher(handshakeCtx, secret []byte, label string) (interface{}, []byte) {
+	hash := hashForSuite(hs.suite)
+	trafficSecret := hkdfExpandLabel(hash, secret, handshakeCtx, label, hash.Size())
+	key := hkdfExpandLabel(hash, trafficSecret, nil, "key", hs.suite.keyLen)
+	iv := hkdfExpandLabel(hash, trafficSecret, nil, "iv", 12)
+	return hs.suite.aead(key, iv), trafficSecret
+}
+
 // Maximum allowed mismatch between the stated age of a ticket
 // and the server-observed one. See
 // https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8.2.
@@ -418,7 +431,14 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		if clientAge-serverAge > ticketAgeSkewAllowance || clientAge-serverAge < -ticketAgeSkewAllowance {
 			continue
 		}
-		if s.hash != uint16(hash) {
+
+		// This enforces the stricter 0-RTT requirements on all ticket uses.
+		// The benefit of using PSK+ECDHE without 0-RTT are small enough that
+		// we can give them up in the edge case of changed suite or ALPN.
+		if s.suite != hs.suite.id {
+			continue
+		}
+		if s.alpnProtocol != hs.hello13Enc.alpnProtocol {
 			continue
 		}
 
@@ -433,6 +453,9 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		if subtle.ConstantTimeCompare(expectedBinder, hs.clientHello.psks[i].binder) == 1 {
 			hs.hello13.psk = true
 			hs.hello13.pskIdentity = uint16(i)
+			if i == 0 && hs.clientHello.earlyData && hs.c.config.Accept0RTTData {
+				hs.hello13Enc.earlyData = true
+			}
 			return earlySecret, true
 		}
 	}
@@ -467,8 +490,8 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		return err
 	}
 	sessionState := &sessionState13{
-		vers: c.vers,
-		hash: uint16(hash),
+		vers:  c.vers,
+		suite: hs.suite.id,
 		ageAdd: uint32(ageAddBuf[0])<<24 | uint32(ageAddBuf[1])<<16 |
 			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3]),
 		createdAt:        uint64(time.Now().Unix()),
@@ -481,9 +504,11 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		return err
 	}
 	ticketMsg := &newSessionTicketMsg13{
-		lifetime: 21600, // TODO(filippo)
-		ageAdd:   sessionState.ageAdd,
-		ticket:   ticket,
+		lifetime:           24 * 3600, // TODO(filippo)
+		maxEarlyDataLength: c.config.Max0RTTDataSize,
+		withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
+		ageAdd:             sessionState.ageAdd,
+		ticket:             ticket,
 	}
 	if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
 		return err

@@ -30,8 +30,8 @@ install:
   - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh INSTALL $CLIENT $REVISION; fi
 
 script:
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 443; fi # ECDSA
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT 4443; fi # RSA
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT; fi
+  - if [ "$MODE" = "interop" ] && [ "$CLIENT" = "tstclnt" ]; then ./_dev/interop.sh 0-RTT $CLIENT; fi
   - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test -race crypto/tls; fi
 
 after_script:
