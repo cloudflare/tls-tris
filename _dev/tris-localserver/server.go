@@ -17,13 +17,49 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS13Draft18: "1.3 (draft 18)",
 }
 
+func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
+	cert, err := tls.X509KeyPair([]byte(ecdsaCert), []byte(ecdsaKey))
+	if rsa {
+		cert, err = tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	var Max0RTTDataSize uint32
+	if offer0RTT {
+		Max0RTTDataSize = 100 * 1024
+	}
+	s := &http.Server{
+		Addr: addr,
+		TLSConfig: &tls.Config{
+			Certificates:    []tls.Certificate{cert},
+			Max0RTTDataSize: Max0RTTDataSize,
+			Accept0RTTData:  accept0RTT,
+		},
+	}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}
+
+var confirmingAddr string
+
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		tlsConn := r.Context().Value(http.TLSConnContextKey).(*tls.Conn)
+		server := r.Context().Value(http.ServerContextKey).(*http.Server)
+		if server.Addr == confirmingAddr {
+			if err := tlsConn.ConfirmHandshake(); err != nil {
+				log.Fatal(err)
+			}
+		}
 		resumed := ""
 		if r.TLS.DidResume {
 			resumed = " [resumed]"
 		}
-		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed)
+		with0RTT := ""
+		if !tlsConn.ConnectionState().HandshakeConfirmed {
+			with0RTT = " [0-RTT]"
+		}
+		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed, with0RTT)
 	})
 
 	http.HandleFunc("/ch", func(w http.ResponseWriter, r *http.Request) {
@@ -31,36 +67,17 @@ func main() {
 		fmt.Fprintf(w, "Client Hello packet (%d bytes):\n%s", len(r.TLS.ClientHello), hex.Dump(r.TLS.ClientHello))
 	})
 
-	go func() {
-		if len(os.Args) < 3 {
-			return
-		}
-		cert, err := tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
-		if err != nil {
-			log.Fatal(err)
-		}
-		s := &http.Server{
-			Addr: os.Args[2],
-			TLSConfig: &tls.Config{
-				Certificates:             []tls.Certificate{cert},
-				PreferServerCipherSuites: true,
-			},
-		}
-		log.Fatal(s.ListenAndServeTLS("", ""))
-	}()
-
-	cert, err := tls.X509KeyPair([]byte(ecdsaCert), []byte(ecdsaKey))
-	if err != nil {
-		log.Fatal(err)
+	switch len(os.Args) {
+	case 2:
+		startServer(os.Args[1], true, true, true)
+	case 6:
+		confirmingAddr = os.Args[5]
+		go startServer(os.Args[1], false, false, false) // first port: ECDSA (and no 0-RTT)
+		go startServer(os.Args[2], true, false, true)   // second port: RSA (and accept 0-RTT but not offer it)
+		go startServer(os.Args[3], false, true, false)  // third port: offer and reject 0-RTT
+		go startServer(os.Args[4], false, true, true)   // fourth port: offer and accept 0-RTT
+		startServer(os.Args[5], false, true, true)      // fifth port: offer and accept 0-RTT but confirm
 	}
-	s := &http.Server{
-		Addr: os.Args[1],
-		TLSConfig: &tls.Config{
-			Certificates:             []tls.Certificate{cert},
-			PreferServerCipherSuites: true,
-		},
-	}
-	log.Fatal(s.ListenAndServeTLS("", ""))
 }
 
 const (

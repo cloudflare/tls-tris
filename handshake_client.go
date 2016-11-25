@@ -251,7 +251,7 @@ NextCipherSuite:
 	}
 
 	c.didResume = isResume
-	c.phase = handshakeComplete
+	c.phase = handshakeConfirmed
 	c.cipherSuite = suite.id
 	return nil
 }

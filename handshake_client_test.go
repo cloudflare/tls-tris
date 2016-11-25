@@ -64,10 +64,10 @@ func (i opensslInput) Read(buf []byte) (n int, err error) {
 }
 
 // opensslOutputSink is an io.Writer that receives the stdout and stderr from
-// an `openssl` process and sends a value to handshakeComplete when it sees a
+// an `openssl` process and sends a value to handshakeConfirmed when it sees a
 // log message from a completed server handshake.
 type opensslOutputSink struct {
-	handshakeComplete chan struct{}
+	handshakeConfirmed chan struct{}
 	all               []byte
 	line              []byte
 }
@@ -91,7 +91,7 @@ func (o *opensslOutputSink) Write(data []byte) (n int, err error) {
 		}
 
 		if bytes.Equal([]byte(opensslEndOfHandshake), o.line[:i]) {
-			o.handshakeComplete <- struct{}{}
+			o.handshakeConfirmed <- struct{}{}
 		}
 		o.line = o.line[i+1:]
 	}
@@ -315,9 +315,9 @@ func (test *clientTest) run(t *testing.T, write bool) {
 
 		for i := 1; i <= test.numRenegotiations; i++ {
 			// The initial handshake will generate a
-			// handshakeComplete signal which needs to be quashed.
+			// handshakeConfirmed signal which needs to be quashed.
 			if i == 1 && write {
-				<-stdout.handshakeComplete
+				<-stdout.handshakeConfirmed
 			}
 
 			// OpenSSL will try to interleave application data and
@@ -364,7 +364,7 @@ func (test *clientTest) run(t *testing.T, write bool) {
 			}()
 
 			if write && test.renegotiationExpectedToFail != i {
-				<-stdout.handshakeComplete
+				<-stdout.handshakeConfirmed
 				stdin <- opensslSendSentinel
 			}
 			<-signalChan
