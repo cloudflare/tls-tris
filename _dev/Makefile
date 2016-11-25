@@ -20,7 +20,9 @@ ifeq ($(shell go env CGO_ENABLED),1)
 endif
 	@touch "$@"
 
-GO_COMMIT := 5782050a487e002acfd14a3f4c2c815c7854928c
+# Note: when changing this, if it doesn't change the Go version
+# (it should), you need to run make clean.
+GO_COMMIT := 5d4f37266d324e48f67b3bb82c6090f1aa94c013
 
 .PHONY: go
 go: go/.ok_$(GO_COMMIT)_$(GOENV)
