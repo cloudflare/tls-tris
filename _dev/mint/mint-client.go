@@ -10,9 +10,13 @@ import (
 )
 
 func main() {
+	c := &mint.Config{
+		PSKs: &mint.PSKMapCache{},
+	}
+
 	tr := &http.Transport{
 		DialTLS: func(network, addr string) (net.Conn, error) {
-			return mint.Dial(network, addr, nil)
+			return mint.Dial(network, addr, c)
 		},
 		DisableKeepAlives: true,
 	}

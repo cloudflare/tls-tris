@@ -7,9 +7,9 @@ RUN apk add --update \
 RUN go get github.com/bifurcation/mint
 
 # Draft 18
-ARG REVISION=271abd1
+ARG REVISION=52f9f98
 
-RUN cd /go/src/github.com/bifurcation/mint && git fetch
+RUN cd /go/src/github.com/bifurcation/mint && git fetch https://github.com/FiloSottile/mint
 RUN cd /go/src/github.com/bifurcation/mint && git checkout $REVISION
 
 ADD mint-client.go /mint-client.go
