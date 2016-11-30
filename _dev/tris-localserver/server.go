@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 var tlsVersionToName = map[uint16]string{
@@ -35,6 +36,11 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 			Certificates:    []tls.Certificate{cert},
 			Max0RTTDataSize: Max0RTTDataSize,
 			Accept0RTTData:  accept0RTT,
+			GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+				// If we send the first flight too fast, NSS sends empty early data.
+				time.Sleep(500 * time.Millisecond)
+				return nil, nil
+			},
 		},
 	}
 	log.Fatal(s.ListenAndServeTLS("", ""))
