@@ -286,9 +286,7 @@ Curves:
 
 	hs.cert, err = c.config.getCertificate(hs.clientHelloInfo())
 	if err != nil {
-		if _, ok := err.(QuietError); ok {
-			c.out.traceErr, c.in.traceErr = nil, nil
-		}
+		c.out.traceErr, c.in.traceErr = nil, nil // disable tracing
 		c.sendAlert(alertInternalError)
 		return false, err
 	}
