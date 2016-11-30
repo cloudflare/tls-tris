@@ -24,7 +24,6 @@ matrix:
     - env: MODE=interop CLIENT=boring REVISION=origin/master
     - env: MODE=interop CLIENT=tstclnt ZRTT=1 # tstclnt races and doesn't resend
     - env: MODE=interop CLIENT=tstclnt REVISION=default ZRTT=1
-    - env: MODE=interop CLIENT=mint # broken resumption client
 
 install:
   - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
