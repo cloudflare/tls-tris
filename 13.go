@@ -532,21 +532,8 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 	return nil
 }
 
-// QuietError is an error wrapper that prevents the verbose handshake log
-// dump on errors. Exposed for use by GetCertificate.
-type QuietError struct {
-	Err error
-}
-
-func (e QuietError) Error() string {
-	return e.Err.Error() + " [quiet]"
-}
-
 func (hs *serverHandshakeState) traceErr(err error) {
 	if err == nil {
-		return
-	}
-	if _, ok := err.(QuietError); ok {
 		return
 	}
 	if os.Getenv("TLSDEBUG") == "error" {
