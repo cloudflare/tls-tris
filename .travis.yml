@@ -10,11 +10,10 @@ go:
 env:
   - MODE=interop CLIENT=boring
   - MODE=interop CLIENT=bogo
-  - MODE=interop CLIENT=tstclnt # added while ZRTT=1 is broken
+  - MODE=interop CLIENT=tstclnt ZRTT=1
   - MODE=interop CLIENT=picotls ZRTT=1
   - MODE=interop CLIENT=mint
   - MODE=gotest
-  - MODE=interop CLIENT=tstclnt ZRTT=1
   - MODE=interop CLIENT=boring REVISION=origin/master
   - MODE=interop CLIENT=tstclnt REVISION=default ZRTT=1
 
@@ -22,7 +21,6 @@ matrix:
   fast_finish: true
   allow_failures:
     - env: MODE=interop CLIENT=boring REVISION=origin/master
-    - env: MODE=interop CLIENT=tstclnt ZRTT=1 # tstclnt races and doesn't resend
     - env: MODE=interop CLIENT=tstclnt REVISION=default ZRTT=1
 
 install:
