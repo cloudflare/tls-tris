@@ -83,6 +83,10 @@ type Conn struct {
 	clientProtocol         string
 	clientProtocolFallback bool
 
+	// ticketMaxEarlyData is the maximum bytes of 0-RTT application data
+	// that the client is allowed to send on the ticket it used.
+	ticketMaxEarlyData int64
+
 	// input/output
 	in, out   halfConn     // in.Mutex < out.Mutex
 	rawInput  *block       // raw input, right off the wire
@@ -106,6 +110,8 @@ type Conn struct {
 
 	// earlyDataBytes is the number of bytes of early data received so
 	// far. Tracked to enforce max_early_data_size.
+	// We don't keep track of rejected 0-RTT data since there's no need
+	// to ever buffer it. in.Mutex.
 	earlyDataBytes int64
 
 	tmp [16]byte
@@ -777,6 +783,12 @@ func (c *Conn) readRecord(want recordType) error {
 		if typ != want || c.phase == waitingClientFinished {
 			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 			break
+		}
+		if c.phase == readingEarlyData {
+			c.earlyDataBytes += int64(len(b.data) - b.off)
+			if c.earlyDataBytes > c.ticketMaxEarlyData {
+				return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+			}
 		}
 		c.input = b
 		b = nil

@@ -338,9 +338,11 @@ func (*sessionState13) Generate(rand *rand.Rand, size int) reflect.Value {
 	s.vers = uint16(rand.Intn(10000))
 	s.suite = uint16(rand.Intn(10000))
 	s.ageAdd = uint32(rand.Intn(0xffffffff))
+	s.maxEarlyDataLen = uint32(rand.Intn(0xffffffff))
 	s.createdAt = uint64(rand.Int63n(0xfffffffffffffff))
 	s.resumptionSecret = randomBytes(rand.Intn(100), rand)
 	s.alpnProtocol = randomString(rand.Intn(100), rand)
+	s.SNI = randomString(rand.Intn(100), rand)
 	return reflect.ValueOf(s)
 }
 
