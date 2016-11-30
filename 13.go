@@ -434,11 +434,14 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 
 		// This enforces the stricter 0-RTT requirements on all ticket uses.
 		// The benefit of using PSK+ECDHE without 0-RTT are small enough that
-		// we can give them up in the edge case of changed suite or ALPN.
+		// we can give them up in the edge case of changed suite or ALPN or SNI.
 		if s.suite != hs.suite.id {
 			continue
 		}
-		if s.alpnProtocol != hs.hello13Enc.alpnProtocol {
+		if s.alpnProtocol != hs.c.clientProtocol {
+			continue
+		}
+		if s.SNI != hs.c.serverName {
 			continue
 		}
 
@@ -451,11 +454,20 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		expectedBinder := hmacOfSum(hash, chHash, binderFinishedKey)
 
 		if subtle.ConstantTimeCompare(expectedBinder, hs.clientHello.psks[i].binder) == 1 {
+			if i == 0 && hs.clientHello.earlyData {
+				// This is a ticket intended to be used for 0-RTT
+				if s.maxEarlyDataLen == 0 {
+					// But we had not tagged it as such. We could close the connection
+					// here, but instead we just ignore the ticket and the 0-RTT data.
+					continue
+				}
+				if hs.c.config.Accept0RTTData {
+					hs.c.ticketMaxEarlyData = int64(s.maxEarlyDataLen)
+					hs.hello13Enc.earlyData = true
+				}
+			}
 			hs.hello13.psk = true
 			hs.hello13.pskIdentity = uint16(i)
-			if i == 0 && hs.clientHello.earlyData && hs.c.config.Accept0RTTData {
-				hs.hello13Enc.earlyData = true
-			}
 			return earlySecret, true
 		}
 	}
@@ -496,6 +508,9 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3]),
 		createdAt:        uint64(time.Now().Unix()),
 		resumptionSecret: resumptionSecret,
+		alpnProtocol:     c.clientProtocol,
+		SNI:              c.serverName,
+		maxEarlyDataLen:  c.config.Max0RTTDataSize,
 	}
 
 	ticket, err := c.encryptTicket(sessionState.marshal())
