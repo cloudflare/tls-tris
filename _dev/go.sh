@@ -4,9 +4,9 @@ set -e
 BASEDIR=$(cd "$(dirname "$0")" && pwd)
 
 make --quiet -C "$BASEDIR" go >&2
-GOENV="$(go env GOOS)_$(go env GOARCH)"
+GOENV="$(go env GOHOSTOS)_$(go env GOHOSTARCH)"
 
-unset GOROOT
+export GOROOT="$BASEDIR/go/$GOENV"
 make --quiet -C "$BASEDIR" GOROOT GO="$BASEDIR/go/$GOENV/bin/go" >&2
 export GOROOT="$BASEDIR/GOROOT/$GOENV"
 
