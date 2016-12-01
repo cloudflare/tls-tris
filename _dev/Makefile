@@ -1,5 +1,5 @@
 GO ?= go
-GOENV := $(shell $(GO) env GOOS)_$(shell $(GO) env GOARCH)
+GOENV := $(shell $(GO) env GOHOSTOS)_$(shell $(GO) env GOHOSTARCH)
 GOROOTINFO := $(shell $(GO) version | cut -d' ' -f 3)_$(GOENV)
 
 .PHONY: GOROOT
