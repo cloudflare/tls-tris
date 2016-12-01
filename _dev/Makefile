@@ -22,7 +22,7 @@ endif
 
 # Note: when changing this, if it doesn't change the Go version
 # (it should), you need to run make clean.
-GO_COMMIT := 5d4f37266d324e48f67b3bb82c6090f1aa94c013
+GO_COMMIT := 112098da9940c40952a8ffe3730edf56e75018ec
 
 .PHONY: go
 go: go/.ok_$(GO_COMMIT)_$(GOENV)
