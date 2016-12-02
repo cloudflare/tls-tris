@@ -29,14 +29,10 @@ type Conn struct {
 
 	// constant after handshake; protected by handshakeMutex
 	handshakeMutex sync.Mutex // handshakeMutex < in.Mutex, out.Mutex, errMutex
-	// handshakeCond, if not nil, indicates that a goroutine is committed
-	// to running the handshake for this Conn. Other goroutines that need
-	// to wait for the handshake can wait on this, under handshakeMutex.
-	handshakeCond *sync.Cond
-	handshakeErr  error   // error resulting from handshake
-	vers          uint16  // TLS version
-	haveVers      bool    // version has been negotiated
-	config        *Config // configuration passed to constructor
+	handshakeErr   error      // error resulting from handshake
+	vers           uint16     // TLS version
+	haveVers       bool       // version has been negotiated
+	config         *Config    // configuration passed to constructor
 	// handshakeComplete is true if the connection is currently transfering
 	// application data (i.e. is not currently processing a handshake).
 	handshakeComplete bool
@@ -1248,54 +1244,18 @@ func (c *Conn) closeNotify() error {
 // Most uses of this package need not call Handshake
 // explicitly: the first Read or Write will call it automatically.
 func (c *Conn) Handshake() error {
-	// c.handshakeErr and c.handshakeComplete are protected by
-	// c.handshakeMutex. In order to perform a handshake, we need to lock
-	// c.in also and c.handshakeMutex must be locked after c.in.
-	//
-	// However, if a Read() operation is hanging then it'll be holding the
-	// lock on c.in and so taking it here would cause all operations that
-	// need to check whether a handshake is pending (such as Write) to
-	// block.
-	//
-	// Thus we first take c.handshakeMutex to check whether a handshake is
-	// needed.
-	//
-	// If so then, previously, this code would unlock handshakeMutex and
-	// then lock c.in and handshakeMutex in the correct order to run the
-	// handshake. The problem was that it was possible for a Read to
-	// complete the handshake once handshakeMutex was unlocked and then
-	// keep c.in while waiting for network data. Thus a concurrent
-	// operation could be blocked on c.in.
-	//
-	// Thus handshakeCond is used to signal that a goroutine is committed
-	// to running the handshake and other goroutines can wait on it if they
-	// need. handshakeCond is protected by handshakeMutex.
 	c.handshakeMutex.Lock()
 	defer c.handshakeMutex.Unlock()
 
-	for {
-		if err := c.handshakeErr; err != nil {
-			return err
-		}
-		if c.handshakeComplete {
-			return nil
-		}
-		if c.handshakeCond == nil {
-			break
-		}
-
-		c.handshakeCond.Wait()
+	if err := c.handshakeErr; err != nil {
+		return err
 	}
-
-	// Set handshakeCond to indicate that this goroutine is committing to
-	// running the handshake.
-	c.handshakeCond = sync.NewCond(&c.handshakeMutex)
-	c.handshakeMutex.Unlock()
+	if c.handshakeComplete {
+		return nil
+	}
 
 	c.in.Lock()
 	defer c.in.Unlock()
-
-	c.handshakeMutex.Lock()
 
 	// The handshake cannot have completed when handshakeMutex was unlocked
 	// because this goroutine set handshakeCond.
@@ -1319,11 +1279,6 @@ func (c *Conn) Handshake() error {
 	if c.handshakeErr == nil && !c.handshakeComplete {
 		panic("handshake should have had a result.")
 	}
-
-	// Wake any other goroutines that are waiting for this handshake to
-	// complete.
-	c.handshakeCond.Broadcast()
-	c.handshakeCond = nil
 
 	return c.handshakeErr
 }
