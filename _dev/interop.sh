@@ -30,6 +30,6 @@ elif [ "$1" = "0-RTT" ]; then
 		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep "0-RTT"
 
 		docker run --rm tls-tris:$2 $IP:5443 | tee output.txt # confirming 0-RTT
-		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
+		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep "0-RTT confirmed"
 
 fi

@@ -157,10 +157,15 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	hs.finishedHash13.Write(clientFinished.marshal())
 
 	c.hs = nil // Discard the server handshake state
-	c.phase = handshakeConfirmed
-	atomic.StoreInt32(&c.handshakeConfirmed, 1)
 	c.in.setCipher(c.vers, hs.appClientCipher)
 	c.in.traceErr, c.out.traceErr = nil, nil
+	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
+
+	// Any read operation after handshakeRunning and before handshakeConfirmed
+	// will be holding this lock, which we release as soon as the confirmation
+	// happens, even if the Read call might do more work.
+	c.confirmMutex.Unlock()
 
 	return hs.sendSessionTicket13()
 }
