@@ -31,11 +31,12 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	// that the client provided a keyShare for, so to avoid a round-trip.
 	// After that the order of CurvePreferences is respected.
 	var ks keyShare
+CurvePreferenceLoop:
 	for _, curveID := range config.curvePreferences() {
 		for _, keyShare := range hs.clientHello.keyShares {
 			if curveID == keyShare.group {
 				ks = keyShare
-				break
+				break CurvePreferenceLoop
 			}
 		}
 	}
