@@ -30,6 +30,8 @@ type Conn struct {
 	phase handshakeStatus // protected by in.Mutex
 	// handshakeConfirmed is an atomic bool for phase == handshakeConfirmed
 	handshakeConfirmed int32
+	// confirmMutex is held by any read operation before handshakeConfirmed
+	confirmMutex sync.Mutex
 
 	// constant after handshake; protected by handshakeMutex
 	handshakeMutex sync.Mutex // handshakeMutex < in.Mutex, out.Mutex, errMutex
@@ -1254,12 +1256,26 @@ func (c *Conn) ConfirmHandshake() error {
 		return err
 	}
 
-	c.in.Lock()
-	defer c.in.Unlock()
-
-	if c.phase == handshakeConfirmed {
+	if c.vers < VersionTLS13 {
 		return nil
 	}
+
+	c.confirmMutex.Lock()
+	if atomic.LoadInt32(&c.handshakeConfirmed) == 1 { // c.phase == handshakeConfirmed
+		c.confirmMutex.Unlock()
+		return nil
+	} else {
+		defer func() {
+			// If we transitioned to handshakeConfirmed we already released the lock,
+			// otherwise do it here.
+			if c.phase != handshakeConfirmed {
+				c.confirmMutex.Unlock()
+			}
+		}()
+	}
+
+	c.in.Lock()
+	defer c.in.Unlock()
 
 	var input *block
 	if c.phase == readingEarlyData || c.input != nil {
@@ -1339,6 +1355,19 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 		// Put this after Handshake, in case people were calling
 		// Read(nil) for the side effect of the Handshake.
 		return
+	}
+
+	c.confirmMutex.Lock()
+	if atomic.LoadInt32(&c.handshakeConfirmed) == 1 { // c.phase == handshakeConfirmed
+		c.confirmMutex.Unlock()
+	} else {
+		defer func() {
+			// If we transitioned to handshakeConfirmed we already released the lock,
+			// otherwise do it here.
+			if c.phase != handshakeConfirmed {
+				c.confirmMutex.Unlock()
+			}
+		}()
 	}
 
 	c.in.Lock()
