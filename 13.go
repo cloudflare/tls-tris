@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"golang_org/x/crypto/curve25519"
@@ -157,6 +158,7 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 
 	c.hs = nil // Discard the server handshake state
 	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
 	c.in.setCipher(c.vers, hs.appClientCipher)
 	c.in.traceErr, c.out.traceErr = nil, nil
 
