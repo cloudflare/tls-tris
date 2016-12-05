@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync/atomic"
 )
 
 type Committer interface {
@@ -78,6 +79,8 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 		c.hs = &hs
+		c.handshakeComplete = true
+		return nil
 	} else if isResume {
 		// The client has included a session ticket and so we do an abbreviated handshake.
 		if err := hs.doResumeHandshake(); err != nil {
@@ -105,7 +108,6 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 		c.didResume = true
-		c.phase = handshakeConfirmed
 	} else {
 		// The client didn't include a session ticket, or it wasn't
 		// valid so we do a full handshake.
@@ -129,8 +131,10 @@ func (c *Conn) serverHandshake() error {
 		if _, err := c.flush(); err != nil {
 			return err
 		}
-		c.phase = handshakeConfirmed
 	}
+	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
+	c.handshakeComplete = true
 
 	return nil
 }
