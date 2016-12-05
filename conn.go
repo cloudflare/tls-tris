@@ -1423,17 +1423,7 @@ func (c *Conn) Close() error {
 	var alertErr error
 
 	c.handshakeMutex.Lock()
-	for c.phase == readingEarlyData {
-		if err := c.readRecord(recordTypeApplicationData); err != nil {
-			alertErr = err
-		}
-	}
-	if alertErr == nil && c.phase == waitingClientFinished {
-		if err := c.hs.readClientFinished13(); err != nil {
-			alertErr = err
-		}
-	}
-	if alertErr == nil && c.phase != handshakeRunning {
+	if c.phase != handshakeRunning {
 		alertErr = c.closeNotify()
 	}
 	c.handshakeMutex.Unlock()
