@@ -437,7 +437,11 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		clientAge := time.Duration(hs.clientHello.psks[i].obfTicketAge-s.ageAdd) * time.Millisecond
 		serverAge := time.Since(time.Unix(int64(s.createdAt), 0))
 		if clientAge-serverAge > ticketAgeSkewAllowance || clientAge-serverAge < -ticketAgeSkewAllowance {
-			continue
+			// XXX: NSS is off spec and sends obfuscated_ticket_age as seconds
+			clientAge = time.Duration(hs.clientHello.psks[i].obfTicketAge-s.ageAdd) * time.Second
+			if clientAge-serverAge > ticketAgeSkewAllowance || clientAge-serverAge < -ticketAgeSkewAllowance {
+				continue
+			}
 		}
 
 		// This enforces the stricter 0-RTT requirements on all ticket uses.
