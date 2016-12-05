@@ -46,20 +46,34 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		tlsConn := r.Context().Value(http.TLSConnContextKey).(*tls.Conn)
 		server := r.Context().Value(http.ServerContextKey).(*http.Server)
-		if server.Addr == confirmingAddr {
-			if err := tlsConn.ConfirmHandshake(); err != nil {
-				log.Fatal(err)
-			}
-		}
-		resumed := ""
-		if r.TLS.DidResume {
-			resumed = " [resumed]"
-		}
+
 		with0RTT := ""
 		if !tlsConn.ConnectionState().HandshakeConfirmed {
 			with0RTT = " [0-RTT]"
 		}
-		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed, with0RTT)
+		if server.Addr == confirmingAddr || r.URL.Path == "/confirm" {
+			if err := tlsConn.ConfirmHandshake(); err != nil {
+				log.Fatal(err)
+			}
+			if with0RTT != "" {
+				with0RTT = " [0-RTT confirmed]"
+			}
+			if !tlsConn.ConnectionState().HandshakeConfirmed {
+				panic("HandshakeConfirmed false after ConfirmHandshake")
+			}
+		}
+
+		resumed := ""
+		if r.TLS.DidResume {
+			resumed = " [resumed]"
+		}
+
+		http2 := ""
+		if r.ProtoMajor == 2 {
+			http2 = " [HTTP/2]"
+		}
+
+		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s%s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed, with0RTT, http2)
 	})
 
 	http.HandleFunc("/ch", func(w http.ResponseWriter, r *http.Request) {
