@@ -901,7 +901,9 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 	}
 
 	var supportedVersions []uint16
-	if hs.clientHello.vers > VersionTLS12 {
+	if hs.clientHello.supportedVersions != nil {
+		supportedVersions = hs.clientHello.supportedVersions
+	} else if hs.clientHello.vers > VersionTLS12 {
 		supportedVersions = suppVersArray[:]
 	} else if hs.clientHello.vers >= VersionSSL30 {
 		supportedVersions = suppVersArray[VersionTLS12-hs.clientHello.vers:]
