@@ -22,7 +22,7 @@ endif
 
 # Note: when changing this, if it doesn't change the Go version
 # (it should), you need to run make clean.
-GO_COMMIT := 112098da9940c40952a8ffe3730edf56e75018ec
+GO_COMMIT := ae8caa4954d9ad36bc1594e72abb52f8a422b7b9
 
 .PHONY: go
 go: go/.ok_$(GO_COMMIT)_$(GOENV)
@@ -30,7 +30,7 @@ go: go/.ok_$(GO_COMMIT)_$(GOENV)
 go/.ok_$(GO_COMMIT)_$(GOENV):
 	rm -rf go/.ok_*_$(GOENV) go/$(GOENV)
 	mkdir -p go
-	git clone --branch 1.7.3 --single-branch --depth 25 https://github.com/cloudflare/go go/$(GOENV)
+	git clone --branch 1.8 --single-branch --depth 25 https://github.com/cloudflare/go go/$(GOENV)
 	cd go/$(GOENV) && git checkout $(GO_COMMIT)
 	cd go/$(GOENV)/src && GOROOT_BOOTSTRAP="$(shell $(GO) env GOROOT)" ./make.bash
 	@touch "$@"
