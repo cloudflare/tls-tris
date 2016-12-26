@@ -33,7 +33,8 @@ const (
 const (
 	maxPlaintext    = 16384        // maximum plaintext payload length
 	maxCiphertext   = 16384 + 2048 // maximum ciphertext payload length
-	recordHeaderLen = 5            // record header length
+	normalRecordHeaderLen = 5      // record header length
+	shortRecordHeaderLen = 2
 	maxHandshake    = 65536        // maximum handshake we support (protocol max is 16 MB)
 
 	minVersion = VersionTLS10
@@ -91,6 +92,7 @@ const (
 	extensionTicketEarlyDataInfo uint16 = 46
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
+	extensionShortHeaders	     uint16 = 0xff03 // Experimental
 )
 
 // TLS signaling cipher suite values
@@ -586,6 +588,9 @@ type Config struct {
 	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2.3.
 	Accept0RTTData bool
 
+	// Allow short headers (experimental, and only applies to server).
+	AllowShortHeaders bool
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys and originalConfig.
@@ -595,6 +600,7 @@ type Config struct {
 	// for new tickets and any subsequent keys can be used to decrypt old
 	// tickets.
 	sessionTicketKeys []ticketKey
+
 	// originalConfig is set to the Config that was passed to Server if
 	// this Config is returned by a GetConfigForClient callback. It's used
 	// by serverInit in order to copy session ticket keys if needed.
@@ -665,6 +671,7 @@ func (c *Config) Clone() *Config {
 		KeyLogWriter:                c.KeyLogWriter,
 		Accept0RTTData:              c.Accept0RTTData,
 		Max0RTTDataSize:             c.Max0RTTDataSize,
+		AllowShortHeaders:	     c.AllowShortHeaders,
 		sessionTicketKeys:           sessionTicketKeys,
 		// originalConfig is deliberately not duplicated.
 	}

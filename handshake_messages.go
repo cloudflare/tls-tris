@@ -31,6 +31,7 @@ type clientHelloMsg struct {
 	psks                         []psk
 	pskKeyExchangeModes          []uint8
 	earlyData                    bool
+	shortHeaders		     bool
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -59,7 +60,8 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		eqStrings(m.alpnProtocols, m1.alpnProtocols) &&
 		eqKeyShares(m.keyShares, m1.keyShares) &&
 		eqUint16s(m.supportedVersions, m1.supportedVersions) &&
-		m.earlyData == m1.earlyData
+		m.earlyData == m1.earlyData &&
+		m.shortHeaders == m1.shortHeaders
 }
 
 func (m *clientHelloMsg) marshal() []byte {
@@ -127,6 +129,9 @@ func (m *clientHelloMsg) marshal() []byte {
 		numExtensions++
 	}
 	if m.earlyData {
+		numExtensions++
+	}
+	if m.shortHeaders {
 		numExtensions++
 	}
 	if numExtensions > 0 {
@@ -357,6 +362,11 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[1] = byte(extensionEarlyData)
 		z = z[4:]
 	}
+	if m.shortHeaders {
+		z[0] = byte(extensionShortHeaders >> 8)
+		z[1] = byte(extensionShortHeaders & 0xff)
+		z = z[4:]
+	}
 
 	m.raw = x
 
@@ -421,6 +431,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	m.psks = nil
 	m.pskKeyExchangeModes = nil
 	m.earlyData = false
+	m.shortHeaders = false
 
 	if len(data) == 0 {
 		// ClientHello is optionally followed by extension data
@@ -673,7 +684,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		case extensionEarlyData:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
+		case extensionShortHeaders:
+			// Experimental short headers extension
+			m.shortHeaders = true
 		}
+		
 		data = data[length:]
 		bindersOffset += length
 	}
@@ -898,7 +913,6 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	m.scts = nil
 	m.ticketSupported = false
 	m.alpnProtocol = ""
-
 	if len(data) == 0 {
 		// ServerHello is optionally followed by extension data
 		return true
@@ -1023,6 +1037,7 @@ type serverHelloMsg13 struct {
 	keyShare    keyShare
 	psk         bool
 	pskIdentity uint16
+	shortHeaders		     bool
 }
 
 func (m *serverHelloMsg13) equal(i interface{}) bool {
@@ -1038,7 +1053,8 @@ func (m *serverHelloMsg13) equal(i interface{}) bool {
 		m.keyShare.group == m1.keyShare.group &&
 		bytes.Equal(m.keyShare.data, m1.keyShare.data) &&
 		m.psk == m1.psk &&
-		m.pskIdentity == m1.pskIdentity
+		m.pskIdentity == m1.pskIdentity &&
+		m.shortHeaders == m1.shortHeaders		
 }
 
 func (m *serverHelloMsg13) marshal() []byte {
@@ -1052,6 +1068,9 @@ func (m *serverHelloMsg13) marshal() []byte {
 	}
 	if m.psk {
 		length += 6
+	}
+	if m.shortHeaders {
+		length += 4
 	}
 
 	x := make([]byte, 4+length)
@@ -1090,6 +1109,14 @@ func (m *serverHelloMsg13) marshal() []byte {
 		z[6] = uint8(l >> 8)
 		z[7] = uint8(l)
 		copy(z[8:], m.keyShare.data)
+		z = z[8+l:]
+	}
+	if m.shortHeaders {
+		z[0] = byte(extensionShortHeaders >> 8)
+		z[1] = byte(extensionShortHeaders & 0xff)
+		z[2] = 0
+		z[3] = 0
+		z = z[4:]
 	}
 
 	m.raw = x
@@ -1106,6 +1133,7 @@ func (m *serverHelloMsg13) unmarshal(data []byte) bool {
 	m.cipherSuite = uint16(data[38])<<8 | uint16(data[39])
 	m.psk = false
 	m.pskIdentity = 0
+	m.shortHeaders = false
 
 	extensionsLength := int(data[40])<<8 | int(data[41])
 	data = data[42:]
@@ -1142,6 +1170,8 @@ func (m *serverHelloMsg13) unmarshal(data []byte) bool {
 				return false
 			}
 			m.keyShare.data = data[4:length]
+		case extensionShortHeaders:
+			m.shortHeaders = true
 		}
 		data = data[length:]
 	}
