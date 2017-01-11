@@ -684,9 +684,15 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		case extensionEarlyData:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
+			if length != 0 {
+				return false
+			}
 		case extensionShortHeaders:
 			// Experimental short headers extension
 			m.shortHeaders = true
+			if length != 0 {
+				return false
+			}
 		}
 
 		data = data[length:]
