@@ -183,6 +183,8 @@ type halfConn struct {
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
 
+	shortHeaders bool
+
 	traceErr func(error)
 }
 
@@ -309,6 +311,8 @@ type cbcMode interface {
 // success boolean, the number of bytes to skip from the start of the record in
 // order to get the application payload, and an optional alert value.
 func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert) {
+	recordHeaderLen := hc.recordHeaderLen()
+
 	// pull out payload
 	payload := b.data[recordHeaderLen:]
 
@@ -429,7 +433,9 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 }
 
 // encrypt encrypts and macs the data in b.
-func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
+func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
+	recordHeaderLen := hc.recordHeaderLen()
+
 	// mac
 	if hc.mac != nil {
 		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], b.data[recordHeaderLen+explicitIVLen:], nil)
@@ -469,13 +475,13 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 				hc.additionalData[11] = byte(payloadLen >> 8)
 				hc.additionalData[12] = byte(payloadLen)
 				additionalData = hc.additionalData[:]
-			}
-
-			if hc.version >= VersionTLS13 {
-				// opaque type
+			} else {
+				if !hc.shortHeaders {
+					// opaque type
+					b.data[0] = byte(recordTypeApplicationData)
+				}
 				payload = payload[:len(payload)+1]
-				payload[len(payload)-1] = b.data[0]
-				b.data[0] = byte(recordTypeApplicationData)
+				payload[len(payload)-1] = t
 			}
 
 			c.Seal(payload[:0], nonce, payload, additionalData)
@@ -496,8 +502,13 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 
 	// update length to include MAC and any block padding needed.
 	n := len(b.data) - recordHeaderLen
-	b.data[3] = byte(n >> 8)
-	b.data[4] = byte(n)
+	if !hc.shortHeaders {
+		b.data[3] = byte(n >> 8)
+		b.data[4] = byte(n)
+	} else {
+		b.data[0] = byte((n >> 8) | 0x80)
+		b.data[1] = byte(n)
+	}
 	hc.incSeq()
 
 	return true, 0
@@ -604,6 +615,13 @@ func (hc *halfConn) splitBlock(b *block, n int) (*block, *block) {
 	return b, bb
 }
 
+func (hc *halfConn) recordHeaderLen() int {
+	if hc.shortHeaders {
+		return shortRecordHeaderLen
+	}
+	return normalRecordHeaderLen
+}
+
 // RecordHeaderError results when a TLS record header is invalid.
 type RecordHeaderError struct {
 	// Msg contains a human readable string that describes the error.
@@ -651,7 +669,7 @@ func (c *Conn) readRecord(want recordType) error {
 	b := c.rawInput
 
 	// Read header, payload.
-	if err := b.readFromUntil(c.conn, recordHeaderLen); err != nil {
+	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen()); err != nil {
 		// RFC suggests that EOF without an alertCloseNotify is
 		// an error, but popular web sites seem to do this,
 		// so we can't make it an error.
@@ -663,19 +681,34 @@ func (c *Conn) readRecord(want recordType) error {
 		}
 		return err
 	}
-	typ := recordType(b.data[0])
 
-	// No valid TLS record has a type of 0x80, however SSLv2 handshakes
-	// start with a uint16 length where the MSB is set and the first record
-	// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
-	// an SSLv2 client.
-	if want == recordTypeHandshake && typ == 0x80 {
-		c.sendAlert(alertProtocolVersion)
-		return c.in.setErrorLocked(c.newRecordHeaderError("unsupported SSLv2 handshake received"))
+	var typ recordType
+	var vers uint16
+	var n int
+
+	if !c.in.shortHeaders {
+		typ = recordType(b.data[0])
+
+		// No valid TLS record has a type of 0x80, however SSLv2 handshakes
+		// start with a uint16 length where the MSB is set and the first record
+		// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
+		// an SSLv2 client.
+		if want == recordTypeHandshake && typ == 0x80 {
+			c.sendAlert(alertProtocolVersion)
+			return c.in.setErrorLocked(c.newRecordHeaderError("unsupported SSLv2 handshake received"))
+		}
+
+		vers = uint16(b.data[1])<<8 | uint16(b.data[2])
+		n = int(b.data[3])<<8 | int(b.data[4])
+	} else {
+		typ = recordTypeApplicationData
+		vers = 0x0301
+		if int(b.data[0])&0x80 == 0 {
+			c.sendAlert(alertDecodeError)
+			return c.in.setErrorLocked(c.newRecordHeaderError("short header high bit not set"))
+		}
+		n = ((int(b.data[0]) & 0x7f) << 8) | int(b.data[1])
 	}
-
-	vers := uint16(b.data[1])<<8 | uint16(b.data[2])
-	n := int(b.data[3])<<8 | int(b.data[4])
 	if n > maxCiphertext {
 		c.sendAlert(alertRecordOverflow)
 		msg := fmt.Sprintf("oversized record received with length %d", n)
@@ -691,7 +724,7 @@ func (c *Conn) readRecord(want recordType) error {
 			return c.in.setErrorLocked(c.newRecordHeaderError("first record does not look like a TLS handshake"))
 		}
 	}
-	if err := b.readFromUntil(c.conn, recordHeaderLen+n); err != nil {
+	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen()+n); err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
@@ -702,7 +735,7 @@ func (c *Conn) readRecord(want recordType) error {
 	}
 
 	// Process message.
-	b, c.rawInput = c.in.splitBlock(b, recordHeaderLen+n)
+	b, c.rawInput = c.in.splitBlock(b, c.in.recordHeaderLen()+n)
 	ok, off, alertValue := c.in.decrypt(b)
 	switch {
 	case !ok && c.phase == discardingEarlyData:
@@ -891,7 +924,7 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 		macSize = c.out.mac.Size()
 	}
 
-	payloadBytes := tcpMSSEstimate - recordHeaderLen - explicitIVLen
+	payloadBytes := tcpMSSEstimate - c.out.recordHeaderLen() - explicitIVLen
 	if c.out.cipher != nil {
 		switch ciph := c.out.cipher.(type) {
 		case cipher.Stream:
@@ -956,6 +989,8 @@ func (c *Conn) flush() (int, error) {
 // connection and updates the record layer state.
 // c.out.Mutex <= L.
 func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
+	recordHeaderLen := c.out.recordHeaderLen()
+
 	b := c.out.newBlock()
 	defer c.out.freeBlock(b)
 
@@ -989,22 +1024,28 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			m = maxPayload
 		}
 		b.resize(recordHeaderLen + explicitIVLen + m)
-		b.data[0] = byte(typ)
-		vers := c.vers
-		if vers == 0 {
-			// Some TLS servers fail if the record version is
-			// greater than TLS 1.0 for the initial ClientHello.
-			vers = VersionTLS10
+		if !c.out.shortHeaders {
+			b.data[0] = byte(typ)
+			vers := c.vers
+			if vers == 0 {
+				// Some TLS servers fail if the record version is
+				// greater than TLS 1.0 for the initial ClientHello.
+				vers = VersionTLS10
+			}
+			if c.vers >= VersionTLS13 {
+				// TLS 1.3 froze the record layer version at { 3, 1 }.
+				// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-5.1.
+				vers = VersionTLS10
+			}
+			b.data[1] = byte(vers >> 8)
+			b.data[2] = byte(vers)
+			b.data[3] = byte(m >> 8)
+			b.data[4] = byte(m)
+		} else {
+			// TLS 1.3 short header experiment.
+			b.data[0] = byte(m >> 8)
+			b.data[1] = byte(m)
 		}
-		if c.vers >= VersionTLS13 {
-			// TLS 1.3 froze the record layer version at { 3, 1 }.
-			// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-5.1.
-			vers = VersionTLS10
-		}
-		b.data[1] = byte(vers >> 8)
-		b.data[2] = byte(vers)
-		b.data[3] = byte(m >> 8)
-		b.data[4] = byte(m)
 		if explicitIVLen > 0 {
 			explicitIV := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if explicitIVIsSeq {
@@ -1016,7 +1057,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			}
 		}
 		copy(b.data[recordHeaderLen+explicitIVLen:], data)
-		c.out.encrypt(b, explicitIVLen)
+		c.out.encrypt(byte(typ), b, explicitIVLen)
 		if _, err := c.write(b.data); err != nil {
 			return n, err
 		}

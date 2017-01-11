@@ -68,8 +68,8 @@ func (i opensslInput) Read(buf []byte) (n int, err error) {
 // log message from a completed server handshake.
 type opensslOutputSink struct {
 	handshakeConfirmed chan struct{}
-	all               []byte
-	line              []byte
+	all                []byte
+	line               []byte
 }
 
 func newOpensslOutputSink() *opensslOutputSink {
