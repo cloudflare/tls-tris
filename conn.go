@@ -683,7 +683,6 @@ func (c *Conn) readRecord(want recordType) error {
 	var vers uint16
 	var n int
 
-	fmt.Fprintf(os.Stderr, "Header len = %d\n", c.in.recordHeaderLen())
 	if !c.in.shortHeaders {
 		typ = recordType(b.data[0])
 
