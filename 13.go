@@ -95,8 +95,8 @@ CurvePreferenceLoop:
 	hs.clientFinishedKey = hkdfExpandLabel(hash, cTrafficSecret, nil, "finished", hashSize)
 
 	if (hs.hello13.shortHeaders) {
-		c.in.recordHeaderLen = shortRecordHeaderLen
-		c.out.recordHeaderLen = shortRecordHeaderLen
+		c.in.shortHeaders = true;
+		c.out.shortHeaders = true;
 	}
 
 	hs.finishedHash13.Write(hs.hello13Enc.marshal())

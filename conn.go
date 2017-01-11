@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -183,10 +184,8 @@ type halfConn struct {
 	// used to save allocating a new buffer for each MAC.
 	inDigestBuf, outDigestBuf []byte
 
-	// The length of the record header. Always 5 for TLS < 1.2 but maybe
-	// 2 in the TLS 1.3 short header variant.
-	recordHeaderLen int
-	
+	shortHeaders bool
+
 	traceErr func(error)
 }
 
@@ -314,7 +313,7 @@ type cbcMode interface {
 // order to get the application payload, and an optional alert value.
 func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert) {
 	// pull out payload
-	payload := b.data[hc.recordHeaderLen:]
+	payload := b.data[hc.recordHeaderLen():]
 
 	macSize := 0
 	if hc.mac != nil {
@@ -356,7 +355,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			if err != nil {
 				return false, 0, alertBadRecordMAC
 			}
-			b.resize(hc.recordHeaderLen + explicitIVLen + len(payload))
+			b.resize(hc.recordHeaderLen() + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
 			if hc.version >= VersionTLS11 {
@@ -401,18 +400,18 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		b.data[3] = byte(n >> 8)
 		b.data[4] = byte(n)
 		remoteMAC := payload[n : n+macSize]
-		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen], payload[:n], payload[n+macSize:])
+		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen()], payload[:n], payload[n+macSize:])
 
 		if subtle.ConstantTimeCompare(localMAC, remoteMAC) != 1 || paddingGood != 255 {
 			return false, 0, alertBadRecordMAC
 		}
 		hc.inDigestBuf = localMAC
 
-		b.resize(hc.recordHeaderLen + explicitIVLen + n)
+		b.resize(hc.recordHeaderLen() + explicitIVLen + n)
 	}
 	hc.incSeq()
 
-	return true, hc.recordHeaderLen + explicitIVLen, 0
+	return true, hc.recordHeaderLen() + explicitIVLen, 0
 }
 
 // padToBlockSize calculates the needed padding block, if any, for a payload.
@@ -436,7 +435,7 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 	// mac
 	if hc.mac != nil {
-		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen], b.data[hc.recordHeaderLen+explicitIVLen:], nil)
+		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen()], b.data[hc.recordHeaderLen()+explicitIVLen:], nil)
 
 		n := len(b.data)
 		b.resize(n + len(mac))
@@ -444,7 +443,7 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 		hc.outDigestBuf = mac
 	}
 
-	payload := b.data[hc.recordHeaderLen:]
+	payload := b.data[hc.recordHeaderLen():]
 
 	// encrypt
 	if hc.cipher != nil {
@@ -452,18 +451,18 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case aead:
-			payloadLen := len(b.data) - hc.recordHeaderLen - explicitIVLen
+			payloadLen := len(b.data) - hc.recordHeaderLen() - explicitIVLen
 			overhead := c.Overhead()
 			if hc.version >= VersionTLS13 {
 				overhead++
 			}
 			b.resize(len(b.data) + overhead)
 
-			nonce := b.data[hc.recordHeaderLen : hc.recordHeaderLen+explicitIVLen]
+			nonce := b.data[hc.recordHeaderLen() : hc.recordHeaderLen()+explicitIVLen]
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
-			payload = b.data[hc.recordHeaderLen+explicitIVLen:]
+			payload = b.data[hc.recordHeaderLen()+explicitIVLen:]
 			payload = payload[:payloadLen]
 
 			var additionalData []byte
@@ -474,7 +473,7 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 				hc.additionalData[12] = byte(payloadLen)
 				additionalData = hc.additionalData[:]
 			} else {
-				if hc.recordHeaderLen == normalRecordHeaderLen {
+				if !hc.shortHeaders {
 					// opaque type
 					b.data[0] = byte(recordTypeApplicationData)
 				}
@@ -490,17 +489,17 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 				payload = payload[explicitIVLen:]
 			}
 			prefix, finalBlock := padToBlockSize(payload, blockSize)
-			b.resize(hc.recordHeaderLen + explicitIVLen + len(prefix) + len(finalBlock))
-			c.CryptBlocks(b.data[hc.recordHeaderLen+explicitIVLen:], prefix)
-			c.CryptBlocks(b.data[hc.recordHeaderLen+explicitIVLen+len(prefix):], finalBlock)
+			b.resize(hc.recordHeaderLen() + explicitIVLen + len(prefix) + len(finalBlock))
+			c.CryptBlocks(b.data[hc.recordHeaderLen()+explicitIVLen:], prefix)
+			c.CryptBlocks(b.data[hc.recordHeaderLen()+explicitIVLen+len(prefix):], finalBlock)
 		default:
 			panic("unknown cipher type")
 		}
 	}
 
 	// update length to include MAC and any block padding needed.
-	n := len(b.data) - hc.recordHeaderLen
-	if hc.recordHeaderLen == normalRecordHeaderLen {
+	n := len(b.data) - hc.recordHeaderLen()
+	if !hc.shortHeaders {
 		b.data[3] = byte(n >> 8)
 		b.data[4] = byte(n)
 	} else {
@@ -613,6 +612,13 @@ func (hc *halfConn) splitBlock(b *block, n int) (*block, *block) {
 	return b, bb
 }
 
+func (hc *halfConn) recordHeaderLen() int {
+	if hc.shortHeaders {
+		return shortRecordHeaderLen;
+	}
+	return normalRecordHeaderLen;
+}
+
 // RecordHeaderError results when a TLS record header is invalid.
 type RecordHeaderError struct {
 	// Msg contains a human readable string that describes the error.
@@ -660,7 +666,7 @@ func (c *Conn) readRecord(want recordType) error {
 	b := c.rawInput
 
 	// Read header, payload.
-	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen); err != nil {
+	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen()); err != nil {
 		// RFC suggests that EOF without an alertCloseNotify is
 		// an error, but popular web sites seem to do this,
 		// so we can't make it an error.
@@ -676,8 +682,9 @@ func (c *Conn) readRecord(want recordType) error {
 	var typ recordType
 	var vers uint16
 	var n int
-	
-	if c.in.recordHeaderLen == normalRecordHeaderLen {
+
+	fmt.Fprintf(os.Stderr, "Header len = %d\n", c.in.recordHeaderLen())
+	if !c.in.shortHeaders {
 		typ = recordType(b.data[0])
 		
 		// No valid TLS record has a type of 0x80, however SSLv2 handshakes
@@ -696,7 +703,7 @@ func (c *Conn) readRecord(want recordType) error {
 		vers = 0x0301
 		if int(b.data[0]) & 0x80 == 0 {
 			c.sendAlert(alertDecodeError)
-			return c.in.setErrorLocked(c.newRecordHeaderError("Short header high bit not set"))
+			return c.in.setErrorLocked(c.newRecordHeaderError("short header high bit not set"))
 		}
 		n = ((int(b.data[0]) & 0x7f) << 8) | int(b.data[1])
 	}
@@ -715,7 +722,7 @@ func (c *Conn) readRecord(want recordType) error {
 			return c.in.setErrorLocked(c.newRecordHeaderError("first record does not look like a TLS handshake"))
 		}
 	}
-	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen+n); err != nil {
+	if err := b.readFromUntil(c.conn, c.in.recordHeaderLen()+n); err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
@@ -726,7 +733,7 @@ func (c *Conn) readRecord(want recordType) error {
 	}
 
 	// Process message.
-	b, c.rawInput = c.in.splitBlock(b, c.in.recordHeaderLen+n)
+	b, c.rawInput = c.in.splitBlock(b, c.in.recordHeaderLen()+n)
 	ok, off, alertValue := c.in.decrypt(b)
 	switch {
 	case !ok && c.phase == discardingEarlyData:
@@ -915,7 +922,7 @@ func (c *Conn) maxPayloadSizeForWrite(typ recordType, explicitIVLen int) int {
 		macSize = c.out.mac.Size()
 	}
 
-	payloadBytes := tcpMSSEstimate - c.out.recordHeaderLen - explicitIVLen
+	payloadBytes := tcpMSSEstimate - c.out.recordHeaderLen() - explicitIVLen
 	if c.out.cipher != nil {
 		switch ciph := c.out.cipher.(type) {
 		case cipher.Stream:
@@ -1012,8 +1019,8 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		if maxPayload := c.maxPayloadSizeForWrite(typ, explicitIVLen); m > maxPayload {
 			m = maxPayload
 		}
-		b.resize(c.out.recordHeaderLen + explicitIVLen + m)
-		if (c.out.recordHeaderLen == normalRecordHeaderLen) {
+		b.resize(c.out.recordHeaderLen() + explicitIVLen + m)
+		if !c.out.shortHeaders {
 			b.data[0] = byte(typ)
 			vers := c.vers
 			if vers == 0 {
@@ -1036,7 +1043,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			b.data[1] = byte(m)
 		}
 		if explicitIVLen > 0 {
-			explicitIV := b.data[c.out.recordHeaderLen : c.out.recordHeaderLen+explicitIVLen]
+			explicitIV := b.data[c.out.recordHeaderLen() : c.out.recordHeaderLen()+explicitIVLen]
 			if explicitIVIsSeq {
 				copy(explicitIV, c.out.seq[:])
 			} else {
@@ -1045,7 +1052,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 				}
 			}
 		}
-		copy(b.data[c.out.recordHeaderLen+explicitIVLen:], data)
+		copy(b.data[c.out.recordHeaderLen()+explicitIVLen:], data)
 		c.out.encrypt(byte(typ), b, explicitIVLen)
 		if _, err := c.write(b.data); err != nil {
 			return n, err
@@ -1547,9 +1554,6 @@ func (c *Conn) Handshake() error {
 	if c.handshakeErr != nil || c.handshakeComplete {
 		panic("handshake should not have been able to complete after handshakeCond was set")
 	}
-
-	c.in.recordHeaderLen = normalRecordHeaderLen
-	c.out.recordHeaderLen = normalRecordHeaderLen
 	
 	c.connID = make([]byte, 8)
 	if _, err := io.ReadFull(c.config.rand(), c.connID); err != nil {
@@ -1636,3 +1640,4 @@ func (c *Conn) VerifyHostname(host string) error {
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
 }
+
