@@ -614,9 +614,9 @@ func (hc *halfConn) splitBlock(b *block, n int) (*block, *block) {
 
 func (hc *halfConn) recordHeaderLen() int {
 	if hc.shortHeaders {
-		return shortRecordHeaderLen;
+		return shortRecordHeaderLen
 	}
-	return normalRecordHeaderLen;
+	return normalRecordHeaderLen
 }
 
 // RecordHeaderError results when a TLS record header is invalid.
@@ -686,7 +686,7 @@ func (c *Conn) readRecord(want recordType) error {
 	fmt.Fprintf(os.Stderr, "Header len = %d\n", c.in.recordHeaderLen())
 	if !c.in.shortHeaders {
 		typ = recordType(b.data[0])
-		
+
 		// No valid TLS record has a type of 0x80, however SSLv2 handshakes
 		// start with a uint16 length where the MSB is set and the first record
 		// is always < 256 bytes long. Therefore typ == 0x80 strongly suggests
@@ -701,7 +701,7 @@ func (c *Conn) readRecord(want recordType) error {
 	} else {
 		typ = recordTypeApplicationData
 		vers = 0x0301
-		if int(b.data[0]) & 0x80 == 0 {
+		if int(b.data[0])&0x80 == 0 {
 			c.sendAlert(alertDecodeError)
 			return c.in.setErrorLocked(c.newRecordHeaderError("short header high bit not set"))
 		}
@@ -1554,7 +1554,7 @@ func (c *Conn) Handshake() error {
 	if c.handshakeErr != nil || c.handshakeComplete {
 		panic("handshake should not have been able to complete after handshakeCond was set")
 	}
-	
+
 	c.connID = make([]byte, 8)
 	if _, err := io.ReadFull(c.config.rand(), c.connID); err != nil {
 		return err
@@ -1640,4 +1640,3 @@ func (c *Conn) VerifyHostname(host string) error {
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
 }
-

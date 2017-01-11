@@ -31,11 +31,11 @@ const (
 )
 
 const (
-	maxPlaintext    = 16384        // maximum plaintext payload length
-	maxCiphertext   = 16384 + 2048 // maximum ciphertext payload length
-	normalRecordHeaderLen = 5      // record header length
-	shortRecordHeaderLen = 2
-	maxHandshake    = 65536        // maximum handshake we support (protocol max is 16 MB)
+	maxPlaintext          = 16384        // maximum plaintext payload length
+	maxCiphertext         = 16384 + 2048 // maximum ciphertext payload length
+	normalRecordHeaderLen = 5            // record header length
+	shortRecordHeaderLen  = 2
+	maxHandshake          = 65536 // maximum handshake we support (protocol max is 16 MB)
 
 	minVersion = VersionTLS10
 	maxVersion = VersionTLS12
@@ -92,7 +92,7 @@ const (
 	extensionTicketEarlyDataInfo uint16 = 46
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
-	extensionShortHeaders	     uint16 = 0xff03 // Experimental
+	extensionShortHeaders        uint16 = 0xff03 // Experimental
 )
 
 // TLS signaling cipher suite values
@@ -671,7 +671,7 @@ func (c *Config) Clone() *Config {
 		KeyLogWriter:                c.KeyLogWriter,
 		Accept0RTTData:              c.Accept0RTTData,
 		Max0RTTDataSize:             c.Max0RTTDataSize,
-		AllowShortHeaders:	     c.AllowShortHeaders,
+		AllowShortHeaders:           c.AllowShortHeaders,
 		sessionTicketKeys:           sessionTicketKeys,
 		// originalConfig is deliberately not duplicated.
 	}

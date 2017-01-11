@@ -31,7 +31,7 @@ type clientHelloMsg struct {
 	psks                         []psk
 	pskKeyExchangeModes          []uint8
 	earlyData                    bool
-	shortHeaders		     bool
+	shortHeaders                 bool
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -688,7 +688,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			// Experimental short headers extension
 			m.shortHeaders = true
 		}
-		
+
 		data = data[length:]
 		bindersOffset += length
 	}
@@ -913,6 +913,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	m.scts = nil
 	m.ticketSupported = false
 	m.alpnProtocol = ""
+
 	if len(data) == 0 {
 		// ServerHello is optionally followed by extension data
 		return true
@@ -1030,14 +1031,14 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 }
 
 type serverHelloMsg13 struct {
-	raw         []byte
-	vers        uint16
-	random      []byte
-	cipherSuite uint16
-	keyShare    keyShare
-	psk         bool
-	pskIdentity uint16
-	shortHeaders		     bool
+	raw          []byte
+	vers         uint16
+	random       []byte
+	cipherSuite  uint16
+	keyShare     keyShare
+	psk          bool
+	pskIdentity  uint16
+	shortHeaders bool
 }
 
 func (m *serverHelloMsg13) equal(i interface{}) bool {
@@ -1054,7 +1055,7 @@ func (m *serverHelloMsg13) equal(i interface{}) bool {
 		bytes.Equal(m.keyShare.data, m1.keyShare.data) &&
 		m.psk == m1.psk &&
 		m.pskIdentity == m1.pskIdentity &&
-		m.shortHeaders == m1.shortHeaders		
+		m.shortHeaders == m1.shortHeaders
 }
 
 func (m *serverHelloMsg13) marshal() []byte {
