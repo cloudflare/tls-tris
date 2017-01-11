@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -312,8 +311,10 @@ type cbcMode interface {
 // success boolean, the number of bytes to skip from the start of the record in
 // order to get the application payload, and an optional alert value.
 func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert) {
+	recordHeaderLen := hc.recordHeaderLen()
+
 	// pull out payload
-	payload := b.data[hc.recordHeaderLen():]
+	payload := b.data[recordHeaderLen:]
 
 	macSize := 0
 	if hc.mac != nil {
@@ -355,7 +356,7 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 			if err != nil {
 				return false, 0, alertBadRecordMAC
 			}
-			b.resize(hc.recordHeaderLen() + explicitIVLen + len(payload))
+			b.resize(recordHeaderLen + explicitIVLen + len(payload))
 		case cbcMode:
 			blockSize := c.BlockSize()
 			if hc.version >= VersionTLS11 {
@@ -400,18 +401,18 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 		b.data[3] = byte(n >> 8)
 		b.data[4] = byte(n)
 		remoteMAC := payload[n : n+macSize]
-		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen()], payload[:n], payload[n+macSize:])
+		localMAC := hc.mac.MAC(hc.inDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], payload[:n], payload[n+macSize:])
 
 		if subtle.ConstantTimeCompare(localMAC, remoteMAC) != 1 || paddingGood != 255 {
 			return false, 0, alertBadRecordMAC
 		}
 		hc.inDigestBuf = localMAC
 
-		b.resize(hc.recordHeaderLen() + explicitIVLen + n)
+		b.resize(recordHeaderLen + explicitIVLen + n)
 	}
 	hc.incSeq()
 
-	return true, hc.recordHeaderLen() + explicitIVLen, 0
+	return true, recordHeaderLen + explicitIVLen, 0
 }
 
 // padToBlockSize calculates the needed padding block, if any, for a payload.
@@ -433,9 +434,11 @@ func padToBlockSize(payload []byte, blockSize int) (prefix, finalBlock []byte) {
 
 // encrypt encrypts and macs the data in b.
 func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
+	recordHeaderLen := hc.recordHeaderLen()
+
 	// mac
 	if hc.mac != nil {
-		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:hc.recordHeaderLen()], b.data[hc.recordHeaderLen()+explicitIVLen:], nil)
+		mac := hc.mac.MAC(hc.outDigestBuf, hc.seq[0:], b.data[:recordHeaderLen], b.data[recordHeaderLen+explicitIVLen:], nil)
 
 		n := len(b.data)
 		b.resize(n + len(mac))
@@ -443,7 +446,7 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 		hc.outDigestBuf = mac
 	}
 
-	payload := b.data[hc.recordHeaderLen():]
+	payload := b.data[recordHeaderLen:]
 
 	// encrypt
 	if hc.cipher != nil {
@@ -451,18 +454,18 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case aead:
-			payloadLen := len(b.data) - hc.recordHeaderLen() - explicitIVLen
+			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
 			overhead := c.Overhead()
 			if hc.version >= VersionTLS13 {
 				overhead++
 			}
 			b.resize(len(b.data) + overhead)
 
-			nonce := b.data[hc.recordHeaderLen() : hc.recordHeaderLen()+explicitIVLen]
+			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
-			payload = b.data[hc.recordHeaderLen()+explicitIVLen:]
+			payload = b.data[recordHeaderLen+explicitIVLen:]
 			payload = payload[:payloadLen]
 
 			var additionalData []byte
@@ -489,16 +492,16 @@ func (hc *halfConn) encrypt(t byte, b *block, explicitIVLen int) (bool, alert) {
 				payload = payload[explicitIVLen:]
 			}
 			prefix, finalBlock := padToBlockSize(payload, blockSize)
-			b.resize(hc.recordHeaderLen() + explicitIVLen + len(prefix) + len(finalBlock))
-			c.CryptBlocks(b.data[hc.recordHeaderLen()+explicitIVLen:], prefix)
-			c.CryptBlocks(b.data[hc.recordHeaderLen()+explicitIVLen+len(prefix):], finalBlock)
+			b.resize(recordHeaderLen + explicitIVLen + len(prefix) + len(finalBlock))
+			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen:], prefix)
+			c.CryptBlocks(b.data[recordHeaderLen+explicitIVLen+len(prefix):], finalBlock)
 		default:
 			panic("unknown cipher type")
 		}
 	}
 
 	// update length to include MAC and any block padding needed.
-	n := len(b.data) - hc.recordHeaderLen()
+	n := len(b.data) - recordHeaderLen
 	if !hc.shortHeaders {
 		b.data[3] = byte(n >> 8)
 		b.data[4] = byte(n)
@@ -986,6 +989,8 @@ func (c *Conn) flush() (int, error) {
 // connection and updates the record layer state.
 // c.out.Mutex <= L.
 func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
+	recordHeaderLen := c.out.recordHeaderLen()
+
 	b := c.out.newBlock()
 	defer c.out.freeBlock(b)
 
@@ -1018,7 +1023,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		if maxPayload := c.maxPayloadSizeForWrite(typ, explicitIVLen); m > maxPayload {
 			m = maxPayload
 		}
-		b.resize(c.out.recordHeaderLen() + explicitIVLen + m)
+		b.resize(recordHeaderLen + explicitIVLen + m)
 		if !c.out.shortHeaders {
 			b.data[0] = byte(typ)
 			vers := c.vers
@@ -1042,7 +1047,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 			b.data[1] = byte(m)
 		}
 		if explicitIVLen > 0 {
-			explicitIV := b.data[c.out.recordHeaderLen() : c.out.recordHeaderLen()+explicitIVLen]
+			explicitIV := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if explicitIVIsSeq {
 				copy(explicitIV, c.out.seq[:])
 			} else {
@@ -1051,7 +1056,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 				}
 			}
 		}
-		copy(b.data[c.out.recordHeaderLen()+explicitIVLen:], data)
+		copy(b.data[recordHeaderLen+explicitIVLen:], data)
 		c.out.encrypt(byte(typ), b, explicitIVLen)
 		if _, err := c.write(b.data); err != nil {
 			return n, err

@@ -210,6 +210,7 @@ func (*serverHelloMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 	m.cipherSuite = uint16(rand.Int31())
 	m.keyShare.group = CurveID(rand.Intn(30000))
 	m.keyShare.data = randomBytes(rand.Intn(300), rand)
+	m.shortHeaders.data = bool(rand)
 	if rand.Intn(10) > 5 {
 		m.psk = true
 		m.pskIdentity = uint16(rand.Int31())
