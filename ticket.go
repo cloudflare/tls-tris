@@ -86,9 +86,9 @@ func (s *sessionState) marshal() []byte {
 	return ret
 }
 
-func (s *sessionState) unmarshal(data []byte) bool {
+func (s *sessionState) unmarshal(data []byte) alert {
 	if len(data) < 8 {
-		return false
+		return alertDecodeError
 	}
 
 	s.vers = uint16(data[0])<<8 | uint16(data[1])
@@ -96,14 +96,14 @@ func (s *sessionState) unmarshal(data []byte) bool {
 	masterSecretLen := int(data[4])<<8 | int(data[5])
 	data = data[6:]
 	if len(data) < masterSecretLen {
-		return false
+		return alertDecodeError
 	}
 
 	s.masterSecret = data[:masterSecretLen]
 	data = data[masterSecretLen:]
 
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 
 	numCerts := int(data[0])<<8 | int(data[1])
@@ -112,21 +112,24 @@ func (s *sessionState) unmarshal(data []byte) bool {
 	s.certificates = make([][]byte, numCerts)
 	for i := range s.certificates {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		certLen := int(data[0])<<24 | int(data[1])<<16 | int(data[2])<<8 | int(data[3])
 		data = data[4:]
 		if certLen < 0 {
-			return false
+			return alertDecodeError
 		}
 		if len(data) < certLen {
-			return false
+			return alertDecodeError
 		}
 		s.certificates[i] = data[:certLen]
 		data = data[certLen:]
 	}
 
-	return len(data) == 0
+	if len(data) != 0 {
+		return alertDecodeError
+	}
+	return alertSuccess
 }
 
 type sessionState13 struct {
@@ -195,9 +198,9 @@ func (s *sessionState13) marshal() []byte {
 	return x
 }
 
-func (s *sessionState13) unmarshal(data []byte) bool {
+func (s *sessionState13) unmarshal(data []byte) alert {
 	if len(data) < 24 {
-		return false
+		return alertDecodeError
 	}
 
 	s.vers = uint16(data[0])<<8 | uint16(data[1])
@@ -209,25 +212,25 @@ func (s *sessionState13) unmarshal(data []byte) bool {
 
 	l := int(data[20])<<8 | int(data[21])
 	if len(data) < 22+l+2 {
-		return false
+		return alertDecodeError
 	}
 	s.resumptionSecret = data[22 : 22+l]
 	z := data[22+l:]
 
 	l = int(z[0])<<8 | int(z[1])
 	if len(z) < 2+l+2 {
-		return false
+		return alertDecodeError
 	}
 	s.alpnProtocol = string(z[2 : 2+l])
 	z = z[2+l:]
 
 	l = int(z[0])<<8 | int(z[1])
 	if len(z) != 2+l {
-		return false
+		return alertDecodeError
 	}
 	s.SNI = string(z[2 : 2+l])
 
-	return true
+	return alertSuccess
 }
 
 func (c *Conn) encryptTicket(serialized []byte) ([]byte, error) {

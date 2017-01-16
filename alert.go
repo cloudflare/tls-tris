@@ -40,6 +40,7 @@ const (
 	alertUserCanceled           alert = 90
 	alertNoRenegotiation        alert = 100
 	alertNoApplicationProtocol  alert = 120
+	alertSuccess                alert = 255 // dummy value returned by unmarshal functions
 )
 
 var alertText = map[alert]string{
