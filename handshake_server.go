@@ -222,7 +222,7 @@ Curves:
 	}
 
 	if !foundCompression {
-		c.sendAlert(alertHandshakeFailure)
+		c.sendAlert(alertIllegalParameter)
 		return false, errors.New("tls: client does not support uncompressed connections")
 	}
 	if len(hs.clientHello.compressionMethods) != 1 && c.vers >= VersionTLS13 {
@@ -370,7 +370,7 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 	sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
 	serializedState, usedOldKey := c.decryptTicket(sessionTicket)
 	hs.sessionState = &sessionState{usedOldKey: usedOldKey}
-	if ok := hs.sessionState.unmarshal(serializedState); !ok {
+	if hs.sessionState.unmarshal(serializedState) != alertSuccess {
 		return false
 	}
 
@@ -570,7 +570,11 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 	preMasterSecret, err := keyAgreement.processClientKeyExchange(c.config, hs.cert, ckx, c.vers)
 	if err != nil {
-		c.sendAlert(alertHandshakeFailure)
+		if err == errClientKeyExchange {
+			c.sendAlert(alertDecodeError)
+		} else {
+			c.sendAlert(alertInternalError)
+		}
 		return err
 	}
 	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.clientHello.random, hs.hello.random)
@@ -721,7 +725,7 @@ func (hs *serverHandshakeState) readFinished(out []byte) error {
 	verify := hs.finishedHash.clientSum(hs.masterSecret)
 	if len(verify) != len(clientFinished.verifyData) ||
 		subtle.ConstantTimeCompare(verify, clientFinished.verifyData) != 1 {
-		c.sendAlert(alertHandshakeFailure)
+		c.sendAlert(alertDecryptError)
 		return errors.New("tls: client's Finished message is incorrect")
 	}
 

@@ -1126,8 +1126,8 @@ func (c *Conn) readHandshake() (interface{}, error) {
 	// so pass in a fresh copy that won't be overwritten.
 	data = append([]byte(nil), data...)
 
-	if !m.unmarshal(data) {
-		return nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+	if unmarshalAlert := m.unmarshal(data); unmarshalAlert != alertSuccess {
+		return nil, c.in.setErrorLocked(c.sendAlert(unmarshalAlert))
 	}
 	return m, nil
 }

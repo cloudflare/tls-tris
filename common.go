@@ -939,7 +939,7 @@ type Certificate struct {
 
 type handshakeMessage interface {
 	marshal() []byte
-	unmarshal([]byte) bool
+	unmarshal([]byte) alert
 }
 
 // lruSessionCache is a ClientSessionCache implementation that uses an LRU
