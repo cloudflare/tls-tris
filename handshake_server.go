@@ -189,28 +189,32 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	}
 	c.haveVers = true
 
-	supportedCurve := false
 	preferredCurves := c.config.curvePreferences()
 Curves:
 	for _, curve := range hs.clientHello.supportedCurves {
 		for _, supported := range preferredCurves {
 			if supported == curve {
-				supportedCurve = true
+				hs.ellipticOk = true
 				break Curves
 			}
 		}
 	}
 
-	supportedPointFormat := false
-	for _, pointFormat := range hs.clientHello.supportedPoints {
-		if pointFormat == pointFormatUncompressed {
-			supportedPointFormat = true
-			break
+	// If present, the supported points extension must include uncompressed.
+	// Can be absent. This behavior mirrors BoringSSL.
+	if hs.clientHello.supportedPoints != nil {
+		supportedPointFormat := false
+		for _, pointFormat := range hs.clientHello.supportedPoints {
+			if pointFormat == pointFormatUncompressed {
+				supportedPointFormat = true
+				break
+			}
+		}
+		if !supportedPointFormat {
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: client does not support uncompressed points")
 		}
 	}
-	// TLS 1.3 has removed point format negotiation.
-	supportedPointFormat = supportedPointFormat || c.vers >= VersionTLS13
-	hs.ellipticOk = supportedCurve && supportedPointFormat
 
 	foundCompression := false
 	// We only support null compression, so check that the client offered it.
