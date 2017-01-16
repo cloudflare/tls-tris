@@ -51,11 +51,16 @@ CurvePreferenceLoop:
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
 
-	earlySecret, isPSK := hs.checkPSK()
-	if !isPSK {
+	earlySecret, pskAlert := hs.checkPSK()
+	switch {
+	case pskAlert != alertSuccess:
+		c.sendAlert(pskAlert)
+		return errors.New("tls: invalid client PSK")
+	case earlySecret == nil:
 		earlySecret = hkdfExtract(hash, nil, nil)
+	case earlySecret != nil:
+		c.didResume = true
 	}
-	c.didResume = isPSK
 
 	hs.finishedHash13 = hash.New()
 	hs.finishedHash13.Write(hs.clientHello.marshal())
@@ -89,7 +94,7 @@ CurvePreferenceLoop:
 		return err
 	}
 
-	if !isPSK {
+	if !c.didResume {
 		if err := hs.sendCertificate13(); err != nil {
 			return err
 		}
@@ -146,7 +151,7 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	expectedVerifyData := hmacOfSum(hash, hs.finishedHash13, hs.clientFinishedKey)
 	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
 		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
-		c.sendAlert(alertHandshakeFailure)
+		c.sendAlert(alertDecryptError)
 		return errors.New("tls: client's Finished message is incorrect")
 	}
 	hs.finishedHash13.Write(clientFinished.marshal())
@@ -397,9 +402,9 @@ func (hs *serverHandshakeState) prepareCipher(handshakeCtx, secret []byte, label
 // https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8.2.
 const ticketAgeSkewAllowance = 10 * time.Second
 
-func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
+func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, alert alert) {
 	if hs.c.config.SessionTicketsDisabled {
-		return nil, false
+		return nil, alertSuccess
 	}
 
 	foundDHE := false
@@ -410,7 +415,7 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		}
 	}
 	if !foundDHE {
-		return nil, false
+		return nil, alertSuccess
 	}
 
 	hash := hashForSuite(hs.suite)
@@ -422,7 +427,7 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 			continue
 		}
 		s := &sessionState13{}
-		if ok := s.unmarshal(serializedTicket); !ok {
+		if s.unmarshal(serializedTicket) != alertSuccess {
 			continue
 		}
 		if s.vers != hs.c.vers {
@@ -455,27 +460,28 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, ok bool) {
 		chHash.Write(hs.clientHello.rawTruncated)
 		expectedBinder := hmacOfSum(hash, chHash, binderFinishedKey)
 
-		if subtle.ConstantTimeCompare(expectedBinder, hs.clientHello.psks[i].binder) == 1 {
-			if i == 0 && hs.clientHello.earlyData {
-				// This is a ticket intended to be used for 0-RTT
-				if s.maxEarlyDataLen == 0 {
-					// But we had not tagged it as such. We could close the connection
-					// here, but instead we just ignore the ticket and the 0-RTT data.
-					continue
-				}
-				if hs.c.config.Accept0RTTData {
-					hs.c.binder = expectedBinder
-					hs.c.ticketMaxEarlyData = int64(s.maxEarlyDataLen)
-					hs.hello13Enc.earlyData = true
-				}
-			}
-			hs.hello13.psk = true
-			hs.hello13.pskIdentity = uint16(i)
-			return earlySecret, true
+		if subtle.ConstantTimeCompare(expectedBinder, hs.clientHello.psks[i].binder) != 1 {
+			return nil, alertDecryptError
 		}
+
+		if i == 0 && hs.clientHello.earlyData {
+			// This is a ticket intended to be used for 0-RTT
+			if s.maxEarlyDataLen == 0 {
+				// But we had not tagged it as such.
+				return nil, alertIllegalParameter
+			}
+			if hs.c.config.Accept0RTTData {
+				hs.c.binder = expectedBinder
+				hs.c.ticketMaxEarlyData = int64(s.maxEarlyDataLen)
+				hs.hello13Enc.earlyData = true
+			}
+		}
+		hs.hello13.psk = true
+		hs.hello13.pskIdentity = uint16(i)
+		return earlySecret, alertSuccess
 	}
 
-	return nil, false
+	return nil, alertSuccess
 }
 
 func (hs *serverHandshakeState) sendSessionTicket13() error {

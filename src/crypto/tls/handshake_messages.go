@@ -363,28 +363,28 @@ func (m *clientHelloMsg) marshal() []byte {
 	return x
 }
 
-func (m *clientHelloMsg) unmarshal(data []byte) bool {
+func (m *clientHelloMsg) unmarshal(data []byte) alert {
 	if len(data) < 42 {
-		return false
+		return alertDecodeError
 	}
 	m.raw = data
 	m.vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
-		return false
+		return alertDecodeError
 	}
 	m.sessionId = data[39 : 39+sessionIdLen]
 	data = data[39+sessionIdLen:]
 	bindersOffset := 39 + sessionIdLen
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 	// cipherSuiteLen is the number of bytes of cipher suite numbers. Since
 	// they are uint16s, the number must be even.
 	cipherSuiteLen := int(data[0])<<8 | int(data[1])
 	if cipherSuiteLen%2 == 1 || len(data) < 2+cipherSuiteLen {
-		return false
+		return alertDecodeError
 	}
 	numCipherSuites := cipherSuiteLen / 2
 	m.cipherSuites = make([]uint16, numCipherSuites)
@@ -397,11 +397,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 	data = data[2+cipherSuiteLen:]
 	bindersOffset += 2 + cipherSuiteLen
 	if len(data) < 1 {
-		return false
+		return alertDecodeError
 	}
 	compressionMethodsLen := int(data[0])
 	if len(data) < 1+compressionMethodsLen {
-		return false
+		return alertDecodeError
 	}
 	m.compressionMethods = data[1 : 1+compressionMethodsLen]
 
@@ -424,51 +424,51 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 
 	if len(data) == 0 {
 		// ClientHello is optionally followed by extension data
-		return true
+		return alertSuccess
 	}
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 
 	extensionsLength := int(data[0])<<8 | int(data[1])
 	data = data[2:]
 	bindersOffset += 2
 	if extensionsLength != len(data) {
-		return false
+		return alertDecodeError
 	}
 
 	for len(data) != 0 {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
 		bindersOffset += 4
 		if len(data) < length {
-			return false
+			return alertDecodeError
 		}
 
 		switch extension {
 		case extensionServerName:
 			d := data[:length]
 			if len(d) < 2 {
-				return false
+				return alertDecodeError
 			}
 			namesLen := int(d[0])<<8 | int(d[1])
 			d = d[2:]
 			if len(d) != namesLen {
-				return false
+				return alertDecodeError
 			}
 			for len(d) > 0 {
 				if len(d) < 3 {
-					return false
+					return alertDecodeError
 				}
 				nameType := d[0]
 				nameLen := int(d[1])<<8 | int(d[2])
 				d = d[3:]
 				if len(d) < nameLen {
-					return false
+					return alertDecodeError
 				}
 				if nameType == 0 {
 					m.serverName = string(d[:nameLen])
@@ -478,7 +478,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 		case extensionNextProtoNeg:
 			if length > 0 {
-				return false
+				return alertDecodeError
 			}
 			m.nextProtoNeg = true
 		case extensionStatusRequest:
@@ -487,11 +487,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			// http://tools.ietf.org/html/rfc4492#section-5.5.1
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.4
 			if length < 2 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])<<8 | int(data[1])
 			if l%2 == 1 || length != l+2 {
-				return false
+				return alertDecodeError
 			}
 			numCurves := l / 2
 			m.supportedCurves = make([]CurveID, numCurves)
@@ -503,11 +503,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		case extensionSupportedPoints:
 			// http://tools.ietf.org/html/rfc4492#section-5.5.2
 			if length < 1 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])
 			if length != l+1 {
-				return false
+				return alertDecodeError
 			}
 			m.supportedPoints = make([]uint8, l)
 			copy(m.supportedPoints, data[1:])
@@ -519,11 +519,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			// https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.3
 			if length < 2 || length&1 != 0 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])<<8 | int(data[1])
 			if l != length-2 {
-				return false
+				return alertDecodeError
 			}
 			n := l / 2
 			d := data[2:]
@@ -535,31 +535,31 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 		case extensionRenegotiationInfo:
 			if length == 0 {
-				return false
+				return alertDecodeError
 			}
 			d := data[:length]
 			l := int(d[0])
 			d = d[1:]
 			if l != len(d) {
-				return false
+				return alertDecodeError
 			}
 
 			m.secureRenegotiation = d
 			m.secureRenegotiationSupported = true
 		case extensionALPN:
 			if length < 2 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])<<8 | int(data[1])
 			if l != length-2 {
-				return false
+				return alertDecodeError
 			}
 			d := data[2:length]
 			for len(d) != 0 {
 				stringLen := int(d[0])
 				d = d[1:]
 				if stringLen == 0 || stringLen > len(d) {
-					return false
+					return alertDecodeError
 				}
 				m.alpnProtocols = append(m.alpnProtocols, string(d[:stringLen]))
 				d = d[stringLen:]
@@ -567,25 +567,25 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		case extensionSCT:
 			m.scts = true
 			if length != 0 {
-				return false
+				return alertDecodeError
 			}
 		case extensionKeyShare:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.5
 			if length < 2 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])<<8 | int(data[1])
 			if l != length-2 {
-				return false
+				return alertDecodeError
 			}
 			d := data[2:length]
 			for len(d) != 0 {
 				if len(d) < 4 {
-					return false
+					return alertDecodeError
 				}
 				dataLen := int(d[2])<<8 | int(d[3])
 				if dataLen == 0 || 4+dataLen > len(d) {
-					return false
+					return alertDecodeError
 				}
 				m.keyShares = append(m.keyShares, keyShare{
 					group: CurveID(d[0])<<8 | CurveID(d[1]),
@@ -596,11 +596,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 		case extensionSupportedVersions:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.1
 			if length < 1 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])
 			if l%2 == 1 || length != l+1 {
-				return false
+				return alertDecodeError
 			}
 			n := l / 2
 			d := data[1:]
@@ -611,22 +611,26 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 		case extensionPreSharedKey:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.6
-			if length < 43 {
-				return false
+			if length < 2 {
+				return alertDecodeError
+			}
+			// Ensure this extension is the last one in the Client Hello
+			if len(data) != length {
+				return alertIllegalParameter
 			}
 			li := int(data[0])<<8 | int(data[1])
-			if li > length-37 {
-				return false
+			if 2+li+2 > length {
+				return alertDecodeError
 			}
 			d := data[2 : 2+li]
 			bindersOffset += 2 + li
 			for len(d) > 0 {
 				if len(d) < 6 {
-					return false
+					return alertDecodeError
 				}
 				l := int(d[0])<<8 | int(d[1])
 				if len(d) < 2+l+4 {
-					return false
+					return alertDecodeError
 				}
 				m.psks = append(m.psks, psk{
 					identity: d[2 : 2+l],
@@ -637,48 +641,53 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 			lb := int(data[li+2])<<8 | int(data[li+3])
 			d = data[2+li+2:]
-			if lb != len(d) {
-				return false
+			if lb != len(d) || lb == 0 {
+				return alertDecodeError
 			}
 			i := 0
 			for len(d) > 0 {
-				if len(d) < 1 || i >= len(m.psks) {
-					return false
+				if i >= len(m.psks) {
+					return alertIllegalParameter
+				}
+				if len(d) < 1 {
+					return alertDecodeError
 				}
 				l := int(d[0])
 				if l > len(d)-1 {
-					return false
+					return alertDecodeError
+				}
+				if i >= len(m.psks) {
+					return alertIllegalParameter
 				}
 				m.psks[i].binder = d[1 : 1+l]
 				d = d[1+l:]
 				i++
 			}
 			if i != len(m.psks) {
-				return false
-			}
-			// Ensure this extension is the last one in the Client Hello
-			if len(data) != length {
-				return false
+				return alertIllegalParameter
 			}
 			m.rawTruncated = m.raw[:bindersOffset]
 		case extensionPSKKeyExchangeModes:
 			if length < 2 {
-				return false
+				return alertDecodeError
 			}
 			l := int(data[0])
 			if length != l+1 {
-				return false
+				return alertDecodeError
 			}
 			m.pskKeyExchangeModes = data[1:length]
 		case extensionEarlyData:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
+			if length != 0 {
+				return alertDecodeError
+			}
 		}
 		data = data[length:]
 		bindersOffset += length
 	}
 
-	return true
+	return alertSuccess
 }
 
 type serverHelloMsg struct {
@@ -872,21 +881,21 @@ func (m *serverHelloMsg) marshal() []byte {
 	return x
 }
 
-func (m *serverHelloMsg) unmarshal(data []byte) bool {
+func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	if len(data) < 42 {
-		return false
+		return alertDecodeError
 	}
 	m.raw = data
 	m.vers = uint16(data[4])<<8 | uint16(data[5])
 	m.random = data[6:38]
 	sessionIdLen := int(data[38])
 	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
-		return false
+		return alertDecodeError
 	}
 	m.sessionId = data[39 : 39+sessionIdLen]
 	data = data[39+sessionIdLen:]
 	if len(data) < 3 {
-		return false
+		return alertDecodeError
 	}
 	m.cipherSuite = uint16(data[0])<<8 | uint16(data[1])
 	m.compressionMethod = data[2]
@@ -901,27 +910,27 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 
 	if len(data) == 0 {
 		// ServerHello is optionally followed by extension data
-		return true
+		return alertSuccess
 	}
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 
 	extensionsLength := int(data[0])<<8 | int(data[1])
 	data = data[2:]
 	if len(data) != extensionsLength {
-		return false
+		return alertDecodeError
 	}
 
 	for len(data) != 0 {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
 		if len(data) < length {
-			return false
+			return alertDecodeError
 		}
 
 		switch extension {
@@ -932,30 +941,30 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 				l := int(d[0])
 				d = d[1:]
 				if l == 0 || l > len(d) {
-					return false
+					return alertDecodeError
 				}
 				m.nextProtos = append(m.nextProtos, string(d[:l]))
 				d = d[l:]
 			}
 		case extensionStatusRequest:
 			if length > 0 {
-				return false
+				return alertDecodeError
 			}
 			m.ocspStapling = true
 		case extensionSessionTicket:
 			if length > 0 {
-				return false
+				return alertDecodeError
 			}
 			m.ticketSupported = true
 		case extensionRenegotiationInfo:
 			if length == 0 {
-				return false
+				return alertDecodeError
 			}
 			d := data[:length]
 			l := int(d[0])
 			d = d[1:]
 			if l != len(d) {
-				return false
+				return alertDecodeError
 			}
 
 			m.secureRenegotiation = d
@@ -963,33 +972,33 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		case extensionALPN:
 			d := data[:length]
 			if len(d) < 3 {
-				return false
+				return alertDecodeError
 			}
 			l := int(d[0])<<8 | int(d[1])
 			if l != len(d)-2 {
-				return false
+				return alertDecodeError
 			}
 			d = d[2:]
 			l = int(d[0])
 			if l != len(d)-1 {
-				return false
+				return alertDecodeError
 			}
 			d = d[1:]
 			if len(d) == 0 {
 				// ALPN protocols must not be empty.
-				return false
+				return alertDecodeError
 			}
 			m.alpnProtocol = string(d)
 		case extensionSCT:
 			d := data[:length]
 
 			if len(d) < 2 {
-				return false
+				return alertDecodeError
 			}
 			l := int(d[0])<<8 | int(d[1])
 			d = d[2:]
 			if len(d) != l {
-				return false
+				return alertDecodeError
 			}
 			if l == 0 {
 				continue
@@ -998,12 +1007,12 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 			m.scts = make([][]byte, 0, 3)
 			for len(d) != 0 {
 				if len(d) < 2 {
-					return false
+					return alertDecodeError
 				}
 				sctLen := int(d[0])<<8 | int(d[1])
 				d = d[2:]
 				if len(d) < sctLen {
-					return false
+					return alertDecodeError
 				}
 				m.scts = append(m.scts, d[:sctLen])
 				d = d[sctLen:]
@@ -1012,7 +1021,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		data = data[length:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type serverHelloMsg13 struct {
@@ -1096,9 +1105,9 @@ func (m *serverHelloMsg13) marshal() []byte {
 	return x
 }
 
-func (m *serverHelloMsg13) unmarshal(data []byte) bool {
+func (m *serverHelloMsg13) unmarshal(data []byte) alert {
 	if len(data) < 50 {
-		return false
+		return alertDecodeError
 	}
 	m.raw = data
 	m.vers = uint16(data[4])<<8 | uint16(data[5])
@@ -1110,43 +1119,43 @@ func (m *serverHelloMsg13) unmarshal(data []byte) bool {
 	extensionsLength := int(data[40])<<8 | int(data[41])
 	data = data[42:]
 	if len(data) != extensionsLength {
-		return false
+		return alertDecodeError
 	}
 
 	for len(data) != 0 {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
 		if len(data) < length {
-			return false
+			return alertDecodeError
 		}
 
 		switch extension {
 		default:
-			return false
+			return alertDecodeError
 		case extensionPreSharedKey:
 			if length != 2 {
-				return false
+				return alertDecodeError
 			}
 			m.psk = true
 			m.pskIdentity = uint16(data[0])<<8 | uint16(data[1])
 		case extensionKeyShare:
 			if length < 2 {
-				return false
+				return alertDecodeError
 			}
 			m.keyShare.group = CurveID(data[0])<<8 | CurveID(data[1])
 			if length-4 != int(data[2])<<8|int(data[3]) {
-				return false
+				return alertDecodeError
 			}
 			m.keyShare.data = data[4:length]
 		}
 		data = data[length:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type encryptedExtensionsMsg struct {
@@ -1219,9 +1228,9 @@ func (m *encryptedExtensionsMsg) marshal() []byte {
 	return x
 }
 
-func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
+func (m *encryptedExtensionsMsg) unmarshal(data []byte) alert {
 	if len(data) < 6 {
-		return false
+		return alertDecodeError
 	}
 	m.raw = data
 
@@ -1231,39 +1240,39 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 	extensionsLength := int(data[4])<<8 | int(data[5])
 	data = data[6:]
 	if len(data) != extensionsLength {
-		return false
+		return alertDecodeError
 	}
 
 	for len(data) != 0 {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		extension := uint16(data[0])<<8 | uint16(data[1])
 		length := int(data[2])<<8 | int(data[3])
 		data = data[4:]
 		if len(data) < length {
-			return false
+			return alertDecodeError
 		}
 
 		switch extension {
 		case extensionALPN:
 			d := data[:length]
 			if len(d) < 3 {
-				return false
+				return alertDecodeError
 			}
 			l := int(d[0])<<8 | int(d[1])
 			if l != len(d)-2 {
-				return false
+				return alertDecodeError
 			}
 			d = d[2:]
 			l = int(d[0])
 			if l != len(d)-1 {
-				return false
+				return alertDecodeError
 			}
 			d = d[1:]
 			if len(d) == 0 {
 				// ALPN protocols must not be empty.
-				return false
+				return alertDecodeError
 			}
 			m.alpnProtocol = string(d)
 		case extensionEarlyData:
@@ -1274,7 +1283,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) bool {
 		data = data[length:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type certificateMsg struct {
@@ -1327,26 +1336,26 @@ func (m *certificateMsg) marshal() (x []byte) {
 	return
 }
 
-func (m *certificateMsg) unmarshal(data []byte) bool {
+func (m *certificateMsg) unmarshal(data []byte) alert {
 	if len(data) < 7 {
-		return false
+		return alertDecodeError
 	}
 
 	m.raw = data
 	certsLen := uint32(data[4])<<16 | uint32(data[5])<<8 | uint32(data[6])
 	if uint32(len(data)) != certsLen+7 {
-		return false
+		return alertDecodeError
 	}
 
 	numCerts := 0
 	d := data[7:]
 	for certsLen > 0 {
 		if len(d) < 4 {
-			return false
+			return alertDecodeError
 		}
 		certLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
 		if uint32(len(d)) < 3+certLen {
-			return false
+			return alertDecodeError
 		}
 		d = d[3+certLen:]
 		certsLen -= 3 + certLen
@@ -1361,7 +1370,7 @@ func (m *certificateMsg) unmarshal(data []byte) bool {
 		d = d[3+certLen:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type certificateMsg13 struct {
@@ -1424,43 +1433,43 @@ func (m *certificateMsg13) marshal() (x []byte) {
 	return
 }
 
-func (m *certificateMsg13) unmarshal(data []byte) bool {
+func (m *certificateMsg13) unmarshal(data []byte) alert {
 	if len(data) < 5 {
-		return false
+		return alertDecodeError
 	}
 
 	m.raw = data
 
 	ctxLen := data[4]
 	if len(data) < int(ctxLen)+5+3 {
-		return false
+		return alertDecodeError
 	}
 	m.requestContext = data[5 : 5+ctxLen]
 
 	d := data[5+ctxLen:]
 	certsLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
 	if uint32(len(d)) != certsLen+3 {
-		return false
+		return alertDecodeError
 	}
 
 	numCerts := 0
 	d = d[3:]
 	for certsLen > 0 {
 		if len(d) < 4 {
-			return false
+			return alertDecodeError
 		}
 		certLen := uint32(d[0])<<16 | uint32(d[1])<<8 | uint32(d[2])
 		if uint32(len(d)) < 3+certLen {
-			return false
+			return alertDecodeError
 		}
 		d = d[3+certLen:]
 
 		if len(d) < 2 {
-			return false
+			return alertDecodeError
 		}
 		extLen := uint16(d[0])<<8 | uint16(d[1])
 		if uint16(len(d)) < 2+extLen {
-			return false
+			return alertDecodeError
 		}
 		d = d[2+extLen:]
 
@@ -1478,7 +1487,7 @@ func (m *certificateMsg13) unmarshal(data []byte) bool {
 		d = d[2+extLen:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type serverKeyExchangeMsg struct {
@@ -1512,13 +1521,13 @@ func (m *serverKeyExchangeMsg) marshal() []byte {
 	return x
 }
 
-func (m *serverKeyExchangeMsg) unmarshal(data []byte) bool {
+func (m *serverKeyExchangeMsg) unmarshal(data []byte) alert {
 	m.raw = data
 	if len(data) < 4 {
-		return false
+		return alertDecodeError
 	}
 	m.key = data[4:]
-	return true
+	return alertSuccess
 }
 
 type certificateStatusMsg struct {
@@ -1566,25 +1575,25 @@ func (m *certificateStatusMsg) marshal() []byte {
 	return x
 }
 
-func (m *certificateStatusMsg) unmarshal(data []byte) bool {
+func (m *certificateStatusMsg) unmarshal(data []byte) alert {
 	m.raw = data
 	if len(data) < 5 {
-		return false
+		return alertDecodeError
 	}
 	m.statusType = data[4]
 
 	m.response = nil
 	if m.statusType == statusTypeOCSP {
 		if len(data) < 8 {
-			return false
+			return alertDecodeError
 		}
 		respLen := uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
 		if uint32(len(data)) != 4+4+respLen {
-			return false
+			return alertDecodeError
 		}
 		m.response = data[8:]
 	}
-	return true
+	return alertSuccess
 }
 
 type serverHelloDoneMsg struct{}
@@ -1600,8 +1609,11 @@ func (m *serverHelloDoneMsg) marshal() []byte {
 	return x
 }
 
-func (m *serverHelloDoneMsg) unmarshal(data []byte) bool {
-	return len(data) == 4
+func (m *serverHelloDoneMsg) unmarshal(data []byte) alert {
+	if len(data) != 4 {
+		return alertDecodeError
+	}
+	return alertSuccess
 }
 
 type clientKeyExchangeMsg struct {
@@ -1635,17 +1647,17 @@ func (m *clientKeyExchangeMsg) marshal() []byte {
 	return x
 }
 
-func (m *clientKeyExchangeMsg) unmarshal(data []byte) bool {
+func (m *clientKeyExchangeMsg) unmarshal(data []byte) alert {
 	m.raw = data
 	if len(data) < 4 {
-		return false
+		return alertDecodeError
 	}
 	l := int(data[1])<<16 | int(data[2])<<8 | int(data[3])
 	if l != len(data)-4 {
-		return false
+		return alertDecodeError
 	}
 	m.ciphertext = data[4:]
-	return true
+	return alertSuccess
 }
 
 type finishedMsg struct {
@@ -1676,13 +1688,13 @@ func (m *finishedMsg) marshal() (x []byte) {
 	return
 }
 
-func (m *finishedMsg) unmarshal(data []byte) bool {
+func (m *finishedMsg) unmarshal(data []byte) alert {
 	m.raw = data
 	if len(data) < 4 {
-		return false
+		return alertDecodeError
 	}
 	m.verifyData = data[4:]
-	return true
+	return alertSuccess
 }
 
 type nextProtoMsg struct {
@@ -1728,31 +1740,31 @@ func (m *nextProtoMsg) marshal() []byte {
 	return x
 }
 
-func (m *nextProtoMsg) unmarshal(data []byte) bool {
+func (m *nextProtoMsg) unmarshal(data []byte) alert {
 	m.raw = data
 
 	if len(data) < 5 {
-		return false
+		return alertDecodeError
 	}
 	data = data[4:]
 	protoLen := int(data[0])
 	data = data[1:]
 	if len(data) < protoLen {
-		return false
+		return alertDecodeError
 	}
 	m.proto = string(data[0:protoLen])
 	data = data[protoLen:]
 
 	if len(data) < 1 {
-		return false
+		return alertDecodeError
 	}
 	paddingLen := int(data[0])
 	data = data[1:]
 	if len(data) != paddingLen {
-		return false
+		return alertDecodeError
 	}
 
-	return true
+	return alertSuccess
 }
 
 type certificateRequestMsg struct {
@@ -1834,42 +1846,42 @@ func (m *certificateRequestMsg) marshal() (x []byte) {
 	return
 }
 
-func (m *certificateRequestMsg) unmarshal(data []byte) bool {
+func (m *certificateRequestMsg) unmarshal(data []byte) alert {
 	m.raw = data
 
 	if len(data) < 5 {
-		return false
+		return alertDecodeError
 	}
 
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
 	if uint32(len(data))-4 != length {
-		return false
+		return alertDecodeError
 	}
 
 	numCertTypes := int(data[4])
 	data = data[5:]
 	if numCertTypes == 0 || len(data) <= numCertTypes {
-		return false
+		return alertDecodeError
 	}
 
 	m.certificateTypes = make([]byte, numCertTypes)
 	if copy(m.certificateTypes, data) != numCertTypes {
-		return false
+		return alertDecodeError
 	}
 
 	data = data[numCertTypes:]
 
 	if m.hasSignatureAndHash {
 		if len(data) < 2 {
-			return false
+			return alertDecodeError
 		}
 		sigAndHashLen := uint16(data[0])<<8 | uint16(data[1])
 		data = data[2:]
 		if sigAndHashLen&1 != 0 {
-			return false
+			return alertDecodeError
 		}
 		if len(data) < int(sigAndHashLen) {
-			return false
+			return alertDecodeError
 		}
 		numSigAndHash := sigAndHashLen / 2
 		m.signatureAndHashes = make([]signatureAndHash, numSigAndHash)
@@ -1881,12 +1893,12 @@ func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 	}
 
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 	casLength := uint16(data[0])<<8 | uint16(data[1])
 	data = data[2:]
 	if len(data) < int(casLength) {
-		return false
+		return alertDecodeError
 	}
 	cas := make([]byte, casLength)
 	copy(cas, data)
@@ -1895,20 +1907,23 @@ func (m *certificateRequestMsg) unmarshal(data []byte) bool {
 	m.certificateAuthorities = nil
 	for len(cas) > 0 {
 		if len(cas) < 2 {
-			return false
+			return alertDecodeError
 		}
 		caLen := uint16(cas[0])<<8 | uint16(cas[1])
 		cas = cas[2:]
 
 		if len(cas) < int(caLen) {
-			return false
+			return alertDecodeError
 		}
 
 		m.certificateAuthorities = append(m.certificateAuthorities, cas[:caLen])
 		cas = cas[caLen:]
 	}
 
-	return len(data) == 0
+	if len(data) != 0 {
+		return alertDecodeError
+	}
+	return alertSuccess
 }
 
 type certificateVerifyMsg struct {
@@ -1962,16 +1977,16 @@ func (m *certificateVerifyMsg) marshal() (x []byte) {
 	return
 }
 
-func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
+func (m *certificateVerifyMsg) unmarshal(data []byte) alert {
 	m.raw = data
 
 	if len(data) < 6 {
-		return false
+		return alertDecodeError
 	}
 
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
 	if uint32(len(data))-4 != length {
-		return false
+		return alertDecodeError
 	}
 
 	data = data[4:]
@@ -1982,17 +1997,17 @@ func (m *certificateVerifyMsg) unmarshal(data []byte) bool {
 	}
 
 	if len(data) < 2 {
-		return false
+		return alertDecodeError
 	}
 	siglength := int(data[0])<<8 + int(data[1])
 	data = data[2:]
 	if len(data) != siglength {
-		return false
+		return alertDecodeError
 	}
 
 	m.signature = data
 
-	return true
+	return alertSuccess
 }
 
 type newSessionTicketMsg struct {
@@ -2032,26 +2047,26 @@ func (m *newSessionTicketMsg) marshal() (x []byte) {
 	return
 }
 
-func (m *newSessionTicketMsg) unmarshal(data []byte) bool {
+func (m *newSessionTicketMsg) unmarshal(data []byte) alert {
 	m.raw = data
 
 	if len(data) < 10 {
-		return false
+		return alertDecodeError
 	}
 
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
 	if uint32(len(data))-4 != length {
-		return false
+		return alertDecodeError
 	}
 
 	ticketLen := int(data[8])<<8 + int(data[9])
 	if len(data)-10 != ticketLen {
-		return false
+		return alertDecodeError
 	}
 
 	m.ticket = data[10:]
 
-	return true
+	return alertSuccess
 }
 
 type newSessionTicketMsg13 struct {
@@ -2124,18 +2139,18 @@ func (m *newSessionTicketMsg13) marshal() (x []byte) {
 	return
 }
 
-func (m *newSessionTicketMsg13) unmarshal(data []byte) bool {
+func (m *newSessionTicketMsg13) unmarshal(data []byte) alert {
 	m.raw = data
 	m.maxEarlyDataLength = 0
 	m.withEarlyDataInfo = false
 
 	if len(data) < 16 {
-		return false
+		return alertDecodeError
 	}
 
 	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
 	if uint32(len(data))-4 != length {
-		return false
+		return alertDecodeError
 	}
 
 	m.lifetime = uint32(data[4])<<24 | uint32(data[5])<<16 |
@@ -2145,20 +2160,20 @@ func (m *newSessionTicketMsg13) unmarshal(data []byte) bool {
 
 	ticketLen := int(data[12])<<8 + int(data[13])
 	if 14+ticketLen > len(data) {
-		return false
+		return alertDecodeError
 	}
 	m.ticket = data[14 : 14+ticketLen]
 
 	data = data[14+ticketLen:]
 	extLen := int(data[0])<<8 + int(data[1])
 	if extLen != len(data)-2 {
-		return false
+		return alertDecodeError
 	}
 
 	data = data[2:]
 	for len(data) > 0 {
 		if len(data) < 4 {
-			return false
+			return alertDecodeError
 		}
 		extType := uint16(data[0])<<8 + uint16(data[1])
 		length := int(data[2])<<8 + int(data[3])
@@ -2167,7 +2182,7 @@ func (m *newSessionTicketMsg13) unmarshal(data []byte) bool {
 		switch extType {
 		case extensionTicketEarlyDataInfo:
 			if length != 4 {
-				return false
+				return alertDecodeError
 			}
 			m.withEarlyDataInfo = true
 			m.maxEarlyDataLength = uint32(data[0])<<24 | uint32(data[1])<<16 |
@@ -2176,7 +2191,7 @@ func (m *newSessionTicketMsg13) unmarshal(data []byte) bool {
 		data = data[length:]
 	}
 
-	return true
+	return alertSuccess
 }
 
 type helloRequestMsg struct {
@@ -2186,8 +2201,11 @@ func (*helloRequestMsg) marshal() []byte {
 	return []byte{typeHelloRequest, 0, 0, 0}
 }
 
-func (*helloRequestMsg) unmarshal(data []byte) bool {
-	return len(data) == 4
+func (*helloRequestMsg) unmarshal(data []byte) alert {
+	if len(data) != 4 {
+		return alertDecodeError
+	}
+	return alertSuccess
 }
 
 func eqUint16s(x, y []uint16) bool {
