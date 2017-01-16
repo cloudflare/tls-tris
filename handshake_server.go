@@ -175,14 +175,8 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 	}
 
 	if hs.clientHello.supportedVersions != nil {
-		for _, v := range hs.clientHello.supportedVersions {
-			if (v >= c.config.minVersion() && v <= c.config.maxVersion()) ||
-				v == VersionTLS13Draft18 {
-				c.vers = v
-				break
-			}
-		}
-		if c.vers == 0 {
+		c.vers, ok = c.config.pickVersion(hs.clientHello.supportedVersions)
+		if !ok {
 			c.sendAlert(alertProtocolVersion)
 			return false, fmt.Errorf("tls: none of the client versions (%x) are supported", hs.clientHello.supportedVersions)
 		}
