@@ -651,7 +651,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			}
 			i := 0
 			for len(d) > 0 {
-				if len(d) < 1 {
+				if len(d) < 1 || i >= len(m.psks) {
 					return false
 				}
 				l := int(d[0])
