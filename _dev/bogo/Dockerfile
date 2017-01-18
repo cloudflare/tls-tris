@@ -1,25 +1,13 @@
-FROM alpine
+FROM golang:1.7-alpine
 
 RUN apk add --update \
     git \
-    cmake \
-    perl \
-    python \
-    build-base \
-    go \
-    ninja \
+    make \
+    bash \
   && rm -rf /var/cache/apk/*
 
-RUN git clone https://boringssl.googlesource.com/boringssl
+ENV CGO_ENABLED=0
 
-# see _dev/boring for REVISION info
-ARG REVISION=9b885c5
-
-RUN cd boringssl && git fetch
-RUN cd boringssl && git checkout $REVISION
-
-ADD bogo-client.go /bogo-client.go
-RUN go build /bogo-client.go
-
-ADD run.sh /run.sh
-ENTRYPOINT ["/run.sh"]
+RUN go get -d github.com/FiloSottile/crypto-tls-bogo-shim
+WORKDIR /go/src/github.com/FiloSottile/crypto-tls-bogo-shim
+CMD ["make", "run"]
