@@ -809,6 +809,11 @@ func (c *Conn) readRecord(want recordType) error {
 			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 			break
 		}
+		// Handshake messages are not allowed to fragment across the CCS
+		if c.hand.Len() > 0 {
+			c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+			break
+		}
 		err := c.in.changeCipherSpec()
 		if err != nil {
 			c.in.setErrorLocked(c.sendAlert(err.(alert)))
