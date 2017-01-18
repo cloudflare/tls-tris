@@ -126,6 +126,9 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 	}
+	if c.hand.Len() > 0 {
+		return c.sendAlert(alertUnexpectedMessage)
+	}
 	c.phase = handshakeConfirmed
 	atomic.StoreInt32(&c.handshakeConfirmed, 1)
 	c.handshakeComplete = true
