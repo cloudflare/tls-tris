@@ -13,8 +13,11 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log"
 	"os"
+	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -581,5 +584,22 @@ func (hs *serverHandshakeState) traceErr(err error) {
 			return // don't stack trace on EOF before CH
 		}
 		fmt.Fprintf(os.Stderr, "\n%s\n", debug.Stack())
+	}
+	if os.Getenv("TLSDEBUG") == "short" {
+		var pcs [4]uintptr
+		frames := runtime.CallersFrames(pcs[0:runtime.Callers(3, pcs[:])])
+		for {
+			frame, more := frames.Next()
+			if frame.Function != "crypto/tls.(*halfConn).setErrorLocked" &&
+				frame.Function != "crypto/tls.(*Conn).sendAlertLocked" &&
+				frame.Function != "crypto/tls.(*Conn).sendAlert" {
+				file := frame.File[strings.LastIndex(frame.File, "/")+1:]
+				log.Printf("%s:%d (%s): %v", file, frame.Line, frame.Function, err)
+				return
+			}
+			if !more {
+				break
+			}
+		}
 	}
 }
