@@ -252,9 +252,9 @@ func (*certificateMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 func (*certificateMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &certificateMsg13{}
 	numCerts := rand.Intn(20)
-	m.certificates = make([][]byte, numCerts)
+	m.certificates = make([]certificateEntry, numCerts)
 	for i := 0; i < numCerts; i++ {
-		m.certificates[i] = randomBytes(rand.Intn(10)+1, rand)
+		m.certificates[i].data = randomBytes(rand.Intn(10)+1, rand)
 	}
 	m.requestContext = randomBytes(rand.Intn(5), rand)
 	return reflect.ValueOf(m)
