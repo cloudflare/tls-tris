@@ -24,6 +24,10 @@ import (
 	"golang_org/x/crypto/curve25519"
 )
 
+// numSessionTickets is the number of different session tickets the
+// server sends to a TLS 1.3 client, whom will use each only once.
+const numSessionTickets = 2
+
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
@@ -544,20 +548,22 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		maxEarlyDataLen:  c.config.Max0RTTDataSize,
 	}
 
-	ticket, err := c.encryptTicket(sessionState.marshal())
-	if err != nil {
-		c.sendAlert(alertInternalError)
-		return err
-	}
-	ticketMsg := &newSessionTicketMsg13{
-		lifetime:           24 * 3600, // TODO(filippo)
-		maxEarlyDataLength: c.config.Max0RTTDataSize,
-		withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
-		ageAdd:             sessionState.ageAdd,
-		ticket:             ticket,
-	}
-	if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
-		return err
+	for i := 0; i < numSessionTickets; i++ {
+		ticket, err := c.encryptTicket(sessionState.marshal())
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		ticketMsg := &newSessionTicketMsg13{
+			lifetime:           24 * 3600, // TODO(filippo)
+			maxEarlyDataLength: c.config.Max0RTTDataSize,
+			withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
+			ageAdd:             sessionState.ageAdd,
+			ticket:             ticket,
+		}
+		if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
+			return err
+		}
 	}
 
 	return nil
