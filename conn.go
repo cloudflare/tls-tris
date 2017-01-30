@@ -703,6 +703,7 @@ func (c *Conn) readRecord(want recordType) error {
 
 	// Process message.
 	b, c.rawInput = c.in.splitBlock(b, recordHeaderLen+n)
+	peekedAlert := peekAlert(b) // peek at a possible alert before decryption
 	ok, off, alertValue := c.in.decrypt(b)
 	switch {
 	case !ok && c.phase == discardingEarlyData:
@@ -713,8 +714,15 @@ func (c *Conn) readRecord(want recordType) error {
 	case ok && c.phase == discardingEarlyData:
 		c.phase = waitingClientFinished
 	case !ok:
+		c.in.traceErr, c.out.traceErr = nil, nil // not that interesting
 		c.in.freeBlock(b)
-		return c.in.setErrorLocked(c.sendAlert(alertValue))
+		err := c.sendAlert(alertValue)
+		// If decryption failed because the message is an unencrypted
+		// alert, return a more meaningful error message
+		if alertValue == alertBadRecordMAC && peekedAlert != nil {
+			err = peekedAlert
+		}
+		return c.in.setErrorLocked(err)
 	}
 	b.off = off
 	data := b.data[b.off:]
@@ -819,6 +827,19 @@ func (c *Conn) readRecord(want recordType) error {
 		c.in.freeBlock(b)
 	}
 	return c.in.err
+}
+
+// peekAlert looks at a message to spot an unencrypted alert. It must be
+// called before decryption to avoid a side channel, and its result must
+// only be used if decryption fails, to avoid false positives.
+func peekAlert(b *block) error {
+	if len(b.data) < 7 {
+		return nil
+	}
+	if recordType(b.data[0]) != recordTypeAlert {
+		return nil
+	}
+	return &net.OpError{Op: "remote error", Err: alert(b.data[6])}
 }
 
 // sendAlert sends a TLS alert message.
