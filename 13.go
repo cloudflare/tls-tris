@@ -17,6 +17,10 @@ import (
 	"golang_org/x/crypto/curve25519"
 )
 
+// numSessionTickets is the number of different session tickets the
+// server sends to a TLS 1.3 client, whom will use each only once.
+const numSessionTickets = 2
+
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
@@ -516,15 +520,9 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 	resumptionSecret := hkdfExpandLabel(hash, hs.masterSecret, handshakeCtx, "resumption master secret", hash.Size())
 
 	ageAddBuf := make([]byte, 4)
-	if _, err := io.ReadFull(c.config.rand(), ageAddBuf); err != nil {
-		c.sendAlert(alertInternalError)
-		return err
-	}
 	sessionState := &sessionState13{
-		vers:  c.vers,
-		suite: hs.suite.id,
-		ageAdd: uint32(ageAddBuf[0])<<24 | uint32(ageAddBuf[1])<<16 |
-			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3]),
+		vers:             c.vers,
+		suite:            hs.suite.id,
 		createdAt:        uint64(time.Now().Unix()),
 		resumptionSecret: resumptionSecret,
 		alpnProtocol:     c.clientProtocol,
@@ -532,20 +530,28 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		maxEarlyDataLen:  c.config.Max0RTTDataSize,
 	}
 
-	ticket, err := c.encryptTicket(sessionState.marshal())
-	if err != nil {
-		c.sendAlert(alertInternalError)
-		return err
-	}
-	ticketMsg := &newSessionTicketMsg13{
-		lifetime:           24 * 3600, // TODO(filippo)
-		maxEarlyDataLength: c.config.Max0RTTDataSize,
-		withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
-		ageAdd:             sessionState.ageAdd,
-		ticket:             ticket,
-	}
-	if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
-		return err
+	for i := 0; i < numSessionTickets; i++ {
+		if _, err := io.ReadFull(c.config.rand(), ageAddBuf); err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		sessionState.ageAdd = uint32(ageAddBuf[0])<<24 | uint32(ageAddBuf[1])<<16 |
+			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3])
+		ticket, err := c.encryptTicket(sessionState.marshal())
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		ticketMsg := &newSessionTicketMsg13{
+			lifetime:           24 * 3600, // TODO(filippo)
+			maxEarlyDataLength: c.config.Max0RTTDataSize,
+			withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
+			ageAdd:             sessionState.ageAdd,
+			ticket:             ticket,
+		}
+		if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {
+			return err
+		}
 	}
 
 	return nil
