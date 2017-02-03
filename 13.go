@@ -182,9 +182,18 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 func (hs *serverHandshakeState) sendCertificate13() error {
 	c := hs.c
 
-	certMsg := &certificateMsg13{
-		certificates: hs.cert.Certificate,
+	certEntries := []certificateEntry{}
+	for _, cert := range hs.cert.Certificate {
+		certEntries = append(certEntries, certificateEntry{data: cert})
 	}
+	if len(certEntries) > 0 && hs.clientHello.ocspStapling {
+		certEntries[0].ocspStaple = hs.cert.OCSPStaple
+	}
+	if len(certEntries) > 0 && hs.clientHello.scts {
+		certEntries[0].sctList = hs.cert.SignedCertificateTimestamps
+	}
+	certMsg := &certificateMsg13{certificates: certEntries}
+
 	hs.finishedHash13.Write(certMsg.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
 		return err
