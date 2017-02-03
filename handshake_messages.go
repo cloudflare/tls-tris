@@ -1410,7 +1410,7 @@ func (m *certificateMsg) unmarshal(data []byte) alert {
 type certificateEntry struct {
 	data       []byte
 	ocspStaple []byte
-	sctList    []byte
+	sctList    [][]byte
 }
 
 type certificateMsg13 struct {
@@ -1431,7 +1431,7 @@ func (m *certificateMsg13) equal(i interface{}) bool {
 	for i, _ := range m.certificates {
 		ok := bytes.Equal(m.certificates[i].data, m1.certificates[i].data)
 		ok = ok && bytes.Equal(m.certificates[i].ocspStaple, m1.certificates[i].ocspStaple)
-		ok = ok && bytes.Equal(m.certificates[i].sctList, m1.certificates[i].sctList)
+		ok = ok && eqByteSlices(m.certificates[i].sctList, m1.certificates[i].sctList)
 		if !ok {
 			return false
 		}
@@ -1453,7 +1453,10 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			i += 8 + len(cert.ocspStaple)
 		}
 		if cert.sctList != nil {
-			i += 4 + len(cert.sctList)
+			i += 4
+			for _, sct := range cert.sctList {
+				i += 2 + len(sct)
+			}
 		}
 	}
 
@@ -1485,7 +1488,7 @@ func (m *certificateMsg13) marshal() (x []byte) {
 		copy(z[3:], cert.data)
 		z = z[3+len(cert.data):]
 
-		temp := z[:2]
+		extLenPos := z[:2]
 		z = z[2:]
 
 		extensionLen := 0
@@ -1507,18 +1510,27 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			extensionLen += 8 + stapleLen
 		}
 		if cert.sctList != nil {
-			sctLen := len(cert.sctList)
 			z[0] = uint8(extensionSCT >> 8)
 			z[1] = uint8(extensionSCT)
-			z[2] = uint8(sctLen >> 8)
-			z[3] = uint8(sctLen)
-			copy(z[4:], cert.sctList)
-			z = z[4+sctLen:]
+			sctLenPos := z[2:4]
+			z = z[4:]
+			extensionLen += 4
 
-			extensionLen += 4 + sctLen
+			sctLen := 0
+			for _, sct := range cert.sctList {
+				z[0] = uint8(len(sct) >> 8)
+				z[1] = uint8(len(sct))
+				copy(z[2:], sct)
+				z = z[2+len(sct):]
+
+				extensionLen += 2 + len(sct)
+				sctLen += 2 + len(sct)
+			}
+			sctLenPos[0] = uint8(sctLen >> 8)
+			sctLenPos[1] = uint8(sctLen)
 		}
-		temp[0] = uint8(extensionLen >> 8)
-		temp[1] = uint8(extensionLen)
+		extLenPos[0] = uint8(extensionLen >> 8)
+		extLenPos[1] = uint8(extensionLen)
 	}
 
 	m.raw = x
@@ -1603,7 +1615,17 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 				m.certificates[i].ocspStaple = body[4:]
 
 			case extensionSCT:
-				m.certificates[i].sctList = body
+				for len(body) > 0 {
+					if len(body) < 2 {
+						return alertDecodeError
+					}
+					sctLen := int(body[0]<<8) | int(body[1])
+					if len(body) < 2+sctLen {
+						return alertDecodeError
+					}
+					m.certificates[i].sctList = append(m.certificates[i].sctList, body[2:2+sctLen])
+					body = body[2+sctLen:]
+				}
 			}
 		}
 	}

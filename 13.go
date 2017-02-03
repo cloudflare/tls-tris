@@ -204,6 +204,9 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	if len(certEntries) > 0 && hs.clientHello.ocspStapling {
 		certEntries[0].ocspStaple = hs.cert.OCSPStaple
 	}
+	if len(certEntries) > 0 && hs.clientHello.scts {
+		certEntries[0].sctList = hs.cert.SignedCertificateTimestamps
+	}
 	certMsg := &certificateMsg13{certificates: certEntries}
 
 	hs.finishedHash13.Write(certMsg.marshal())

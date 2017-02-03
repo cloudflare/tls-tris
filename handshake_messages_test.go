@@ -255,6 +255,14 @@ func (*certificateMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 	m.certificates = make([]certificateEntry, numCerts)
 	for i := 0; i < numCerts; i++ {
 		m.certificates[i].data = randomBytes(rand.Intn(10)+1, rand)
+		if rand.Intn(2) == 1 {
+			m.certificates[i].ocspStaple = randomBytes(rand.Intn(10)+1, rand)
+		}
+
+		numScts := rand.Intn(3)
+		for j := 0; j < numScts; j++ {
+			m.certificates[i].sctList = append(m.certificates[i].sctList, randomBytes(rand.Intn(10)+1, rand))
+		}
 	}
 	m.requestContext = randomBytes(rand.Intn(5), rand)
 	return reflect.ValueOf(m)
