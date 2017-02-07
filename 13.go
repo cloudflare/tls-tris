@@ -53,6 +53,12 @@ CurvePreferenceLoop:
 		return errors.New("tls: HelloRetryRequest not implemented") // TODO(filippo)
 	}
 
+	if committer, ok := c.conn.(Committer); ok {
+		if err := committer.Commit(); err != nil {
+			return err
+		}
+	}
+
 	privateKey, serverKS, err := config.generateKeyShare(ks.group)
 	if err != nil {
 		c.sendAlert(alertInternalError)
