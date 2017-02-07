@@ -160,6 +160,7 @@ func (hs *serverHandshakeState) readClientHello() (isResume bool, err error) {
 
 	if c.config.GetConfigForClient != nil {
 		if newConfig, err := c.config.GetConfigForClient(hs.clientHelloInfo()); err != nil {
+			c.out.traceErr, c.in.traceErr = nil, nil // disable tracing
 			c.sendAlert(alertInternalError)
 			return false, err
 		} else if newConfig != nil {
@@ -291,19 +292,11 @@ Curves:
 
 	hs.cert, err = c.config.getCertificate(hs.clientHelloInfo())
 	if err != nil {
-		c.out.traceErr, c.in.traceErr = nil, nil // disable tracing
 		c.sendAlert(alertInternalError)
 		return false, err
 	}
-	if hs.clientHello.scts && hs.hello != nil { // TODO: TLS 1.3 SCTs
+	if hs.clientHello.scts && hs.hello != nil {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
-	}
-
-	if committer, ok := c.conn.(Committer); ok { // TODO: probably committing too early
-		err = committer.Commit()
-		if err != nil {
-			return false, err
-		}
 	}
 
 	if priv, ok := hs.cert.PrivateKey.(crypto.Signer); ok {
