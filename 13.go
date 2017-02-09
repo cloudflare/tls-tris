@@ -523,6 +523,7 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, alert alert) {
 				return nil, alertIllegalParameter
 			}
 			if hs.c.config.Accept0RTTData {
+				hs.c.binder = expectedBinder
 				hs.c.ticketMaxEarlyData = int64(s.maxEarlyDataLen)
 				hs.hello13Enc.earlyData = true
 			}
