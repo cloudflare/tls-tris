@@ -116,6 +116,10 @@ type Conn struct {
 	// to ever buffer it. in.Mutex.
 	earlyDataBytes int64
 
+	// binder is the value of the PSK binder that was validated to
+	// accept the 0-RTT data. Exposed as ConnectionState.Unique0RTTToken.
+	binder []byte
+
 	tmp [16]byte
 }
 
@@ -1591,6 +1595,9 @@ func (c *Conn) ConnectionState() ConnectionState {
 		state.SignedCertificateTimestamps = c.scts
 		state.OCSPResponse = c.ocspResponse
 		state.HandshakeConfirmed = atomic.LoadInt32(&c.handshakeConfirmed) == 1
+		if !state.HandshakeConfirmed {
+			state.Unique0RTTToken = c.binder
+		}
 		if !c.didResume {
 			if c.clientFinishedIsFirst {
 				state.TLSUnique = c.clientFinished[:]

@@ -218,6 +218,11 @@ type ConnectionState struct {
 	// (past and future) is guaranteed not to be replayed.
 	HandshakeConfirmed bool
 
+	// Unique0RTTToken is a value that never repeats, and can be used
+	// to detect replay attacks against 0-RTT connections.
+	// Unique0RTTToken is only present if HandshakeConfirmed is false.
+	Unique0RTTToken []byte
+
 	ClientHello []byte // ClientHello packet
 }
 
