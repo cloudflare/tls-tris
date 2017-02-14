@@ -12,7 +12,7 @@ ADD https://mkcert.org/generate/ /etc/ssl/certs/ca-certificates.crt
 EXPOSE 80
 EXPOSE 443
 
-ENV TLSDEBUG error
+ENV TLSDEBUG short
 ENV HOME /root/
 
 CMD [ "/caddy" ]

@@ -9,7 +9,7 @@
 
 crypto/tls, now with 100% more 1.3.
 
-DO NOT USE THIS FOR THE SAKE OF EVERYTHING THAT'S GOOD AND JUST.
+THE API IS NOT STABLE AND DOCUMENTATION IS NOT GUARANTEED.
 
 [![Build Status](https://travis-ci.org/cloudflare/tls-tris.svg?branch=master)](https://travis-ci.org/cloudflare/tls-tris)
 
@@ -23,7 +23,7 @@ So, to build with tls-tris, you need to use a custom GOROOT.
 A script is provided that will take care of it for you: `./_dev/go.sh`.
 Just use that instead of the `go` tool.
 
-The script also transparently fetches the custom Cloudflare Go compiler with the required backports.
+The script also transparently fetches the custom Cloudflare Go 1.8rc3 compiler with the required backports.
 
 ```
 ./_dev/go.sh build ./_dev/tris-localserver
@@ -32,7 +32,7 @@ TLSDEBUG=error ./tris-localserver 127.0.0.1:4443
 
 ## Debugging
 
-When the environment variable `TLSDEBUG` is set to `error`, Tris will print a hexdump of the Client Hello and a stack trace if an handshake error occurs.
+When the environment variable `TLSDEBUG` is set to `error`, Tris will print a hexdump of the Client Hello and a stack trace if an handshake error occurs. If the value is `short`, only the error and the first meaningful stack frame are printed.
 
 ## Building Caddy
 
@@ -42,13 +42,7 @@ When the environment variable `TLSDEBUG` is set to `error`, Tris will print a he
 
 *Note: to get Caddy to use TLS 1.3 you'll have to apply the patch at `_dev/caddy/caddy.patch`.*
 
-## Testing with Firefox
-
-1. Download the latest Firefox Nightly
-1. Navigate to about:config and set `security.tls.version.max` to `4`
-1. Connect to https://tris.filippo.io/ or tris-localserver
-
-## Testing with BoringSSL/BoGo/NSS/Mint
+## Testing with BoringSSL/NSS/Mint/...
 
 ```
 ./_dev/tris-localserver/start.sh --rm
@@ -57,11 +51,6 @@ When the environment variable `TLSDEBUG` is set to `error`, Tris will print a he
 ```
 docker build -t tls-tris:boring _dev/boring
 docker run -i --rm tls-tris:boring $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
-```
-
-```
-docker build -t tls-tris:bogo _dev/bogo
-docker run -i --rm tls-tris:bogo $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
 ```
 
 ```
