@@ -1449,10 +1449,10 @@ func (m *certificateMsg13) marshal() (x []byte) {
 	var i int
 	for _, cert := range m.certificates {
 		i += len(cert.data)
-		if cert.ocspStaple != nil {
+		if len(cert.ocspStaple) != 0 {
 			i += 8 + len(cert.ocspStaple)
 		}
-		if cert.sctList != nil {
+		if len(cert.sctList) != 0 {
 			i += 4
 			for _, sct := range cert.sctList {
 				i += 2 + len(sct)
@@ -1492,7 +1492,7 @@ func (m *certificateMsg13) marshal() (x []byte) {
 		z = z[2:]
 
 		extensionLen := 0
-		if cert.ocspStaple != nil {
+		if len(cert.ocspStaple) != 0 {
 			stapleLen := 4 + len(cert.ocspStaple)
 			z[0] = uint8(extensionStatusRequest >> 8)
 			z[1] = uint8(extensionStatusRequest)
@@ -1509,7 +1509,7 @@ func (m *certificateMsg13) marshal() (x []byte) {
 
 			extensionLen += 8 + stapleLen
 		}
-		if cert.sctList != nil {
+		if len(cert.sctList) != 0 {
 			z[0] = uint8(extensionSCT >> 8)
 			z[1] = uint8(extensionSCT)
 			sctLenPos := z[2:4]
