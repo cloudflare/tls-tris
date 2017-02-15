@@ -1423,7 +1423,7 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			i += 8 + len(cert.ocspStaple)
 		}
 		if len(cert.sctList) != 0 {
-			i += 4
+			i += 6
 			for _, sct := range cert.sctList {
 				i += 2 + len(sct)
 			}
@@ -1482,11 +1482,11 @@ func (m *certificateMsg13) marshal() (x []byte) {
 		if len(cert.sctList) != 0 {
 			z[0] = uint8(extensionSCT >> 8)
 			z[1] = uint8(extensionSCT)
-			sctLenPos := z[2:4]
-			z = z[4:]
-			extensionLen += 4
+			sctLenPos := z[2:6]
+			z = z[6:]
+			extensionLen += 6
 
-			sctLen := 0
+			sctLen := 2
 			for _, sct := range cert.sctList {
 				z[0] = uint8(len(sct) >> 8)
 				z[1] = uint8(len(sct))
@@ -1498,6 +1498,9 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			}
 			sctLenPos[0] = uint8(sctLen >> 8)
 			sctLenPos[1] = uint8(sctLen)
+			sctLen -= 2
+			sctLenPos[2] = uint8(sctLen >> 8)
+			sctLenPos[3] = uint8(sctLen)
 		}
 		extLenPos[0] = uint8(extensionLen >> 8)
 		extLenPos[1] = uint8(extensionLen)
@@ -1585,6 +1588,14 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 				m.certificates[i].ocspStaple = body[4:]
 
 			case extensionSCT:
+				if len(body) < 2 {
+					return alertDecodeError
+				}
+				listLen := int(body[0]<<8) | int(body[1])
+				body = body[2:]
+				if len(body) != listLen {
+					return alertDecodeError
+				}
 				for len(body) > 0 {
 					if len(body) < 2 {
 						return alertDecodeError
