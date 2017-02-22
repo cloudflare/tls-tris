@@ -600,6 +600,9 @@ func TestClone(t *testing.T) {
 		case "KeyLogWriter":
 			f.Set(reflect.ValueOf(io.Writer(os.Stdout)))
 			continue
+		case "SessionTicketSealer":
+			// TODO
+			continue
 
 		}
 
