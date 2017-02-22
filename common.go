@@ -593,6 +593,10 @@ type Config struct {
 	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2.3.
 	Accept0RTTData bool
 
+	// SessionTicketSealer, if not nil, is used to wrap and unwrap
+	// session tickets, instead of SessionTicketKey.
+	SessionTicketSealer SessionTicketSealer
+
 	// Allow short headers (experimental, and only applies to server).
 	AllowShortHeaders bool
 
@@ -677,13 +681,14 @@ func (c *Config) Clone() *Config {
 		Accept0RTTData:              c.Accept0RTTData,
 		Max0RTTDataSize:             c.Max0RTTDataSize,
 		AllowShortHeaders:           c.AllowShortHeaders,
+		SessionTicketSealer:         c.SessionTicketSealer,
 		sessionTicketKeys:           sessionTicketKeys,
 		// originalConfig is deliberately not duplicated.
 	}
 }
 
 func (c *Config) serverInit() {
-	if c.SessionTicketsDisabled || len(c.ticketKeys()) != 0 {
+	if c.SessionTicketsDisabled || len(c.ticketKeys()) != 0 || c.SessionTicketSealer != nil {
 		return
 	}
 
