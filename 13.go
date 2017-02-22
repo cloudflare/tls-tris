@@ -191,7 +191,7 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	// happens, even if the Read call might do more work.
 	c.confirmMutex.Unlock()
 
-	return hs.sendSessionTicket13()
+	return hs.sendSessionTicket13() // TODO: do in a goroutine
 }
 
 func (hs *serverHandshakeState) sendCertificate13() error {
@@ -460,12 +460,20 @@ func (hs *serverHandshakeState) checkPSK() (earlySecret []byte, alert alert) {
 	hashSize := hash.Size()
 	for i := range hs.clientHello.psks {
 		sessionTicket := append([]uint8{}, hs.clientHello.psks[i].identity...)
-		serializedTicket, _ := hs.c.decryptTicket(sessionTicket)
-		if serializedTicket == nil {
-			continue
+		if hs.c.config.SessionTicketSealer != nil {
+			var ok bool
+			sessionTicket, ok = hs.c.config.SessionTicketSealer.Unseal(hs.clientHelloInfo(), sessionTicket)
+			if !ok {
+				continue
+			}
+		} else {
+			sessionTicket, _ = hs.c.decryptTicket(sessionTicket)
+			if sessionTicket == nil {
+				continue
+			}
 		}
 		s := &sessionState13{}
-		if s.unmarshal(serializedTicket) != alertSuccess {
+		if s.unmarshal(sessionTicket) != alertSuccess {
 			continue
 		}
 		if s.vers != hs.c.vers {
@@ -565,10 +573,20 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 	}
 
 	for i := 0; i < numSessionTickets; i++ {
-		ticket, err := c.encryptTicket(sessionState.marshal())
+		ticket := sessionState.marshal()
+		var err error
+		if c.config.SessionTicketSealer != nil {
+			cs := c.ConnectionState()
+			ticket, err = c.config.SessionTicketSealer.Seal(&cs, ticket)
+		} else {
+			ticket, err = c.encryptTicket(ticket)
+		}
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
+		}
+		if ticket == nil {
+			continue
 		}
 		ticketMsg := &newSessionTicketMsg13{
 			lifetime:           24 * 3600, // TODO(filippo)

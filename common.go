@@ -592,6 +592,10 @@ type Config struct {
 	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2.3.
 	Accept0RTTData bool
 
+	// SessionTicketSealer, if not nil, is used to wrap and unwrap
+	// session tickets, instead of SessionTicketKey.
+	SessionTicketSealer SessionTicketSealer
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys.
@@ -668,6 +672,7 @@ func (c *Config) Clone() *Config {
 		KeyLogWriter:                c.KeyLogWriter,
 		Accept0RTTData:              c.Accept0RTTData,
 		Max0RTTDataSize:             c.Max0RTTDataSize,
+		SessionTicketSealer:         c.SessionTicketSealer,
 		sessionTicketKeys:           sessionTicketKeys,
 	}
 }
@@ -676,7 +681,7 @@ func (c *Config) Clone() *Config {
 // returned by a GetConfigForClient callback then the argument should be the
 // Config that was passed to Server, otherwise it should be nil.
 func (c *Config) serverInit(originalConfig *Config) {
-	if c.SessionTicketsDisabled || len(c.ticketKeys()) != 0 {
+	if c.SessionTicketsDisabled || len(c.ticketKeys()) != 0 || c.SessionTicketSealer != nil {
 		return
 	}
 

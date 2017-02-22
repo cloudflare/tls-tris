@@ -656,6 +656,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			f.Set(reflect.ValueOf(RenegotiateOnceAsClient))
 		case "Max0RTTDataSize":
 			f.Set(reflect.ValueOf(uint32(0)))
+		case "SessionTicketSealer":
+			// TODO
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)
 		}
