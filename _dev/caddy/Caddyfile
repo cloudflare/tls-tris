@@ -1,12 +1,13 @@
 tris.filippo.io {
 	tls bip@filippo.io
-	gzip
 	log stdout
 	proxy / https://blog.filippo.io
 }
 
-cf.tris.filippo.io {
+echo.filippo.io {
 	tls bip@filippo.io
 	log stdout
-	proxy / https://blog.cloudflare.com
+	proxy / http://{$ECHO_PORT_80_TCP_ADDR}:{$ECHO_PORT_80_TCP_PORT} {
+		transparent
+	}
 }
