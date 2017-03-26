@@ -86,7 +86,12 @@ NextCipherSuite:
 			// Don't advertise TLS 1.2-only cipher suites unless
 			// we're attempting TLS 1.2.
 			if hello.vers < VersionTLS12 && suite.flags&suiteTLS12 != 0 {
-				continue
+				continue NextCipherSuite
+			}
+			// Don't advertise TLS 1.3-only cipher suites unless
+			// we're attempting TLS 1.3.
+			if hello.vers < VersionTLS13 && suite.flags&suiteTLS13 != 0 {
+				continue NextCipherSuite
 			}
 			hello.cipherSuites = append(hello.cipherSuites, suiteId)
 			continue NextCipherSuite
