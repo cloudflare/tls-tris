@@ -856,7 +856,10 @@ func (hs *serverHandshakeState) setCipherSuite(id uint16, supportedCipherSuites 
 				continue
 			}
 
-			if version >= VersionTLS13 && candidate.flags&suiteTLS13 != 0 {
+			if version >= VersionTLS13 {
+				if candidate.flags&suiteTLS13 == 0 {
+					continue
+				}
 				hs.suite = candidate
 				return true
 			}
