@@ -83,7 +83,7 @@ func main() {
 	})
 
 	http.HandleFunc("/ch", func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "Client Hello packet (%d bytes):\n%s", len(r.TLS.ClientHello), hex.Dump(r.TLS.ClientHello))
 	})
 
