@@ -171,7 +171,12 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	if rand.Intn(10) > 5 {
 		m.earlyData = true
 	}
-
+	if rand.Intn(10) > 5 {
+		m.delegatedCredential = true
+	}
+	if rand.Intn(10) > 5 {
+		m.extendedMSSupported = true
+	}
 	return reflect.ValueOf(m)
 }
 
@@ -198,6 +203,9 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	}
 	if rand.Intn(10) > 5 {
 		m.ticketSupported = true
+	}
+	if rand.Intn(10) > 5 {
+		m.extendedMSSupported = true
 	}
 	m.alpnProtocol = randomString(rand.Intn(32)+1, rand)
 
@@ -344,6 +352,9 @@ func (*sessionState) Generate(rand *rand.Rand, size int) reflect.Value {
 	s.vers = uint16(rand.Intn(10000))
 	s.cipherSuite = uint16(rand.Intn(10000))
 	s.masterSecret = randomBytes(rand.Intn(100), rand)
+	if rand.Intn(10) > 5 {
+		s.usedEMS = true
+	}
 	numCerts := rand.Intn(20)
 	s.certificates = make([][]byte, numCerts)
 	for i := 0; i < numCerts; i++ {

@@ -715,6 +715,8 @@ func TestCloneNonFuncFields(t *testing.T) {
 			// TODO
 		case "AcceptDelegatedCredential":
 			f.Set(reflect.ValueOf(false))
+		case "UseExtendedMasterSecret":
+			f.Set(reflect.ValueOf(false))
 		default:
 			t.Errorf("all fields must be accounted for, but saw unknown field %q", fn)
 		}

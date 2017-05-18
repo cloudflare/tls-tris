@@ -92,6 +92,7 @@ func result() {
 	}
 }
 
+// Usage client args host:port
 func main() {
 	var keylog_file string
 	var enable_rsa, enable_ecdsa, client_auth bool
