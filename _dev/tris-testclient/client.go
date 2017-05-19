@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 )
 
@@ -33,6 +37,23 @@ func main() {
 		fmt.Println("Error %s", err)
 		os.Exit(1)
 	}
+	var req http.Request
+	var response *http.Response
+	req.Method = "GET"
+	req.URL,err = url.Parse("https://"+addr + "/")
+	if err !=nil {
+		fmt.Println("Failed to parse url");
+		os.Exit(1)
+	}
+	req.Write(conn)
+	reader := bufio.NewReader(conn)
+	response, err = http.ReadResponse(reader, nil)
+	if err != nil{
+		fmt.Println("HTTP problem");
+		fmt.Println(err);
+		os.Exit(1)
+	}
+	io.Copy(os.Stdout, response.Body)
 	conn.Close()
 	os.Exit(0)
 }

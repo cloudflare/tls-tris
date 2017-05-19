@@ -5,7 +5,7 @@
 package tls
 
 import "bytes"
-import "fmt"
+
 
 type clientHelloMsg struct {
 	raw                          []byte
