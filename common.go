@@ -687,6 +687,7 @@ func (c *Config) Clone() *Config {
 		AllowShortHeaders:           c.AllowShortHeaders,
 		SessionTicketSealer:         c.SessionTicketSealer,
 		sessionTicketKeys:           sessionTicketKeys,
+		DisableExtendedMasterSecret: c.DisableExtendedMasterSecret,
 		// originalConfig is deliberately not duplicated.
 	}
 }

@@ -30,7 +30,7 @@ func main() {
 	addr = flag.Arg(0)
 	conn, err := tls.Dial("tcp", addr, &config)
 	if err != nil {
-		fmt.Print("Error %s", err)
+		fmt.Println("Error %s", err)
 		os.Exit(1)
 	}
 	conn.Close()
