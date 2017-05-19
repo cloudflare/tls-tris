@@ -444,6 +444,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 	hs.hello.ticketSupported = hs.clientHello.ticketSupported && !c.config.SessionTicketsDisabled
 	hs.hello.cipherSuite = hs.suite.id
+	hs.hello.extendedMSsupported = hs.clientHello.extendedMSsupported && !c.config.DisableExtendedMasterSecret
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)
 	if c.config.ClientAuth == NoClientCert {

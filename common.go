@@ -82,8 +82,8 @@ const (
 	extensionSupportedPoints     uint16 = 11
 	extensionSignatureAlgorithms uint16 = 13
 	extensionALPN                uint16 = 16
-	extensionEMS                 uint16 = 17
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
+	extensionEMS                 uint16 = 23
 	extensionSessionTicket       uint16 = 35
 	extensionKeyShare            uint16 = 40
 	extensionPreSharedKey        uint16 = 41
