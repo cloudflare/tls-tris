@@ -469,7 +469,8 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 	}
 
-		hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random)
+	c.useEMS = hs.serverHello.extendedMSsupported
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, hs.serverHello.extendedMSsupported)
 
 	if err := c.config.writeKeyLog(hs.hello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
