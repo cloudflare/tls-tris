@@ -149,7 +149,7 @@ func masterFromPreMasterSecret(version uint16, suite *cipherSuite, preMasterSecr
 		seed := make([]byte, 0, len(clientRandom)+len(serverRandom))
 		seed = append(seed, clientRandom...)
 		seed = append(seed, serverRandom...)
-		
+
 		masterSecret := make([]byte, masterSecretLength)
 		prfForVersion(version, suite)(masterSecret, preMasterSecret, masterSecretLabel, seed)
 		return masterSecret
