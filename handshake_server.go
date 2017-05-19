@@ -416,6 +416,7 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 	// that we're doing a resumption.
 	hs.hello.sessionId = hs.clientHello.sessionId
 	hs.hello.ticketSupported = hs.sessionState.usedOldKey
+	hs.hello.extendedMSsupported = hs.clientHello.extendedMSsupported && !c.config.DisableExtendedMasterSecret
 	hs.finishedHash = newFinishedHash(c.vers, hs.suite)
 	hs.finishedHash.discardHandshakeBuffer()
 	hs.finishedHash.Write(hs.clientHello.marshal())
