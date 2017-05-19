@@ -82,6 +82,7 @@ const (
 	extensionSupportedPoints     uint16 = 11
 	extensionSignatureAlgorithms uint16 = 13
 	extensionALPN                uint16 = 16
+	extensionEMS                 uint16 = 17
 	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
 	extensionSessionTicket       uint16 = 35
 	extensionKeyShare            uint16 = 40
@@ -599,6 +600,9 @@ type Config struct {
 
 	// Allow short headers (experimental, and only applies to server).
 	AllowShortHeaders bool
+
+	//If true disables use of the Extended Master Secret extension
+	DisableExtendedMasterSecret bool
 
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 

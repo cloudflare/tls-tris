@@ -18,12 +18,15 @@ var tlsVersionToName = map[string]uint16{
 func main() {
 	var version string
 	var addr string
+	var enableEMS bool
 	var config tls.Config
 	flag.StringVar(&version, "version", "tls12", "Version of TLS to use")
+	flag.BoolVar(&enableEMS, "m", false, "Enable EMS")
 	flag.Parse()
 	config.MinVersion = tlsVersionToName[version]
 	config.MaxVersion = tlsVersionToName[version]
 	config.InsecureSkipVerify = true
+	config.DisableExtendedMasterSecret = !enableEMS
 	addr = flag.Arg(0)
 	conn, err := tls.Dial("tcp", addr, &config)
 	if err != nil {

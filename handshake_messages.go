@@ -32,6 +32,7 @@ type clientHelloMsg struct {
 	pskKeyExchangeModes          []uint8
 	earlyData                    bool
 	shortHeaders                 bool
+	extendedMSsupported          bool
 }
 
 func (m *clientHelloMsg) equal(i interface{}) bool {
@@ -61,6 +62,7 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		eqKeyShares(m.keyShares, m1.keyShares) &&
 		eqUint16s(m.supportedVersions, m1.supportedVersions) &&
 		m.earlyData == m1.earlyData &&
+		m.extendedMSsupported == m1.extendedMSsupported &&
 		m.shortHeaders == m1.shortHeaders
 }
 
@@ -126,6 +128,9 @@ func (m *clientHelloMsg) marshal() []byte {
 	}
 	if len(m.supportedVersions) > 0 {
 		extensionsLength += 1 + 2*len(m.supportedVersions)
+		numExtensions++
+	}
+	if m.extendedMSsupported {
 		numExtensions++
 	}
 	if m.earlyData {
@@ -362,6 +367,13 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[1] = byte(extensionEarlyData)
 		z = z[4:]
 	}
+
+	if m.extendedMSsupported {
+		z[0] = byte(extensionEMS >> 8)
+		z[1] = byte(extensionEMS & 0xff)
+		z = z[4:]
+	}
+
 	if m.shortHeaders {
 		z[0] = byte(extensionShortHeaders >> 8)
 		z[1] = byte(extensionShortHeaders & 0xff)
@@ -432,7 +444,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 	m.pskKeyExchangeModes = nil
 	m.earlyData = false
 	m.shortHeaders = false
-
+	m.extendedMSsupported = false
 	if len(data) == 0 {
 		// ClientHello is optionally followed by extension data
 		return alertSuccess
@@ -699,8 +711,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			if length != 0 {
 				return alertDecodeError
 			}
+		case extensionEMS:
+			m.extendedMSsupported = true
 		}
-
 		data = data[length:]
 		bindersOffset += length
 	}
@@ -722,6 +735,7 @@ type serverHelloMsg struct {
 	ticketSupported              bool
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
+	extendedMSsupported          bool
 	alpnProtocol                 string
 }
 
@@ -752,6 +766,7 @@ func (m *serverHelloMsg) equal(i interface{}) bool {
 		m.ticketSupported == m1.ticketSupported &&
 		m.secureRenegotiationSupported == m1.secureRenegotiationSupported &&
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
+		m.extendedMSsupported == m1.extendedMSsupported &&
 		m.alpnProtocol == m1.alpnProtocol
 }
 
@@ -781,6 +796,9 @@ func (m *serverHelloMsg) marshal() []byte {
 	}
 	if m.secureRenegotiationSupported {
 		extensionsLength += 1 + len(m.secureRenegotiation)
+		numExtensions++
+	}
+	if m.extendedMSsupported {
 		numExtensions++
 	}
 	if alpnLen := len(m.alpnProtocol); alpnLen > 0 {
@@ -862,6 +880,11 @@ func (m *serverHelloMsg) marshal() []byte {
 		copy(z, m.secureRenegotiation)
 		z = z[len(m.secureRenegotiation):]
 	}
+	if m.extendedMSsupported {
+		z[0] = byte(extensionEMS >> 8)
+		z[1] = byte(extensionEMS & 0xff)
+		z = z[4:]
+	}
 	if alpnLen := len(m.alpnProtocol); alpnLen > 0 {
 		z[0] = byte(extensionALPN >> 8)
 		z[1] = byte(extensionALPN & 0xff)
@@ -924,6 +947,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	m.ocspStapling = false
 	m.scts = nil
 	m.ticketSupported = false
+	m.extendedMSsupported = false
 	m.alpnProtocol = ""
 
 	if len(data) == 0 {
@@ -987,6 +1011,8 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 
 			m.secureRenegotiation = d
 			m.secureRenegotiationSupported = true
+		case extensionEMS:
+			m.extendedMSsupported = true
 		case extensionALPN:
 			d := data[:length]
 			if len(d) < 3 {
