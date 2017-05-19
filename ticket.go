@@ -83,7 +83,11 @@ func (s *sessionState) marshal() []byte {
 	x[1] = byte(s.vers)
 	x[2] = byte(s.cipherSuite >> 8)
 	x[3] = byte(s.cipherSuite)
-	x[4] = byte(s.usedEMS)
+	if s.usedEMS {
+		x[4]=1
+	} else {
+		x[4]=0
+	}
 	x[5] = byte(len(s.masterSecret) >> 8)
 	x[6] = byte(len(s.masterSecret))
 	x = x[7:]
@@ -113,7 +117,7 @@ func (s *sessionState) unmarshal(data []byte) alert {
 
 	s.vers = uint16(data[0])<<8 | uint16(data[1])
 	s.cipherSuite = uint16(data[2])<<8 | uint16(data[3])
-	s.usedEMS = bool(data[4])
+	s.usedEMS = (data[4]==1)
 	masterSecretLen := int(data[5])<<8 | int(data[6])
 	data = data[7:]
 	if len(data) < masterSecretLen {
