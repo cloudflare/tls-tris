@@ -67,7 +67,7 @@ func main() {
 		}
 		io.Copy(os.Stdout, response.Body)
 		conn.Close()
-		if resume && iters==1 {
+		if resume && iters==2 {
 			fmt.Println("Attempting resumption")
 		}
 	}
