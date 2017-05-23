@@ -121,6 +121,7 @@ var keyExpansionLabel = []byte("key expansion")
 var clientFinishedLabel = []byte("client finished")
 var serverFinishedLabel = []byte("server finished")
 var extendedMasterSecretLabel = []byte("extended master secret")
+
 func prfAndHashForVersion(version uint16, suite *cipherSuite) (func(result, secret, label, seed []byte), crypto.Hash) {
 	switch version {
 	case VersionSSL30:

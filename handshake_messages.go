@@ -6,7 +6,6 @@ package tls
 
 import "bytes"
 
-
 type clientHelloMsg struct {
 	raw                          []byte
 	rawTruncated                 []byte // for PSK binding

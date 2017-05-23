@@ -380,15 +380,15 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 	}
 
 	//Cannot resume session negotiated with EMS extension if no longer advertised
-	if !c.config.DisableExtendedMasterSecret && ! hs.sessionState.usedEMS {
+	if !c.config.DisableExtendedMasterSecret && !hs.sessionState.usedEMS {
 		return false
 	}
 
 	//Upgrade if client now supports EMS
-	if hs.clientHello.extendedMSsupported && ! hs.sessionState.usedEMS {
+	if hs.clientHello.extendedMSsupported && !hs.sessionState.usedEMS {
 		return false
 	}
-	
+
 	cipherSuiteOk := false
 	// Check that the client is still offering the ciphersuite in the session.
 	for _, id := range hs.clientHello.cipherSuites {
@@ -443,7 +443,7 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 
 	hs.masterSecret = hs.sessionState.masterSecret
 	c.useEMS = hs.sessionState.usedEMS
-	
+
 	return nil
 }
 
