@@ -15,7 +15,7 @@ import (
 	"io"
 )
 
-// A SessionTicketSealer provides a way to securely incapsulate
+// A SessionTicketSealer provides a way to securely encapsulate
 // session state for storage on the client. All methods are safe for
 // concurrent use.
 type SessionTicketSealer interface {

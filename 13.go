@@ -25,7 +25,7 @@ import (
 )
 
 // numSessionTickets is the number of different session tickets the
-// server sends to a TLS 1.3 client, whom will use each only once.
+// server sends to a TLS 1.3 client, who will use each only once.
 const numSessionTickets = 2
 
 func (hs *serverHandshakeState) doTLS13Handshake() error {
@@ -270,7 +270,7 @@ func (c *Conn) handleEndOfEarlyData() {
 }
 
 // selectTLS13SignatureScheme chooses the SignatureScheme for the CertificateVerify
-// based on the certificate type and client supported schemes. If not overlap is found,
+// based on the certificate type and client supported schemes. If no overlap is found,
 // a fallback is selected.
 //
 // See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.4.1.2
