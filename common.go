@@ -807,7 +807,7 @@ func (c *Config) curvePreferences() []CurveID {
 }
 
 // mutualVersion returns the protocol version to use given the advertised
-// version of the peer using the legacy non-extension methos.
+// version of the peer using the legacy non-extension methods.
 func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
 	minVersion := c.minVersion()
 	maxVersion := c.maxVersion()
@@ -826,7 +826,7 @@ func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
 	return vers, true
 }
 
-// pickVersion returns the protocol version to use given the addvertised
+// pickVersion returns the protocol version to use given the advertised
 // versions of the peer using the Supported Versions extension.
 func (c *Config) pickVersion(supportedVersions []uint16) (uint16, bool) {
 	minVersion := c.minVersion()

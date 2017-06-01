@@ -4,7 +4,8 @@
 
 package tls
 
-// Mostly derived from golang.org/x/crypto/hkdf, but with a exposed Extract API.
+// Mostly derived from golang.org/x/crypto/hkdf, but with an exposed
+// Extract API.
 //
 // HKDF is a cryptographic key derivation function (KDF) with the goal of
 // expanding limited input keying material into one or more cryptographically
