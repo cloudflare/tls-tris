@@ -25,7 +25,7 @@ import (
 )
 
 // numSessionTickets is the number of different session tickets the
-// server sends to a TLS 1.3 client, whom will use each only once.
+// server sends to a TLS 1.3 client, who will use each only once.
 const numSessionTickets = 2
 
 func (hs *serverHandshakeState) doTLS13Handshake() error {
