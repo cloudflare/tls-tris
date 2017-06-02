@@ -43,7 +43,7 @@ func main() {
 		iters = 1
 	}
 	addr = flag.Arg(0)
-	for ;iters>0; iters-- {
+	for ; iters > 0; iters-- {
 		conn, err := tls.Dial("tcp", addr, &config)
 		if err != nil {
 			fmt.Println("Error %s", err)
@@ -52,22 +52,22 @@ func main() {
 		var req http.Request
 		var response *http.Response
 		req.Method = "GET"
-		req.URL,err = url.Parse("https://"+addr + "/")
-		if err !=nil {
-			fmt.Println("Failed to parse url");
+		req.URL, err = url.Parse("https://" + addr + "/")
+		if err != nil {
+			fmt.Println("Failed to parse url")
 			os.Exit(1)
 		}
 		req.Write(conn)
 		reader := bufio.NewReader(conn)
 		response, err = http.ReadResponse(reader, nil)
-		if err != nil{
-			fmt.Println("HTTP problem");
-			fmt.Println(err);
+		if err != nil {
+			fmt.Println("HTTP problem")
+			fmt.Println(err)
 			os.Exit(1)
 		}
 		io.Copy(os.Stdout, response.Body)
 		conn.Close()
-		if resume && iters==2 {
+		if resume && iters == 2 {
 			fmt.Println("Attempting resumption")
 		}
 	}
