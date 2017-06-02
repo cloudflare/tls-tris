@@ -380,15 +380,15 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 	}
 
 	//Cannot resume session negotiated with EMS extension if no longer advertised
-	if !c.config.DisableExtendedMasterSecret && ! hs.sessionState.usedEMS {
+	if !c.config.DisableExtendedMasterSecret && !hs.sessionState.usedEMS {
 		return false
 	}
 
 	//Upgrade if client now supports EMS
-	if hs.clientHello.extendedMSsupported && ! hs.sessionState.usedEMS {
+	if hs.clientHello.extendedMSSupported && !hs.sessionState.usedEMS {
 		return false
 	}
-	
+
 	cipherSuiteOk := false
 	// Check that the client is still offering the ciphersuite in the session.
 	for _, id := range hs.clientHello.cipherSuites {
@@ -426,7 +426,7 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 	// that we're doing a resumption.
 	hs.hello.sessionId = hs.clientHello.sessionId
 	hs.hello.ticketSupported = hs.sessionState.usedOldKey
-	hs.hello.extendedMSsupported = hs.clientHello.extendedMSsupported && !c.config.DisableExtendedMasterSecret
+	hs.hello.extendedMSSupported = hs.clientHello.extendedMSSupported && !c.config.DisableExtendedMasterSecret
 	hs.finishedHash = newFinishedHash(c.vers, hs.suite)
 	hs.finishedHash.discardHandshakeBuffer()
 	hs.finishedHash.Write(hs.clientHello.marshal())
@@ -443,7 +443,7 @@ func (hs *serverHandshakeState) doResumeHandshake() error {
 
 	hs.masterSecret = hs.sessionState.masterSecret
 	c.useEMS = hs.sessionState.usedEMS
-	
+
 	return nil
 }
 
@@ -456,7 +456,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 	hs.hello.ticketSupported = hs.clientHello.ticketSupported && !c.config.SessionTicketsDisabled
 	hs.hello.cipherSuite = hs.suite.id
-	hs.hello.extendedMSsupported = hs.clientHello.extendedMSsupported && !c.config.DisableExtendedMasterSecret
+	hs.hello.extendedMSSupported = hs.clientHello.extendedMSSupported && !c.config.DisableExtendedMasterSecret
 
 	hs.finishedHash = newFinishedHash(hs.c.vers, hs.suite)
 	if c.config.ClientAuth == NoClientCert {
@@ -590,8 +590,8 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 		return err
 	}
-	c.useEMS = hs.hello.extendedMSsupported
-	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.clientHello.random, hs.hello.random, hs.finishedHash, hs.hello.extendedMSsupported)
+	c.useEMS = hs.hello.extendedMSSupported
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.clientHello.random, hs.hello.random, hs.finishedHash, hs.hello.extendedMSSupported)
 	if err := c.config.writeKeyLog(hs.clientHello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
 		return err

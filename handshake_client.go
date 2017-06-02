@@ -68,7 +68,7 @@ func (c *Conn) clientHandshake() error {
 		nextProtoNeg:                 len(c.config.NextProtos) > 0,
 		secureRenegotiationSupported: true,
 		alpnProtocols:                c.config.NextProtos,
-		extendedMSsupported:          !c.config.DisableExtendedMasterSecret,
+		extendedMSSupported:          !c.config.DisableExtendedMasterSecret,
 	}
 
 	if c.handshakes > 0 {
@@ -469,8 +469,8 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 	}
 
-	c.useEMS = hs.serverHello.extendedMSsupported
-	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, hs.serverHello.extendedMSsupported)
+	c.useEMS = hs.serverHello.extendedMSSupported
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, hs.serverHello.extendedMSSupported)
 
 	if err := c.config.writeKeyLog(hs.hello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
@@ -537,8 +537,8 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 		}
 	}
 
-	if hs.serverHello.extendedMSsupported {
-		if hs.hello.extendedMSsupported {
+	if hs.serverHello.extendedMSSupported {
+		if hs.hello.extendedMSSupported {
 			c.useEMS = true
 		} else {
 			c.sendAlert(alertHandshakeFailure)

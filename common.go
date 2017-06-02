@@ -601,7 +601,7 @@ type Config struct {
 	// Allow short headers (experimental, and only applies to server).
 	AllowShortHeaders bool
 
-	//If true disables use of the Extended Master Secret extension
+	// If true disables use of the Extended Master Secret extension
 	DisableExtendedMasterSecret bool
 
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
