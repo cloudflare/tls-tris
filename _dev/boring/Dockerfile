@@ -11,6 +11,9 @@ RUN apk add --update \
   && rm -rf /var/cache/apk/*
 
 RUN git clone https://boringssl.googlesource.com/boringssl
+
+# Cacheable layer of compilation, to make the next incremental
+RUN cd boringssl && git checkout 9b885c5
 RUN mkdir boringssl/build
 RUN cd boringssl/build && cmake -GNinja ..
 RUN cd boringssl && ninja -C build
