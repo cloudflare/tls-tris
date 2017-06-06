@@ -374,7 +374,7 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
 }
 
-func deriveECDHESecret(ks keyShare, pk []byte) []byte {
+func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
 	if ks.group == X25519 {
 		if len(ks.data) != 32 {
 			return nil
@@ -382,7 +382,7 @@ func deriveECDHESecret(ks keyShare, pk []byte) []byte {
 
 		var theirPublic, sharedKey, scalar [32]byte
 		copy(theirPublic[:], ks.data)
-		copy(scalar[:], pk)
+		copy(scalar[:], secretKey)
 		curve25519.ScalarMult(&sharedKey, &scalar, &theirPublic)
 		return sharedKey[:]
 	}
@@ -395,7 +395,7 @@ func deriveECDHESecret(ks keyShare, pk []byte) []byte {
 	if x == nil {
 		return nil
 	}
-	x, _ = curve.ScalarMult(x, y, pk)
+	x, _ = curve.ScalarMult(x, y, secretKey)
 	xBytes := x.Bytes()
 	curveSize := (curve.Params().BitSize + 8 - 1) >> 3
 	if len(xBytes) == curveSize {
