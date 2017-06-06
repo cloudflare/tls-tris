@@ -89,7 +89,7 @@ CurvePreferenceLoop:
 	hs.finishedHash13.Write(hs.clientHello.marshal())
 
 	handshakeCtx := hs.finishedHash13.Sum(nil)
-	earlyClientCipher, _ := hs.prepareCipher(handshakeCtx, earlySecret, "client early traffic secret")
+	earlyClientCipher, _ := hs.suite.prepareCipher(handshakeCtx, earlySecret, "client early traffic secret")
 
 	ecdheSecret := deriveECDHESecret(ks, privateKey)
 	if ecdheSecret == nil {
@@ -104,9 +104,9 @@ CurvePreferenceLoop:
 
 	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
 	handshakeCtx = hs.finishedHash13.Sum(nil)
-	clientCipher, cTrafficSecret := hs.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
+	clientCipher, cTrafficSecret := hs.suite.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
 	hs.hsClientCipher = clientCipher
-	serverCipher, sTrafficSecret := hs.prepareCipher(handshakeCtx, handshakeSecret, "server handshake traffic secret")
+	serverCipher, sTrafficSecret := hs.suite.prepareCipher(handshakeCtx, handshakeSecret, "server handshake traffic secret")
 	c.out.setCipher(c.vers, serverCipher)
 
 	serverFinishedKey := hkdfExpandLabel(hash, sTrafficSecret, nil, "finished", hashSize)
@@ -139,8 +139,8 @@ CurvePreferenceLoop:
 
 	hs.masterSecret = hkdfExtract(hash, nil, handshakeSecret)
 	handshakeCtx = hs.finishedHash13.Sum(nil)
-	hs.appClientCipher, _ = hs.prepareCipher(handshakeCtx, hs.masterSecret, "client application traffic secret")
-	serverCipher, _ = hs.prepareCipher(handshakeCtx, hs.masterSecret, "server application traffic secret")
+	hs.appClientCipher, _ = hs.suite.prepareCipher(handshakeCtx, hs.masterSecret, "client application traffic secret")
+	serverCipher, _ = hs.suite.prepareCipher(handshakeCtx, hs.masterSecret, "server application traffic secret")
 	c.out.setCipher(c.vers, serverCipher)
 
 	if c.hand.Len() > 0 {
@@ -437,12 +437,12 @@ func hmacOfSum(f crypto.Hash, hash hash.Hash, key []byte) []byte {
 	return h.Sum(nil)
 }
 
-func (hs *serverHandshakeState) prepareCipher(handshakeCtx, secret []byte, label string) (interface{}, []byte) {
-	hash := hashForSuite(hs.suite)
+func (suite *cipherSuite) prepareCipher(handshakeCtx, secret []byte, label string) (interface{}, []byte) {
+	hash := hashForSuite(suite)
 	trafficSecret := hkdfExpandLabel(hash, secret, handshakeCtx, label, hash.Size())
-	key := hkdfExpandLabel(hash, trafficSecret, nil, "key", hs.suite.keyLen)
+	key := hkdfExpandLabel(hash, trafficSecret, nil, "key", suite.keyLen)
 	iv := hkdfExpandLabel(hash, trafficSecret, nil, "iv", 12)
-	return hs.suite.aead(key, iv), trafficSecret
+	return suite.aead(key, iv), trafficSecret
 }
 
 // Maximum allowed mismatch between the stated age of a ticket
