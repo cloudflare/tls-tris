@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"strconv"
@@ -21,13 +22,18 @@ import (
 )
 
 type clientHandshakeState struct {
+	// Common fields
 	c            *Conn
-	serverHello  *serverHelloMsg
 	hello        *clientHelloMsg
 	suite        *cipherSuite
-	finishedHash finishedHash
 	masterSecret []byte
+
+	// TLS 1.0-1.2 fields
+	serverHello  *serverHelloMsg
+	finishedHash finishedHash
 	session      *ClientSessionState
+	cacheKey     string
+	sessionCache ClientSessionCache
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -36,6 +42,53 @@ func (c *Conn) clientHandshake() error {
 		c.config = defaultConfig()
 	}
 
+	hs := &clientHandshakeState{c: c}
+
+	if c.config.maxVersion() >= VersionTLS13 {
+		// Send a 1.3 ClientHello
+		panic("1.3 glue not implemented")
+	} else {
+		err := hs.startLegacyClientHandshake()
+		if err != nil {
+			return err
+		}
+	}
+
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+
+	if c.config.maxVersion() >= VersionTLS13 {
+		// We're talking TLS >= 1.3, but the server might negotiate
+		// 1.2 and send us a 1.2 serverHello.
+		switch serverMsg := msg.(type) {
+		case *serverHelloMsg:
+			hs.serverHello = serverMsg
+			return hs.doLegacyClientHandshake()
+		case *serverHelloMsg13:
+			hs.serverHello13 = serverMsg
+			// jump to TLS 1.3
+			panic("1.3 glue not implemented")
+		// case *helloRetryRequestMsg ...
+		default:
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(hs.serverHello13, msg)
+		}
+	} else {
+		// We're talking TLS <= 1.2, so only accept a <= 1.2 ServerHello
+		serverHello, ok := msg.(*serverHelloMsg)
+		if !ok {
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(serverHello, msg)
+		}
+		hs.serverHello = serverHello
+		return hs.doLegacyClientHandshake()
+	}
+}
+
+func (hs *clientHandshakeState) startLegacyClientHandshake() error {
+	c := hs.c
 	// This may be a renegotiation handshake, in which case some fields
 	// need to be reset.
 	c.didResume = false
@@ -157,15 +210,24 @@ NextCipherSuite:
 		return err
 	}
 
-	msg, err := c.readHandshake()
-	if err != nil {
-		return err
-	}
-	serverHello, ok := msg.(*serverHelloMsg)
-	if !ok {
-		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(serverHello, msg)
-	}
+	hs.hello = hello
+	hs.session = session
+	hs.cacheKey = cacheKey
+	hs.sessionCache = sessionCache
+
+	return nil
+}
+
+func (hs *clientHandshakeState) doLegacyClientHandshake() error {
+	c := hs.c
+	// Some protocol logic is handled by detecting whether this
+	// pointer changes between now and the end of the function.
+	session := hs.session
+
+	serverHello := hs.serverHello
+	hello := hs.hello
+	cacheKey := hs.cacheKey
+	sessionCache := hs.sessionCache
 
 	vers, ok := c.config.mutualVersion(serverHello.vers)
 	if !ok || vers < VersionTLS10 {
@@ -181,15 +243,8 @@ NextCipherSuite:
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: server chose an unconfigured cipher suite")
 	}
-
-	hs := &clientHandshakeState{
-		c:            c,
-		serverHello:  serverHello,
-		hello:        hello,
-		suite:        suite,
-		finishedHash: newFinishedHash(c.vers, suite),
-		session:      session,
-	}
+	hs.suite = suite
+	hs.finishedHash = newFinishedHash(c.vers, suite)
 
 	isResume, err := hs.processServerHello()
 	if err != nil {
