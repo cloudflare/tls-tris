@@ -283,6 +283,24 @@ const (
 	ECDSAWithP521AndSHA512 SignatureScheme = 0x0603
 )
 
+// supportedSignatureSchemes13 contains the TLS 1.3 signature schemes
+// that the client advertises as supported in a TLS 1.3 Universal
+// ClientHello.
+var supportedSignatureSchemes13 = []SignatureScheme{
+	ECDSAWithP521AndSHA512,
+	ECDSAWithP384AndSHA384,
+	ECDSAWithP256AndSHA256,
+
+	PSSWithSHA512,
+	PSSWithSHA384,
+	PSSWithSHA256,
+
+	PKCS1WithSHA512,
+	PKCS1WithSHA384,
+	PKCS1WithSHA256,
+	PKCS1WithSHA1,
+}
+
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide certificate selection in the GetCertificate callback.
 type ClientHelloInfo struct {

@@ -641,3 +641,244 @@ func (hs *serverHandshakeState) traceErr(err error) {
 		}
 	}
 }
+
+func (hs *clientHandshakeState) startTLS13ClientHandshake() error {
+	c := hs.c
+	config := c.config
+
+	var vers uint16
+	vers = VersionTLS13Draft18
+	if vers != config.maxVersion() {
+		panic("unsupported TLS version")
+	}
+
+	// XXX what ciphersuites do we need to talk TLS 1.2?
+	// How should this logic work?
+	if c.config.TLS13CipherSuites == nil {
+		c.config.TLS13CipherSuites = c.config.cipherSuites(vers)
+	}
+	tls12Ciphers := c.config.cipherSuites(VersionTLS12)
+	tls13And12Ciphers := append(c.config.TLS13CipherSuites, tls12Ciphers...)
+
+	hello := &clientHelloMsg{
+		// TLS 1.3 telescopes through TLS 1.2 to avoid
+		// breaking bad implementations that reject unknown
+		// version numbers.
+		// legacy_version in TLS 1.3 nomenclature
+		vers:   VersionTLS12,
+		random: make([]byte, 32),
+		// TLS 1.3 has a PSK feature and does not use TLS 1.2 session IDs.
+		// Set it to an empty byte slice, as required by the spec.
+		// legacy_session_id in TLS 1.3 nomenclature
+		sessionId:    []byte{},
+		cipherSuites: tls13And12Ciphers,
+		// TLS 1.3 clients must specify null compression
+		compressionMethods: []uint8{compressionNone},
+		// XXX handle TLS 1.2 compatibility ???
+		supportedVersions: []uint16{VersionTLS13Draft18, VersionTLS12},
+		// 4.2.6 Supported Groups
+		supportedCurves: c.config.curvePreferences(),
+		serverName:      hostnameInSNI(c.config.ServerName),
+		ocspStapling:    true,
+		scts:            true,
+		// Point format negotiation is not used in TLS 1.3,
+		// but we need to include it here in case the server
+		// falls back to TLS 1.2.
+		supportedPoints: []uint8{pointFormatUncompressed},
+	}
+
+	_, err := io.ReadFull(c.config.rand(), hello.random)
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return errors.New("tls: short read from Rand: " + err.Error())
+	}
+
+	// 4.2.2 Cookie
+
+	// XXX
+
+	// 4.2.3 Signature Algorithms
+	//
+	// Encode TLS 1.3 Signature Algorithms as TLS 1.2 Signature + Hash values.
+	signatureAndHashes := make([]signatureAndHash, len(supportedSignatureSchemes13))
+	for i, sigScheme := range supportedSignatureSchemes13 {
+		signatureAndHashes[i] = sigSchemeToSigAndHash(sigScheme)
+	}
+	hello.signatureAndHashes = signatureAndHashes
+
+	// 4.2.4 Certificate Authorities
+	if config.RootCAs != nil {
+		return errors.New("Client CA extension not implemented")
+	}
+
+	// 4.2.5 Post-Handshake Client Authentication
+	// XXX how does a user select client auth in the config?
+
+	// 4.2.7 Key Shares
+	// XXX which keyshares do we want to generate? all of them?
+	// maybe just do the top one for now, since this
+	// forces handling the case of an extra round trip
+
+	var preferredCurve = hello.supportedCurves[0]
+	privateKey, clientKeyShare, err := config.generateKeyShare(preferredCurve)
+	if err != nil {
+		return err
+	}
+
+	hello.keyShares = []keyShare{clientKeyShare}
+
+	// 4.2.8 Pre-shared key modes
+
+	// XXX
+
+	// 4.2.9 Early Data Indication
+
+	// XXX
+	// No early data in Go TLS 1.3 ?
+
+	// 4.2.10 Pre-shared keys
+
+	// Now send the ClientHello and pass to the next state
+	if _, err := c.writeRecord(recordTypeHandshake, hello.marshal()); err != nil {
+		return err
+	}
+
+	hs.hello = hello
+	hs.keySharePrivateKey = privateKey
+
+	return nil
+}
+
+func (hs *clientHandshakeState) doTLS13ClientHandshake() error {
+	c := hs.c
+	config := c.config
+	hello := hs.hello
+
+	vers := hs.serverHello13.vers
+	if vers != VersionTLS13Draft18 {
+		c.sendAlert(alertProtocolVersion)
+		return fmt.Errorf("tls: server selected unsupported protocol version %x", vers)
+	}
+	c.vers = vers
+	c.haveVers = true
+
+	suite := mutualCipherSuite(config.TLS13CipherSuites, hs.serverHello13.cipherSuite)
+	hash := hashForSuite(suite)
+	hashSize := hash.Size()
+
+	hs.finishedHash13 = hash.New()
+	hs.finishedHash13.Write(hello.marshal())
+
+	// XXX early secrets
+	earlySecret := hkdfExtract(hash, nil, nil)
+
+	serverKeyShare := hs.serverHello13.keyShare
+	ecdheSecret := deriveECDHESecret(serverKeyShare, hs.keySharePrivateKey)
+	if ecdheSecret == nil {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: bad ECDHE client share")
+	}
+
+	hs.finishedHash13.Write(hs.serverHello13.marshal())
+
+	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
+	handshakeCtx := hs.finishedHash13.Sum(nil)
+	clientCipher, cTrafficSecret := suite.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
+	serverCipher, sTrafficSecret := suite.prepareCipher(handshakeCtx, handshakeSecret, "server handshake traffic secret")
+	c.in.setCipher(c.vers, serverCipher)
+	c.out.setCipher(c.vers, clientCipher)
+
+	serverFinishedKey := hkdfExpandLabel(hash, sTrafficSecret, nil, "finished", hashSize)
+	clientFinishedKey := hkdfExpandLabel(hash, cTrafficSecret, nil, "finished", hashSize)
+
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+	encryptedExt, ok := msg.(*encryptedExtensionsMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(encryptedExt, msg)
+	}
+	hs.encryptedExt = encryptedExt
+
+	hs.finishedHash13.Write(encryptedExt.marshal())
+
+	// If we use PSKs, jump to state_WAIT_FINISHED here
+	// XXX what happens if we request to use a PSK and the
+	// server wants to do a full handshake?
+
+	// Otherwise we are doing a full handshake
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+
+	// We could get a certReqMsg here:
+	// XXX certReqMsg, ok := msg.(*certificateRequestMsg13) ...
+
+	certMsg, ok := msg.(*certificateMsg13)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certMsg, msg)
+	}
+
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	certVerifyMsg, ok := msg.(*certificateVerifyMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certVerifyMsg, msg)
+	}
+
+	if !c.config.InsecureSkipVerify {
+		panic("certificate verification not yet implemented")
+	}
+
+	hs.finishedHash13.Write(certMsg.marshal())
+	hs.finishedHash13.Write(certVerifyMsg.marshal())
+
+	expectedServerVerifyData := hmacOfSum(hash, hs.finishedHash13, serverFinishedKey)
+
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	serverFinishedMsg, ok := msg.(*finishedMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(serverFinishedMsg, msg)
+	}
+
+	if subtle.ConstantTimeCompare(expectedServerVerifyData, serverFinishedMsg.verifyData) != 1 {
+		c.sendAlert(alertDecryptError)
+		return errors.New("tls: server's Finished message is incorrect")
+	}
+
+	hs.finishedHash13.Write(serverFinishedMsg.marshal())
+
+	masterSecret := hkdfExtract(hash, nil, handshakeSecret)
+	handshakeCtx = hs.finishedHash13.Sum(nil)
+
+	appClientCipher, _ := suite.prepareCipher(handshakeCtx, masterSecret, "client application traffic secret")
+	appServerCipher, _ := suite.prepareCipher(handshakeCtx, masterSecret, "server application traffic secret")
+
+	clientFinished := &finishedMsg{
+		verifyData: hmacOfSum(hash, hs.finishedHash13, clientFinishedKey),
+	}
+
+	if _, err := c.writeRecord(recordTypeHandshake, clientFinished.marshal()); err != nil {
+		return err
+	}
+
+	c.out.setCipher(c.vers, appClientCipher)
+	c.in.setCipher(c.vers, appServerCipher)
+
+	c.phase = handshakeConfirmed
+	atomic.StoreInt32(&c.handshakeConfirmed, 1)
+	c.handshakeComplete = true
+	c.cipherSuite = suite.id
+	return nil
+}
