@@ -180,13 +180,11 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 
 	hash := hashForSuite(hs.suite)
 	expectedVerifyData := hmacOfSum(hash, hs.finishedHash13, hs.clientFinishedKey)
-	if len(expectedVerifyData) != len(clientFinished.verifyData) ||
-		subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
+	if subtle.ConstantTimeCompare(expectedVerifyData, clientFinished.verifyData) != 1 {
 		c.sendAlert(alertDecryptError)
 		return errors.New("tls: client's Finished message is incorrect")
 	}
 	hs.finishedHash13.Write(clientFinished.marshal())
-
 	c.hs = nil // Discard the server handshake state
 	if c.hand.Len() > 0 {
 		return c.sendAlert(alertUnexpectedMessage)
