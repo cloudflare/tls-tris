@@ -34,6 +34,12 @@ type clientHandshakeState struct {
 	session      *ClientSessionState
 	cacheKey     string
 	sessionCache ClientSessionCache
+
+	// TLS 1.3 fields
+	serverHello13      *serverHelloMsg13
+	encryptedExt       *encryptedExtensionsMsg
+	finishedHash13     hash.Hash
+	keySharePrivateKey []byte
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -45,8 +51,11 @@ func (c *Conn) clientHandshake() error {
 	hs := &clientHandshakeState{c: c}
 
 	if c.config.maxVersion() >= VersionTLS13 {
-		// Send a 1.3 ClientHello
-		panic("1.3 glue not implemented")
+		// Send a 1.3 ClientHello compatible with 1.2
+		err := hs.startTLS13ClientHandshake()
+		if err != nil {
+			return err
+		}
 	} else {
 		err := hs.startLegacyClientHandshake()
 		if err != nil {
@@ -68,8 +77,7 @@ func (c *Conn) clientHandshake() error {
 			return hs.doLegacyClientHandshake()
 		case *serverHelloMsg13:
 			hs.serverHello13 = serverMsg
-			// jump to TLS 1.3
-			panic("1.3 glue not implemented")
+			return hs.doTLS13ClientHandshake()
 		// case *helloRetryRequestMsg ...
 		default:
 			c.sendAlert(alertUnexpectedMessage)
