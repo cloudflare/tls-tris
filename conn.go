@@ -1149,7 +1149,12 @@ func (c *Conn) readHandshake() (interface{}, error) {
 	case typeClientHello:
 		m = new(clientHelloMsg)
 	case typeServerHello:
-		if c.vers >= VersionTLS13 {
+		// We don't know until after receiving the ServerHello
+		// which version the server chose, so c.vers is still
+		// uninitialized.  Instead, peek at the version field
+		// before parsing.
+		vers := peekServerHelloVersion(data)
+		if vers >= VersionTLS13 {
 			m = new(serverHelloMsg13)
 		} else {
 			m = new(serverHelloMsg)
