@@ -173,6 +173,9 @@ const (
 const (
 	signatureRSA   uint8 = 1
 	signatureECDSA uint8 = 3
+	// Bogus value used internally to signal RSA-PSS.  TLS 1.3
+	// requires accepting RSA-PSS even when negotiating 1.2.
+	signaturePSS uint8 = 8
 )
 
 // signatureAndHash mirrors the TLS 1.2, SignatureAndHashAlgorithm struct. See
