@@ -39,6 +39,7 @@ const (
 	alertInappropriateFallback  alert = 86
 	alertUserCanceled           alert = 90
 	alertNoRenegotiation        alert = 100
+	alertCertificateRequired    alert = 116
 	alertNoApplicationProtocol  alert = 120
 	alertSuccess                alert = 255 // dummy value returned by unmarshal functions
 )

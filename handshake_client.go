@@ -322,6 +322,29 @@ func (hs *clientHandshakeState) doLegacyClientHandshake() error {
 	return nil
 }
 
+func (c *Conn) verifyCertChain(certs []*x509.Certificate) error {
+	opts := x509.VerifyOptions{
+		Roots:         c.config.RootCAs,
+		CurrentTime:   c.config.time(),
+		DNSName:       c.config.ServerName,
+		Intermediates: x509.NewCertPool(),
+	}
+
+	for i, cert := range certs {
+		if i == 0 {
+			continue
+		}
+		opts.Intermediates.AddCert(cert)
+	}
+	var err error
+	c.verifiedChains, err = certs[0].Verify(opts)
+	if err != nil {
+		c.sendAlert(alertBadCertificate)
+		return err
+	}
+	return nil
+}
+
 func (hs *clientHandshakeState) doFullHandshake() error {
 	c := hs.c
 
@@ -350,20 +373,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 
 		if !c.config.InsecureSkipVerify {
-			opts := x509.VerifyOptions{
-				Roots:         c.config.RootCAs,
-				CurrentTime:   c.config.time(),
-				DNSName:       c.config.ServerName,
-				Intermediates: x509.NewCertPool(),
-			}
-
-			for i, cert := range certs {
-				if i == 0 {
-					continue
-				}
-				opts.Intermediates.AddCert(cert)
-			}
-			c.verifiedChains, err = certs[0].Verify(opts)
+			err := c.verifyCertChain(certs)
 			if err != nil {
 				c.sendAlert(alertBadCertificate)
 				return err
