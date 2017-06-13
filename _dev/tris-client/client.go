@@ -19,7 +19,7 @@ func main() {
 	config := &tls.Config{
 		MaxVersion: tls.VersionTLS13Draft18,
 		//MaxVersion: tls.VersionTLS12,
-		InsecureSkipVerify: true,
+		//InsecureSkipVerify: true,
 	}
 
 	trans := &http.Transport{TLSClientConfig: config}
@@ -31,5 +31,5 @@ func main() {
 	}
 	
 	fmt.Println("RESPONSE:")
-	fmt.Printf("%v", resp)
+	fmt.Println("%v", resp)
 }

@@ -8,6 +8,8 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/subtle"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -323,6 +325,14 @@ func sigAndHashToSigScheme(sah signatureAndHash) SignatureScheme {
 
 func signatureSchemeIsPSS(s SignatureScheme) bool {
 	return s == PSSWithSHA256 || s == PSSWithSHA384 || s == PSSWithSHA512
+}
+
+func signatureSchemeIsPKCS1(s SignatureScheme) bool {
+	return s == PKCS1WithSHA1 || s == PKCS1WithSHA256 || s == PKCS1WithSHA384 || s == PKCS1WithSHA512
+}
+
+func signatureSchemeIsECDSA(s SignatureScheme) bool {
+	return s == ECDSAWithP256AndSHA256 || s == ECDSAWithP384AndSHA384 || s == ECDSAWithP521AndSHA512
 }
 
 // hashForSignatureScheme returns the Hash used by a SignatureScheme which is
@@ -823,6 +833,31 @@ func (hs *clientHandshakeState) doTLS13ClientHandshake() error {
 		return unexpectedMessageError(certMsg, msg)
 	}
 
+	// 4.4.2 requires a server's certificate list to be nonempty
+	if len(certMsg.certificates) == 0 {
+		c.sendAlert(alertCertificateRequired)
+		return errors.New("tls: server did not send a certificate")
+	}
+
+	// Parse and optionally check certificates
+	certs := make([]*x509.Certificate, len(certMsg.certificates))
+	for i, certEntry := range certMsg.certificates {
+		cert, err := x509.ParseCertificate(certEntry.data)
+		if err != nil {
+			c.sendAlert(alertBadCertificate)
+			return errors.New("tls: failed to parse certificate from server: " + err.Error())
+		}
+		certs[i] = cert
+	}
+	c.peerCertificates = certs
+	if !c.config.InsecureSkipVerify {
+		// XXX what do we do with OCSP/SCT data?
+		err := c.verifyCertChain(certs)
+		if err != nil {
+			return err
+		}
+	}
+
 	msg, err = c.readHandshake()
 	if err != nil {
 		return err
@@ -833,13 +868,47 @@ func (hs *clientHandshakeState) doTLS13ClientHandshake() error {
 		return unexpectedMessageError(certVerifyMsg, msg)
 	}
 
-	if !c.config.InsecureSkipVerify {
-		panic("certificate verification not yet implemented")
+	hs.finishedHash13.Write(certMsg.marshal())
+
+	leafCert := certs[0]
+	sigScheme := sigAndHashToSigScheme(certVerifyMsg.signatureAndHash)
+	sigHash := hashForSignatureScheme(sigScheme)
+	toVerify := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hs.finishedHash13.Sum(nil))
+
+	switch {
+	case signatureSchemeIsECDSA(sigScheme):
+		pubKey, ok := leafCert.PublicKey.(*ecdsa.PublicKey)
+		if !ok {
+			c.sendAlert(alertBadCertificate)
+			return errors.New("tls: CertificateVerify ECDSA requires an ECDSA server public key")
+		}
+		ecdsaSig := new(ecdsaSignature)
+		if _, err := asn1.Unmarshal(certVerifyMsg.signature, ecdsaSig); err != nil {
+			c.sendAlert(alertDecryptError)
+			return err
+		}
+		digest := sigHash.New().Sum(toVerify)
+		if !ecdsa.Verify(pubKey, digest, ecdsaSig.R, ecdsaSig.S) {
+			c.sendAlert(alertDecryptError)
+			return errors.New("tls: CertificateVerify ECDSA verification failure")
+		}
+	case signatureSchemeIsPSS(sigScheme):
+		pubKey, ok := leafCert.PublicKey.(*rsa.PublicKey)
+		if !ok {
+			c.sendAlert(alertBadCertificate)
+			return errors.New("tls: CertificateVerify RSA-PSS requires an RSA server public key")
+		}
+		opts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: sigHash}
+		if err := rsa.VerifyPSS(pubKey, sigHash, toVerify, certVerifyMsg.signature, opts); err != nil {
+			c.sendAlert(alertDecryptError)
+			return errors.New("tls: CertificateVerify RSA-PSS verification failure")
+		}
+	case signatureSchemeIsPKCS1(sigScheme):
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: CertificateVerify tried to use PKCS1")
 	}
 
-	hs.finishedHash13.Write(certMsg.marshal())
 	hs.finishedHash13.Write(certVerifyMsg.marshal())
-
 	expectedServerVerifyData := hmacOfSum(hash, hs.finishedHash13, serverFinishedKey)
 
 	msg, err = c.readHandshake()
