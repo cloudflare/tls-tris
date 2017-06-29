@@ -547,7 +547,6 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			return unexpectedMessageError(certMsg, msg)
 		}
 		hs.finishedHash.Write(certMsg.marshal())
-
 		if len(certMsg.certificates) == 0 {
 			// The client didn't actually send a certificate
 			switch c.config.ClientAuth {
@@ -575,7 +574,6 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		return unexpectedMessageError(ckx, msg)
 	}
 	hs.finishedHash.Write(ckx.marshal())
-
 	preMasterSecret, err := keyAgreement.processClientKeyExchange(c.config, hs.cert, ckx, c.vers)
 	if err != nil {
 		if err == errClientKeyExchange {
@@ -587,6 +585,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 	}
 	c.useEMS = hs.hello.extendedMSSupported
 	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.clientHello.random, hs.hello.random, hs.finishedHash, c.useEMS)
+
 	if err := c.config.writeKeyLog(hs.clientHello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
 		return err

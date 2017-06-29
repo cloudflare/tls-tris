@@ -207,7 +207,6 @@ NextCipherSuite:
 
 	hs.finishedHash.Write(hs.hello.marshal())
 	hs.finishedHash.Write(hs.serverHello.marshal())
-
 	c.buffering = true
 	if isResume {
 		if err := hs.establishKeys(); err != nil {
@@ -273,7 +272,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		return unexpectedMessageError(certMsg, msg)
 	}
 	hs.finishedHash.Write(certMsg.marshal())
-
 	if c.handshakes == 0 {
 		// If this is the first handshake on a connection, process and
 		// (optionally) verify the server's certificates.
@@ -382,7 +380,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	if ok {
 		certRequested = true
 		hs.finishedHash.Write(certReq.marshal())
-
 		if chainToSend, err = hs.getCertificate(certReq); err != nil {
 			c.sendAlert(alertInternalError)
 			return err
@@ -400,7 +397,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		return unexpectedMessageError(shd, msg)
 	}
 	hs.finishedHash.Write(shd.marshal())
-
 	// If the server requested a certificate then we have to send a
 	// Certificate message, even if it's empty because we don't have a
 	// certificate to send.
@@ -424,6 +420,8 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			return err
 		}
 	}
+	c.useEMS = hs.serverHello.extendedMSSupported
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, c.useEMS)
 
 	if chainToSend != nil && len(chainToSend.Certificate) > 0 {
 		certVerify := &certificateVerifyMsg{
@@ -468,9 +466,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			return err
 		}
 	}
-
-	c.useEMS = hs.serverHello.extendedMSSupported
-	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, c.useEMS)
 
 	if err := c.config.writeKeyLog(hs.hello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
