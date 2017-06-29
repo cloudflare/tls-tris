@@ -715,6 +715,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 				return alertDecodeError
 			}
 		}
+
 		data = data[length:]
 		bindersOffset += length
 	}

@@ -207,6 +207,7 @@ NextCipherSuite:
 
 	hs.finishedHash.Write(hs.hello.marshal())
 	hs.finishedHash.Write(hs.serverHello.marshal())
+
 	c.buffering = true
 	if isResume {
 		if err := hs.establishKeys(); err != nil {
@@ -380,6 +381,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	if ok {
 		certRequested = true
 		hs.finishedHash.Write(certReq.marshal())
+
 		if chainToSend, err = hs.getCertificate(certReq); err != nil {
 			c.sendAlert(alertInternalError)
 			return err
@@ -397,6 +399,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		return unexpectedMessageError(shd, msg)
 	}
 	hs.finishedHash.Write(shd.marshal())
+
 	// If the server requested a certificate then we have to send a
 	// Certificate message, even if it's empty because we don't have a
 	// certificate to send.
