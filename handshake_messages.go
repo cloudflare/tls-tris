@@ -367,13 +367,11 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[1] = byte(extensionEarlyData)
 		z = z[4:]
 	}
-
 	if m.extendedMSSupported {
 		z[0] = byte(extensionEMS >> 8)
 		z[1] = byte(extensionEMS & 0xff)
 		z = z[4:]
 	}
-
 	if m.shortHeaders {
 		z[0] = byte(extensionShortHeaders >> 8)
 		z[1] = byte(extensionShortHeaders & 0xff)
@@ -713,6 +711,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			}
 		case extensionEMS:
 			m.extendedMSSupported = true
+			if length != 0 {
+				return alertDecodeError
+			}
 		}
 		data = data[length:]
 		bindersOffset += length
