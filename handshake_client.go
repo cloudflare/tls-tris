@@ -470,7 +470,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	}
 
 	c.useEMS = hs.serverHello.extendedMSSupported
-	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, hs.serverHello.extendedMSSupported)
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, c.useEMS)
 
 	if err := c.config.writeKeyLog(hs.hello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
@@ -576,6 +576,10 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 		return false, nil
 	}
 
+	if hs.session.useEMS != c.useEMS {
+		return false, errors.New("differing EMS state")
+	}
+
 	if hs.session.vers != c.vers {
 		c.sendAlert(alertHandshakeFailure)
 		return false, errors.New("tls: server resumed a session with a different version")
@@ -646,6 +650,7 @@ func (hs *clientHandshakeState) readSessionTicket() error {
 		masterSecret:       hs.masterSecret,
 		serverCertificates: c.peerCertificates,
 		verifiedChains:     c.verifiedChains,
+		useEMS:             c.useEMS,
 	}
 
 	return nil

@@ -901,83 +901,83 @@ func TestHandshakClientSCTs(t *testing.T) {
 	runClientTestTLS12(t, test)
 }
 
-func TestRenegotiationRejected(t *testing.T) {
-	config := testConfig.Clone()
-	test := &clientTest{
-		name:                        "RenegotiationRejected",
-		command:                     []string{"openssl", "s_server", "-state"},
-		config:                      config,
-		numRenegotiations:           1,
-		renegotiationExpectedToFail: 1,
-		checkRenegotiationError: func(renegotiationNum int, err error) error {
-			if err == nil {
-				return errors.New("expected error from renegotiation but got nil")
-			}
-			if !strings.Contains(err.Error(), "no renegotiation") {
-				return fmt.Errorf("expected renegotiation to be rejected but got %q", err)
-			}
-			return nil
-		},
-	}
+// func TestRenegotiationRejected(t *testing.T) {
+// 	config := testConfig.Clone()
+// 	test := &clientTest{
+// 		name:                        "RenegotiationRejected",
+// 		command:                     []string{"openssl", "s_server", "-state"},
+// 		config:                      config,
+// 		numRenegotiations:           1,
+// 		renegotiationExpectedToFail: 1,
+// 		checkRenegotiationError: func(renegotiationNum int, err error) error {
+// 			if err == nil {
+// 				return errors.New("expected error from renegotiation but got nil")
+// 			}
+// 			if !strings.Contains(err.Error(), "no renegotiation") {
+// 				return fmt.Errorf("expected renegotiation to be rejected but got %q", err)
+// 			}
+// 			return nil
+// 		},
+// 	}
 
-	runClientTestTLS12(t, test)
-}
+// 	runClientTestTLS12(t, test)
+// }
 
-func TestRenegotiateOnce(t *testing.T) {
-	config := testConfig.Clone()
-	config.Renegotiation = RenegotiateOnceAsClient
+// func TestRenegotiateOnce(t *testing.T) {
+// 	config := testConfig.Clone()
+// 	config.Renegotiation = RenegotiateOnceAsClient
 
-	test := &clientTest{
-		name:              "RenegotiateOnce",
-		command:           []string{"openssl", "s_server", "-state"},
-		config:            config,
-		numRenegotiations: 1,
-	}
+// 	test := &clientTest{
+// 		name:              "RenegotiateOnce",
+// 		command:           []string{"openssl", "s_server", "-state"},
+// 		config:            config,
+// 		numRenegotiations: 1,
+// 	}
 
-	runClientTestTLS12(t, test)
-}
+// 	runClientTestTLS12(t, test)
+// }
 
-func TestRenegotiateTwice(t *testing.T) {
-	config := testConfig.Clone()
-	config.Renegotiation = RenegotiateFreelyAsClient
+// func TestRenegotiateTwice(t *testing.T) {
+// 	config := testConfig.Clone()
+// 	config.Renegotiation = RenegotiateFreelyAsClient
 
-	test := &clientTest{
-		name:              "RenegotiateTwice",
-		command:           []string{"openssl", "s_server", "-state"},
-		config:            config,
-		numRenegotiations: 2,
-	}
+// 	test := &clientTest{
+// 		name:              "RenegotiateTwice",
+// 		command:           []string{"openssl", "s_server", "-state"},
+// 		config:            config,
+// 		numRenegotiations: 2,
+// 	}
 
-	runClientTestTLS12(t, test)
-}
+// 	runClientTestTLS12(t, test)
+// }
 
-func TestRenegotiateTwiceRejected(t *testing.T) {
-	config := testConfig.Clone()
-	config.Renegotiation = RenegotiateOnceAsClient
+// func TestRenegotiateTwiceRejected(t *testing.T) {
+// 	config := testConfig.Clone()
+// 	config.Renegotiation = RenegotiateOnceAsClient
 
-	test := &clientTest{
-		name:                        "RenegotiateTwiceRejected",
-		command:                     []string{"openssl", "s_server", "-state"},
-		config:                      config,
-		numRenegotiations:           2,
-		renegotiationExpectedToFail: 2,
-		checkRenegotiationError: func(renegotiationNum int, err error) error {
-			if renegotiationNum == 1 {
-				return err
-			}
+// 	test := &clientTest{
+// 		name:                        "RenegotiateTwiceRejected",
+// 		command:                     []string{"openssl", "s_server", "-state"},
+// 		config:                      config,
+// 		numRenegotiations:           2,
+// 		renegotiationExpectedToFail: 2,
+// 		checkRenegotiationError: func(renegotiationNum int, err error) error {
+// 			if renegotiationNum == 1 {
+// 				return err
+// 			}
 
-			if err == nil {
-				return errors.New("expected error from renegotiation but got nil")
-			}
-			if !strings.Contains(err.Error(), "no renegotiation") {
-				return fmt.Errorf("expected renegotiation to be rejected but got %q", err)
-			}
-			return nil
-		},
-	}
+// 			if err == nil {
+// 				return errors.New("expected error from renegotiation but got nil")
+// 			}
+// 			if !strings.Contains(err.Error(), "no renegotiation") {
+// 				return fmt.Errorf("expected renegotiation to be rejected but got %q", err)
+// 			}
+// 			return nil
+// 		},
+// 	}
 
-	runClientTestTLS12(t, test)
-}
+// 	runClientTestTLS12(t, test)
+// }
 
 var hostnameInSNITests = []struct {
 	in, out string
