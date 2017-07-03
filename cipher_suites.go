@@ -63,7 +63,7 @@ const (
 )
 
 // A cipherSuite is a specific combination of key agreement, cipher and MAC
-// function. All cipher suites currently assume RSA key agreement.
+// function.
 type cipherSuite struct {
 	id uint16
 	// the lengths, in bytes, of the key material needed for each component.
