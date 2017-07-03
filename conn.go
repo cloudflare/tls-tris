@@ -1321,7 +1321,7 @@ func (c *Conn) handleRenegotiation() error {
 //
 // This is only meaningful in TLS 1.3 when Accept0RTTData is true and the
 // client sent valid 0-RTT data. In any other case it's equivalent to
-// calling Hendshake.
+// calling Handshake.
 func (c *Conn) ConfirmHandshake() error {
 	if err := c.Handshake(); err != nil {
 		return err
