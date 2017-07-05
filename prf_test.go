@@ -49,8 +49,9 @@ func TestKeysFromPreMasterSecret(t *testing.T) {
 		in, _ := hex.DecodeString(test.preMasterSecret)
 		clientRandom, _ := hex.DecodeString(test.clientRandom)
 		serverRandom, _ := hex.DecodeString(test.serverRandom)
+		fin := newFinishedHash(test.version, test.suite)
 
-		masterSecret := masterFromPreMasterSecret(test.version, test.suite, in, clientRandom, serverRandom)
+		masterSecret := masterFromPreMasterSecret(test.version, test.suite, in, clientRandom, serverRandom, fin, false)
 		if s := hex.EncodeToString(masterSecret); s != test.masterSecret {
 			t.Errorf("#%d: bad master secret %s, want %s", i, s, test.masterSecret)
 			continue
