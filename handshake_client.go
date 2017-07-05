@@ -68,6 +68,7 @@ func (c *Conn) clientHandshake() error {
 		nextProtoNeg:                 len(c.config.NextProtos) > 0,
 		secureRenegotiationSupported: true,
 		alpnProtocols:                c.config.NextProtos,
+		extendedMSSupported:          !c.config.DisableExtendedMasterSecret,
 	}
 
 	if c.handshakes > 0 {
@@ -468,7 +469,9 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 	}
 
-	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random)
+	c.useEMS = hs.serverHello.extendedMSSupported
+	hs.masterSecret = masterFromPreMasterSecret(c.vers, hs.suite, preMasterSecret, hs.hello.random, hs.serverHello.random, hs.finishedHash, hs.serverHello.extendedMSSupported)
+
 	if err := c.config.writeKeyLog(hs.hello.random, hs.masterSecret); err != nil {
 		c.sendAlert(alertInternalError)
 		return errors.New("tls: failed to write to key log: " + err.Error())
@@ -531,6 +534,15 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 		if !bytes.Equal(hs.serverHello.secureRenegotiation, expectedSecureRenegotiation[:]) {
 			c.sendAlert(alertHandshakeFailure)
 			return false, errors.New("tls: incorrect renegotiation extension contents")
+		}
+	}
+
+	if hs.serverHello.extendedMSSupported {
+		if hs.hello.extendedMSSupported {
+			c.useEMS = true
+		} else {
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: server advertised unrequested EMS support")
 		}
 	}
 
