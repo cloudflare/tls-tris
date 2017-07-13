@@ -356,6 +356,11 @@ Curves:
 		}
 	}
 
+	if hs.clientHello.delegatedCredentials {
+		// todo "caching"?
+		hs.hello.delegatedCredential = hs.cert.DelegatedCredential
+	}
+
 	return false, nil
 }
 
