@@ -352,6 +352,10 @@ Curves:
 		}
 	}
 
+	if hs.clientHello.delegatedCredentials {
+		hs.hello.delegatedCredential = hs.cert.DelegatedCredential
+	}
+
 	return false, nil
 }
 

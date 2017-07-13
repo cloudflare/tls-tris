@@ -20,6 +20,7 @@ type clientHelloMsg struct {
 	nextProtoNeg                 bool
 	serverName                   string
 	ocspStapling                 bool
+	delegatedCredentials         bool
 	scts                         bool
 	supportedCurves              []CurveID
 	supportedPoints              []uint8
@@ -51,6 +52,7 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		m.nextProtoNeg == m1.nextProtoNeg &&
 		m.serverName == m1.serverName &&
 		m.ocspStapling == m1.ocspStapling &&
+		m.delegatedCredentials == m1.delegatedCredentials &&
 		m.scts == m1.scts &&
 		eqCurveIDs(m.supportedCurves, m1.supportedCurves) &&
 		bytes.Equal(m.supportedPoints, m1.supportedPoints) &&
@@ -78,6 +80,9 @@ func (m *clientHelloMsg) marshal() []byte {
 	}
 	if m.ocspStapling {
 		extensionsLength += 1 + 2 + 2
+		numExtensions++
+	}
+	if m.delegatedCredentials {
 		numExtensions++
 	}
 	if len(m.serverName) > 0 {
@@ -213,6 +218,13 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[4] = 1 // OCSP type
 		// Two zero valued uint16s for the two lengths.
 		z = z[9:]
+	}
+	if m.delegatedCredentials {
+		// https://tools.ietf.org/html/draft-rescorla-tls-subcerts-01
+		z[0] = byte(extensionDelegatedCredential >> 8)
+		z[1] = byte(extensionDelegatedCredential & 0xff)
+		// zero uint16 for the zero-length extension_data
+		z = z[4:]
 	}
 	if len(m.supportedCurves) > 0 {
 		// http://tools.ietf.org/html/rfc4492#section-5.5.1
@@ -414,6 +426,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 	m.nextProtoNeg = false
 	m.serverName = ""
 	m.ocspStapling = false
+	m.delegatedCredentials = false
 	m.ticketSupported = false
 	m.sessionTicket = nil
 	m.signatureAndHashes = nil
@@ -493,6 +506,11 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			m.nextProtoNeg = true
 		case extensionStatusRequest:
 			m.ocspStapling = length > 0 && data[0] == statusTypeOCSP
+		case extensionDelegatedCredential:
+			if length > 0 {
+				return alertDecodeError
+			}
+			m.delegatedCredentials = true
 		case extensionSupportedCurves:
 			// http://tools.ietf.org/html/rfc4492#section-5.5.1
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.4
@@ -707,6 +725,7 @@ type serverHelloMsg struct {
 	nextProtoNeg                 bool
 	nextProtos                   []string
 	ocspStapling                 bool
+	delegatedCredential          []byte
 	scts                         [][]byte
 	ticketSupported              bool
 	secureRenegotiation          []byte
@@ -738,6 +757,7 @@ func (m *serverHelloMsg) equal(i interface{}) bool {
 		m.nextProtoNeg == m1.nextProtoNeg &&
 		eqStrings(m.nextProtos, m1.nextProtos) &&
 		m.ocspStapling == m1.ocspStapling &&
+		bytes.Equal(m.delegatedCredential, m1.delegatedCredential) &&
 		m.ticketSupported == m1.ticketSupported &&
 		m.secureRenegotiationSupported == m1.secureRenegotiationSupported &&
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
@@ -764,6 +784,10 @@ func (m *serverHelloMsg) marshal() []byte {
 	}
 	if m.ocspStapling {
 		numExtensions++
+	}
+	if len(m.delegatedCredential) > 0 {
+		numExtensions++
+		extensionsLength += len(m.delegatedCredential)
 	}
 	if m.ticketSupported {
 		numExtensions++
@@ -835,6 +859,16 @@ func (m *serverHelloMsg) marshal() []byte {
 		z[0] = byte(extensionStatusRequest >> 8)
 		z[1] = byte(extensionStatusRequest)
 		z = z[4:]
+	}
+	if len(m.delegatedCredential) != 0 {
+		credentialLen := len(m.delegatedCredential)
+		z[0] = byte(extensionDelegatedCredential >> 8)
+		z[1] = byte(extensionDelegatedCredential & 0xff)
+		z[2] = uint8(credentialLen >> 8)
+		z[3] = uint8(credentialLen)
+
+		copy(z[4:], m.delegatedCredential)
+		z = z[4+credentialLen:]
 	}
 	if m.ticketSupported {
 		z[0] = byte(extensionSessionTicket >> 8)
@@ -911,6 +945,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	m.nextProtoNeg = false
 	m.nextProtos = nil
 	m.ocspStapling = false
+	m.delegatedCredential = nil
 	m.scts = nil
 	m.ticketSupported = false
 	m.alpnProtocol = ""
@@ -958,6 +993,8 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 				return alertDecodeError
 			}
 			m.ocspStapling = true
+		case extensionDelegatedCredential:
+			m.delegatedCredential = data[:length]
 		case extensionSessionTicket:
 			if length > 0 {
 				return alertDecodeError
