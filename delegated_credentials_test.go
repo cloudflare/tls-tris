@@ -147,24 +147,37 @@ func TestDelCredMarshalling(t *testing.T) {
 // ---------------- integration tests ---------------- //
 
 // TLS 1.2 RSA with DC
-//func TestDelCredHandshake12RSA(t *testing.T) {
-//	testCase := newTestCase()
-//
-//	cert, key := getCertAndKey(testDelUsageECCertificate, testDelUsageECPrivateKey)
-//	certificate := &Certificate{
-//		Certificate: [][]byte{cert.Raw},
-//		Leaf:        cert,
-//		PrivateKey:  key,
-//	}
-//	testCase.ServerConfig.Certificates = nil
-//	testCase.ServerConfig.GetCertificate = NewDelCredGetCertificateFunction(certificate)
-//
-//	testCase.doHandshake(t)
-//}
+func TestDelCredHandshake12RSA(t *testing.T) {
+	testCase := DelCredHandshakeTestCase{
+		ClientConfig:      testConfig.Clone(),
+		ServerConfig:      testConfig.Clone(),
+		NumOfClientWrites: 2,
+		NumOfServerWrites: 2,
+	}
+	testCase.ClientConfig.UseDelegatedCredentials = true
+	testCase.ClientConfig.CipherSuites = []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256}
+	testCase.ServerConfig.CipherSuites = []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256}
+
+	cert, key := getCertAndKey(testDelUsageRSACertificate, testDelUsageRSAPrivateKey)
+	certificate := &Certificate{
+		Certificate: [][]byte{cert.Raw},
+		Leaf:        cert,
+		PrivateKey:  key,
+	}
+	testCase.ServerConfig.Certificates = nil
+	testCase.ServerConfig.GetCertificate = NewDelCredGetCertificateFunction(certificate)
+	testCase.doHandshake(t)
+}
 
 // TLS 1.2 ECDHE+ECSDA with DC
 func TestDelCredHandshake12EC(t *testing.T) {
-	testCase := newTestCase()
+	testCase := DelCredHandshakeTestCase{
+		ClientConfig:      testConfig.Clone(),
+		ServerConfig:      testConfig.Clone(),
+		NumOfClientWrites: 2,
+		NumOfServerWrites: 2,
+	}
+	testCase.ClientConfig.UseDelegatedCredentials = true
 	testCase.ClientConfig.CipherSuites = []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
 	testCase.ServerConfig.CipherSuites = []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
 
@@ -176,7 +189,6 @@ func TestDelCredHandshake12EC(t *testing.T) {
 	}
 	testCase.ServerConfig.Certificates = nil
 	testCase.ServerConfig.GetCertificate = NewDelCredGetCertificateFunction(certificate)
-
 	testCase.doHandshake(t)
 }
 
@@ -207,7 +219,7 @@ func expectError(err error, expectedError string, t *testing.T) {
 	}
 }
 
-type DelegatedCredentialsTestCase struct {
+type DelCredHandshakeTestCase struct {
 	ClientConfig           *Config
 	ServerConfig           *Config
 	ExpectedClientErrorMsg string
@@ -216,7 +228,7 @@ type DelegatedCredentialsTestCase struct {
 	NumOfServerWrites      int
 }
 
-func (testCase DelegatedCredentialsTestCase) doHandshake(t *testing.T) {
+func (testCase DelCredHandshakeTestCase) doHandshake(t *testing.T) {
 	c, s := net.Pipe()
 	clientWCC := &writeCountingConn{Conn: c}
 	serverWCC := &writeCountingConn{Conn: s}
@@ -241,23 +253,6 @@ func (testCase DelegatedCredentialsTestCase) doHandshake(t *testing.T) {
 	if n := serverWCC.numWrites; n != testCase.NumOfServerWrites {
 		t.Errorf("expected server handshake to complete with %d write, but saw %d", testCase.NumOfServerWrites, n)
 	}
-}
-
-func newTestCase() DelegatedCredentialsTestCase {
-	testCase := DelegatedCredentialsTestCase{
-		ClientConfig:      testConfig.Clone(),
-		ServerConfig:      testConfig.Clone(),
-		NumOfClientWrites: 2,
-		NumOfServerWrites: 2,
-	}
-	testCase.ClientConfig.UseDelegatedCredentials = true
-	testCase.ClientConfig.MinVersion = VersionTLS12
-	testCase.ClientConfig.MaxVersion = VersionTLS12
-	testCase.ClientConfig.CipherSuites = []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256}
-
-	testCase.ServerConfig.MaxVersion = VersionTLS12
-	testCase.ServerConfig.CipherSuites = []uint16{TLS_RSA_WITH_AES_128_GCM_SHA256}
-	return testCase
 }
 
 const testNoDelUsageRSACertificate = `

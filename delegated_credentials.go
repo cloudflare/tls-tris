@@ -71,20 +71,21 @@ func selectVersion(versions []uint16) uint16 {
 	return 0
 }
 
-// Selects signature scheme based on the client's advertised schemes and the cert's capabilities,
-// ECDSA is favored over RSA
+// Selects signature scheme based on the client's advertised schemes and the cert's capabilities
 func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certificate) SignatureScheme {
 
-	var selectedScheme SignatureScheme
 	for _, scheme := range signatureSchemes {
-		if scheme == ECDSAWithP256AndSHA256 && cert.PublicKeyAlgorithm == x509.ECDSA {
+		if cert.PublicKeyAlgorithm == x509.ECDSA && scheme == ECDSAWithP256AndSHA256 {
 			return ECDSAWithP256AndSHA256
-		} else if scheme == PSSWithSHA256 && cert.PublicKeyAlgorithm == x509.RSA {
-			selectedScheme = PSSWithSHA256
-			// intentionally no return - ECDSA has priority
+		} else if cert.PublicKeyAlgorithm == x509.RSA {
+			if scheme == PSSWithSHA256 {
+				return PSSWithSHA256
+			} else if scheme == PKCS1WithSHA256 {
+				return PKCS1WithSHA256
+			}
 		}
 	}
-	return selectedScheme
+	return 0
 }
 
 // Creates new Delegated Credential. The type of the credential is decided based on the selected
@@ -169,7 +170,7 @@ func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, v
 		return dc, errors.New("expired")
 	}
 	signatureScheme := SignatureScheme(credentialBytes[publicKeyLength+7])<<8 + SignatureScheme(credentialBytes[publicKeyLength+8])
-	if signatureScheme != ECDSAWithP256AndSHA256 && signatureScheme != PSSWithSHA256 {
+	if signatureScheme != ECDSAWithP256AndSHA256 && signatureScheme != PSSWithSHA256 && signatureScheme != PKCS1WithSHA256 {
 		return dc, errors.New("unsupported signature scheme")
 	}
 
@@ -199,6 +200,9 @@ func verify(cred []byte, cert *x509.Certificate, scheme SignatureScheme, version
 		}
 		err = rsa.VerifyPSS(cert.PublicKey.(*rsa.PublicKey), hashFunc, digest, signature, opts)
 
+	} else if scheme == PKCS1WithSHA256 {
+		err = rsa.VerifyPKCS1v15(cert.PublicKey.(*rsa.PublicKey), hashFunc, digest, signature)
+
 	} else {
 		err = errors.New("unknown signature algorithm")
 	}
@@ -214,6 +218,8 @@ func sign(cred []byte, cert *Certificate, scheme SignatureScheme, version uint16
 	var opts crypto.SignerOpts
 	if scheme == PSSWithSHA256 {
 		opts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: hashFunc}
+	} else {
+		opts = hashFunc
 	}
 	signature, err = cert.PrivateKey.(crypto.Signer).Sign(rand.Reader, digest, opts)
 
