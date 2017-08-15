@@ -1415,9 +1415,10 @@ func (m *certificateMsg) unmarshal(data []byte) alert {
 }
 
 type certificateEntry struct {
-	data       []byte
-	ocspStaple []byte
-	sctList    [][]byte
+	data                []byte
+	ocspStaple          []byte
+	delegatedCredential []byte
+	sctList             [][]byte
 }
 
 type certificateMsg13 struct {
@@ -1438,6 +1439,7 @@ func (m *certificateMsg13) equal(i interface{}) bool {
 	for i, _ := range m.certificates {
 		ok := bytes.Equal(m.certificates[i].data, m1.certificates[i].data)
 		ok = ok && bytes.Equal(m.certificates[i].ocspStaple, m1.certificates[i].ocspStaple)
+		ok = ok && bytes.Equal(m.certificates[i].delegatedCredential, m1.certificates[i].delegatedCredential)
 		ok = ok && eqByteSlices(m.certificates[i].sctList, m1.certificates[i].sctList)
 		if !ok {
 			return false
@@ -1458,6 +1460,9 @@ func (m *certificateMsg13) marshal() (x []byte) {
 		i += len(cert.data)
 		if len(cert.ocspStaple) != 0 {
 			i += 8 + len(cert.ocspStaple)
+		}
+		if len(cert.delegatedCredential) != 0 {
+			i += 4 + len(cert.delegatedCredential)
 		}
 		if len(cert.sctList) != 0 {
 			i += 6
@@ -1515,6 +1520,18 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			z = z[8+stapleLen:]
 
 			extensionLen += 8 + stapleLen
+		}
+		if len(cert.delegatedCredential) != 0 {
+			credentialLen := len(cert.delegatedCredential)
+			z[0] = uint8(extensionDelegatedCredential >> 8)
+			z[1] = uint8(extensionDelegatedCredential & 0xff)
+			z[2] = uint8(credentialLen >> 8)
+			z[3] = uint8(credentialLen)
+
+			copy(z[4:], cert.delegatedCredential)
+			z = z[4+credentialLen:]
+
+			extensionLen += 4 + credentialLen
 		}
 		if len(cert.sctList) != 0 {
 			z[0] = uint8(extensionSCT >> 8)
@@ -1623,6 +1640,12 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 					return alertDecodeError
 				}
 				m.certificates[i].ocspStaple = body[4:]
+
+			case extensionDelegatedCredential:
+				if len(body) < 2 {
+					return alertDecodeError
+				}
+				m.certificates[i].delegatedCredential = body[0:]
 
 			case extensionSCT:
 				if len(body) < 2 {
