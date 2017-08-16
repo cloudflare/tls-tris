@@ -30,10 +30,9 @@ type DelegatedCredential struct {
 	PublicKey interface{}
 }
 
-func NewDelCredGetCertificateFunction(cert *Certificate) GetCertificate {
+func NewDelegatedCredentialsGetCertificate(cert *Certificate) GetCertificate {
 
 	return func(clientHelloInfo *ClientHelloInfo) (*Certificate, error) {
-
 		if !isCertificateValidForDelegationUsage(cert.Leaf) {
 			return nil, errors.New("tls: Delegated Credentials not supported by the certificate (DelegationUsage extension missing)")
 		}
@@ -60,7 +59,6 @@ func NewDelCredGetCertificateFunction(cert *Certificate) GetCertificate {
 }
 
 func selectVersion(versions []uint16) uint16 {
-
 	for _, version := range versions {
 		if version == VersionTLS13 {
 			return VersionTLS13
@@ -73,7 +71,6 @@ func selectVersion(versions []uint16) uint16 {
 
 // Selects signature scheme based on the client's advertised schemes and the cert's capabilities
 func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certificate) SignatureScheme {
-
 	for _, scheme := range signatureSchemes {
 		if cert.PublicKeyAlgorithm == x509.ECDSA && scheme == ECDSAWithP256AndSHA256 {
 			return ECDSAWithP256AndSHA256
@@ -91,7 +88,6 @@ func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certif
 // Creates new Delegated Credential. The type of the credential is decided based on the selected
 // SignatureScheme to ensure client's support
 func createDelegatedCredential(certificate *x509.Certificate, scheme SignatureScheme) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
-
 	validTill := time.Now().Add(CredentialsValidity)
 	relativeToCert := validTill.Sub(certificate.NotBefore)
 	credential = DelegatedCredential{
@@ -101,7 +97,6 @@ func createDelegatedCredential(certificate *x509.Certificate, scheme SignatureSc
 	if scheme == ECDSAWithP256AndSHA256 {
 		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		credential.PublicKey = privateKey.(crypto.Signer).Public()
-
 	} else {
 		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
 		credential.PublicKey = privateKey.(crypto.Decrypter).Public()
@@ -112,7 +107,6 @@ func createDelegatedCredential(certificate *x509.Certificate, scheme SignatureSc
 // Checks certificate if it contains the DelegationUsage extension
 // required for Delegated Credentials
 func isCertificateValidForDelegationUsage(certificate *x509.Certificate) bool {
-
 	for _, extension := range certificate.Extensions {
 		if extension.Id.Equal(DelegatedCredentialsIdentifier) {
 			return true
@@ -122,7 +116,6 @@ func isCertificateValidForDelegationUsage(certificate *x509.Certificate) bool {
 }
 
 func (dc DelegatedCredential) marshalAndSign(cert *Certificate, scheme SignatureScheme, version uint16) ([]byte, error) {
-
 	cred := make([]byte, 2000)
 	cred[0] = uint8(dc.ValidTime >> 24)
 	cred[1] = uint8(dc.ValidTime >> 16)
@@ -151,7 +144,6 @@ func (dc DelegatedCredential) marshalAndSign(cert *Certificate, scheme Signature
 }
 
 func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, version uint16) (dc DelegatedCredential, err error) {
-
 	dc = DelegatedCredential{}
 	if !isCertificateValidForDelegationUsage(certificate) {
 		return dc, fmt.Errorf("tls: delegated credentials not supported by the certificate (DelegationUsage extension missing)")
@@ -183,7 +175,6 @@ func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, v
 }
 
 func verify(cred []byte, cert *x509.Certificate, scheme SignatureScheme, version uint16, publicKeyLength int, signature []byte) (err error) {
-
 	hashFunc := crypto.SHA256 // only SHA-256 is currently supported
 	digest := getHash(cred, cert, version, hashFunc, publicKeyLength)
 
@@ -193,16 +184,13 @@ func verify(cred []byte, cert *x509.Certificate, scheme SignatureScheme, version
 		if !ecdsa.Verify(cert.PublicKey.(*ecdsa.PublicKey), digest, ecdsaSig.R, ecdsaSig.S) {
 			err = errors.New("ECDSA verification failed")
 		}
-
 	} else if scheme == PSSWithSHA256 {
 		opts := &rsa.PSSOptions{
 			SaltLength: rsa.PSSSaltLengthEqualsHash,
 		}
 		err = rsa.VerifyPSS(cert.PublicKey.(*rsa.PublicKey), hashFunc, digest, signature, opts)
-
 	} else if scheme == PKCS1WithSHA256 {
 		err = rsa.VerifyPKCS1v15(cert.PublicKey.(*rsa.PublicKey), hashFunc, digest, signature)
-
 	} else {
 		err = errors.New("unknown signature algorithm")
 	}
@@ -211,7 +199,6 @@ func verify(cred []byte, cert *x509.Certificate, scheme SignatureScheme, version
 }
 
 func sign(cred []byte, cert *Certificate, scheme SignatureScheme, version uint16, publicKeyLength int) (signature []byte, err error) {
-
 	hashFunc := crypto.SHA256 // only SHA-256 is currently supported
 	digest := getHash(cred, cert.Leaf, version, hashFunc, publicKeyLength)
 
@@ -229,7 +216,6 @@ func sign(cred []byte, cert *Certificate, scheme SignatureScheme, version uint16
 // Returns hash of the credential adding some additional fields
 // as defined in the RFC draft
 func getHash(cred []byte, certificate *x509.Certificate, version uint16, hashFunc crypto.Hash, publicKeyLength int) []byte {
-
 	// 64x 0x20, 33 long string, version, DER certificate, signature scheme, DC data
 	toSign := make([]byte, 64+33+2+len(certificate.RawTBSCertificate)+2+4+publicKeyLength)
 	for i := 0; i < 64; i++ {

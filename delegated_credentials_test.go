@@ -19,14 +19,13 @@ import (
 	"time"
 )
 
-func TestDelCredGetCertificateFunctionWithInvalidSignatureScheme(t *testing.T) {
-
+func TestGetCertificateFunctionWithInvalidSignatureScheme(t *testing.T) {
 	cert := getTLSCertificate(testDelUsageECCertificate, testDelUsageECPrivateKey)
 	clientHelloInfo := &ClientHelloInfo{
 		CipherSuites:      []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelCredGetCertificateFunction(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "No valid signature scheme", t)
@@ -48,29 +47,27 @@ func TestDelCredGetCertificateFunctionWithInvalidSignatureScheme(t *testing.T) {
 	expectError(err, "", t)
 }
 
-func TestDelCredGetCertificateFunctionWithInvalidCertificate(t *testing.T) {
-
+func TestGetCertificateFunctionWithInvalidCertificate(t *testing.T) {
 	cert := getTLSCertificate(testNoDelUsageRSACertificate, testNoDelUsageRSAPrivateKey)
 	clientHelloInfo := &ClientHelloInfo{
 		CipherSuites:      []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelCredGetCertificateFunction(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "Delegated Credentials not supported by the certificate (DelegationUsage extension missing)", t)
 }
 
-func TestDelCredGetCertificateFunction(t *testing.T) {
-
+func TestGetCertificateFunction(t *testing.T) {
 	cert := getTLSCertificate(testDelUsageECCertificate, testDelUsageECPrivateKey)
 	clientHelloInfo := &ClientHelloInfo{
 		CipherSuites:      []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelCredGetCertificateFunction(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
 
 	delCredCert, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "", t)
@@ -80,8 +77,7 @@ func TestDelCredGetCertificateFunction(t *testing.T) {
 	}
 }
 
-func TestDelCredSelectSignatureScheme(t *testing.T) {
-
+func TestSelectSignatureScheme(t *testing.T) {
 	certificate, _ := getCertAndKey(testDelUsageECCertificate, testDelUsageECPrivateKey)
 	schemes := []SignatureScheme{ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512}
 	if s := selectSignatureScheme(schemes, certificate); s != ECDSAWithP256AndSHA256 {
@@ -103,8 +99,7 @@ func TestDelCredSelectSignatureScheme(t *testing.T) {
 	}
 }
 
-func TestDelCredIsCertificateValid(t *testing.T) {
-
+func TestIsCertificateValid(t *testing.T) {
 	certRSA, _ := getCertAndKey(testDelUsageRSACertificate, testDelUsageRSAPrivateKey)
 	certEC, _ := getCertAndKey(testDelUsageECCertificate, testDelUsageECPrivateKey)
 	if !isCertificateValidForDelegationUsage(certRSA) || !isCertificateValidForDelegationUsage(certEC) {
@@ -116,8 +111,7 @@ func TestDelCredIsCertificateValid(t *testing.T) {
 	}
 }
 
-func TestDelCredMarshalling(t *testing.T) {
-
+func TestMarshalling(t *testing.T) {
 	cert := getTLSCertificate(testDelUsageECCertificate, testDelUsageECPrivateKey)
 	validTill := time.Now().Add(CredentialsValidity)
 	relativeToCert := validTill.Sub(cert.Leaf.NotBefore)
@@ -147,8 +141,8 @@ func TestDelCredMarshalling(t *testing.T) {
 // ---------------- integration tests ---------------- //
 
 // TLS 1.2 RSA with DC
-func TestDelCredHandshake12RSA(t *testing.T) {
-	testCase := DelCredHandshakeTestCase{
+func TestDelegatedCredentialsHandshake12RSA(t *testing.T) {
+	testCase := testCase{
 		ClientConfig:      testConfig.Clone(),
 		ServerConfig:      testConfig.Clone(),
 		NumOfClientWrites: 2,
@@ -165,13 +159,13 @@ func TestDelCredHandshake12RSA(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelCredGetCertificateFunction(certificate)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate)
 	testCase.doHandshake(t)
 }
 
 // TLS 1.2 ECDHE+ECSDA with DC
-func TestDelCredHandshake12EC(t *testing.T) {
-	testCase := DelCredHandshakeTestCase{
+func TestDelegatedCredentialsHandshake12EC(t *testing.T) {
+	testCase := testCase{
 		ClientConfig:      testConfig.Clone(),
 		ServerConfig:      testConfig.Clone(),
 		NumOfClientWrites: 2,
@@ -188,7 +182,7 @@ func TestDelCredHandshake12EC(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelCredGetCertificateFunction(certificate)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate)
 	testCase.doHandshake(t)
 }
 
@@ -204,7 +198,6 @@ func getTLSCertificate(cert string, privateKey string) *Certificate {
 }
 
 func expectError(err error, expectedError string, t *testing.T) {
-
 	if expectedError != "" {
 		if err == nil {
 			t.Errorf("client unexpectedly returned no error")
@@ -219,7 +212,7 @@ func expectError(err error, expectedError string, t *testing.T) {
 	}
 }
 
-type DelCredHandshakeTestCase struct {
+type testCase struct {
 	ClientConfig           *Config
 	ServerConfig           *Config
 	ExpectedClientErrorMsg string
@@ -228,7 +221,7 @@ type DelCredHandshakeTestCase struct {
 	NumOfServerWrites      int
 }
 
-func (testCase DelCredHandshakeTestCase) doHandshake(t *testing.T) {
+func (testCase testCase) doHandshake(t *testing.T) {
 	c, s := net.Pipe()
 	clientWCC := &writeCountingConn{Conn: c}
 	serverWCC := &writeCountingConn{Conn: s}
@@ -398,7 +391,6 @@ DbPjmrU+FDy/UKzEdQzVGpY6dnSIHP9tMQ==
 `
 
 func getCertAndKey(certificate string, privateKey string) (*x509.Certificate, crypto.PrivateKey) {
-
 	keyBlock, _ := pem.Decode([]byte(privateKey))
 	certBlock, _ := pem.Decode([]byte(certificate))
 	cert, err := x509.ParseCertificate(certBlock.Bytes)
