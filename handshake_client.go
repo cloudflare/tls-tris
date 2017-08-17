@@ -327,7 +327,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 
 		if hs.hello.delegatedCredentials && len(hs.serverHello.delegatedCredential) > 0 {
 
-			dc, err := unmarshalAndVerify(hs.serverHello.delegatedCredential, certs[0], hs.c.vers)
+			dc, err := unmarshalAndVerify(hs.serverHello.delegatedCredential, certs[0], hs.c.vers, hs.c.config.Time)
 			if err != nil {
 				c.sendAlert(alertBadCertificate)
 				return fmt.Errorf("tls: server provided invalid Delegated Credential (%s)", err)

@@ -17,10 +17,6 @@ import (
 	"time"
 )
 
-const (
-	CredentialsValidity time.Duration = 5 * time.Minute
-)
-
 var DelegatedCredentialsIdentifier = asn1.ObjectIdentifier{2, 5, 29, 99}
 
 type GetCertificate func(*ClientHelloInfo) (*Certificate, error)
@@ -30,7 +26,23 @@ type DelegatedCredential struct {
 	PublicKey interface{}
 }
 
-func NewDelegatedCredentialsGetCertificate(cert *Certificate) GetCertificate {
+type CachedCredential struct {
+	credential []byte
+	validTime  int64
+	privateKey crypto.PrivateKey
+}
+
+type CredentialsSetup struct {
+	scheme   SignatureScheme
+	cert     *Certificate
+	version  uint16
+	validity time.Duration
+	timeFunc func() time.Time
+}
+
+var cachedCredentials map[SignatureScheme]*CachedCredential
+
+func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Duration, timeFunc func() time.Time) GetCertificate {
 
 	return func(clientHelloInfo *ClientHelloInfo) (*Certificate, error) {
 		if !isCertificateValidForDelegationUsage(cert.Leaf) {
@@ -45,17 +57,49 @@ func NewDelegatedCredentialsGetCertificate(cert *Certificate) GetCertificate {
 			return nil, errors.New("tls: Only TLS 1.2 or 1.3 are supported")
 		}
 
-		// todo "caching"
-		credential, privateKey, err := createDelegatedCredential(cert.Leaf, selectedScheme)
-		credentialBytes, err := credential.marshalAndSign(cert, selectedScheme, version)
+		err := fetchCredentialFromCache(&CredentialsSetup{
+			scheme:   selectedScheme,
+			cert:     cert,
+			version:  version,
+			validity: validity,
+			timeFunc: timeFunc,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("tls: creating Delegated Credential failed (%s)", err)
+			return nil, err
 		}
 
-		cert.DelegatedCredential = credentialBytes
-		cert.PrivateKey = privateKey
+		cert.DelegatedCredential = cachedCredentials[selectedScheme].credential
+		cert.PrivateKey = cachedCredentials[selectedScheme].privateKey
 		return cert, nil
 	}
+}
+
+func fetchCredentialFromCache(setup *CredentialsSetup) (err error) {
+	if cachedCredentials == nil {
+		cachedCredentials = make(map[SignatureScheme]*CachedCredential)
+	}
+	if cachedCredentials[setup.scheme] == nil {
+		cachedCredentials[setup.scheme], err = newCredential(setup)
+	} else {
+		err := checkValidity(cachedCredentials[setup.scheme].validTime, setup.cert.Leaf, setup.timeFunc)
+		if err != nil {
+			cachedCredentials[setup.scheme], err = newCredential(setup)
+		}
+	}
+	return
+}
+
+func newCredential(setup *CredentialsSetup) (*CachedCredential, error) {
+	credential, privateKey, err := createDelegatedCredential(setup)
+	credentialBytes, err := credential.marshalAndSign(setup.cert, setup.scheme, setup.version)
+	if err != nil {
+		return nil, fmt.Errorf("tls: creating Delegated Credential failed (%s)", err)
+	}
+	return &CachedCredential{
+		credential: credentialBytes,
+		validTime:  credential.ValidTime,
+		privateKey: privateKey,
+	}, nil
 }
 
 func selectVersion(versions []uint16) uint16 {
@@ -87,14 +131,14 @@ func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certif
 
 // Creates new Delegated Credential. The type of the credential is decided based on the selected
 // SignatureScheme to ensure client's support
-func createDelegatedCredential(certificate *x509.Certificate, scheme SignatureScheme) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
-	validTill := time.Now().Add(CredentialsValidity)
-	relativeToCert := validTill.Sub(certificate.NotBefore)
+func createDelegatedCredential(setup *CredentialsSetup) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
+	validTill := setup.timeFunc().Add(setup.validity)
+	relativeToCert := validTill.Sub(setup.cert.Leaf.NotBefore)
 	credential = DelegatedCredential{
 		ValidTime: int64(relativeToCert.Seconds()),
 	}
 
-	if scheme == ECDSAWithP256AndSHA256 {
+	if setup.scheme == ECDSAWithP256AndSHA256 {
 		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		credential.PublicKey = privateKey.(crypto.Signer).Public()
 	} else {
@@ -115,7 +159,7 @@ func isCertificateValidForDelegationUsage(certificate *x509.Certificate) bool {
 	return false
 }
 
-func (dc DelegatedCredential) marshalAndSign(cert *Certificate, scheme SignatureScheme, version uint16) ([]byte, error) {
+func (dc *DelegatedCredential) marshalAndSign(cert *Certificate, scheme SignatureScheme, version uint16) ([]byte, error) {
 	cred := make([]byte, 2000)
 	cred[0] = uint8(dc.ValidTime >> 24)
 	cred[1] = uint8(dc.ValidTime >> 16)
@@ -130,7 +174,7 @@ func (dc DelegatedCredential) marshalAndSign(cert *Certificate, scheme Signature
 
 	copy(cred[7:7+publicKeyLength], publicKeyBytes)
 
-	cred[publicKeyLength+7] = uint8(scheme >> 8) // hash
+	cred[publicKeyLength+7] = uint8(scheme >> 8) // hash - todo different in 1.3
 	cred[publicKeyLength+8] = uint8(scheme)      // signature
 
 	signature, err := sign(cred, cert, scheme, version, publicKeyLength)
@@ -143,7 +187,15 @@ func (dc DelegatedCredential) marshalAndSign(cert *Certificate, scheme Signature
 	return cred[0 : publicKeyLength+11+signatureLength], err
 }
 
-func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, version uint16) (dc DelegatedCredential, err error) {
+func checkValidity(validTime int64, certificate *x509.Certificate, now func() time.Time) error {
+	validTill := certificate.NotBefore.Add(time.Duration(validTime) * time.Second)
+	if validTill.Before(now()) {
+		return errors.New("expired")
+	}
+	return nil
+}
+
+func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, version uint16, now func() time.Time) (dc DelegatedCredential, err error) {
 	dc = DelegatedCredential{}
 	if !isCertificateValidForDelegationUsage(certificate) {
 		return dc, fmt.Errorf("tls: delegated credentials not supported by the certificate (DelegationUsage extension missing)")
@@ -154,13 +206,11 @@ func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, v
 	PublicKeyBytes := make([]byte, publicKeyLength)
 	copy(PublicKeyBytes, credentialBytes[7:7+publicKeyLength])
 	dc.PublicKey, err = x509.ParsePKIXPublicKey(PublicKeyBytes)
+	err = checkValidity(dc.ValidTime, certificate, now)
 	if err != nil {
 		return dc, err
 	}
-	validTill := certificate.NotBefore.Add(time.Duration(dc.ValidTime) * time.Second)
-	if validTill.Before(time.Now()) {
-		return dc, errors.New("expired")
-	}
+
 	signatureScheme := SignatureScheme(credentialBytes[publicKeyLength+7])<<8 + SignatureScheme(credentialBytes[publicKeyLength+8])
 	if signatureScheme != ECDSAWithP256AndSHA256 && signatureScheme != PSSWithSHA256 && signatureScheme != PKCS1WithSHA256 {
 		return dc, errors.New("unsupported signature scheme")

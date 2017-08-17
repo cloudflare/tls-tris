@@ -25,7 +25,7 @@ func TestGetCertificateFunctionWithInvalidSignatureScheme(t *testing.T) {
 		CipherSuites:      []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "No valid signature scheme", t)
@@ -54,7 +54,7 @@ func TestGetCertificateFunctionWithInvalidCertificate(t *testing.T) {
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "Delegated Credentials not supported by the certificate (DelegationUsage extension missing)", t)
@@ -67,7 +67,7 @@ func TestGetCertificateFunction(t *testing.T) {
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
 
 	delCredCert, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "", t)
@@ -113,7 +113,7 @@ func TestIsCertificateValid(t *testing.T) {
 
 func TestMarshalling(t *testing.T) {
 	cert := getTLSCertificate(testDelUsageECCertificate, testDelUsageECPrivateKey)
-	validTill := time.Now().Add(CredentialsValidity)
+	validTill := time.Now().Add(5 * time.Minute)
 	relativeToCert := validTill.Sub(cert.Leaf.NotBefore)
 
 	credentialBefore := DelegatedCredential{
@@ -123,9 +123,9 @@ func TestMarshalling(t *testing.T) {
 	credentialBefore.PublicKey = privateKey.Public()
 
 	credentialBytes, err := credentialBefore.marshalAndSign(cert, SignatureScheme(ECDSAWithP256AndSHA256), VersionTLS12)
-	credentialAfter, err := unmarshalAndVerify(credentialBytes, cert.Leaf, VersionTLS11) // wrong version -> wrong signature -> error
+	credentialAfter, err := unmarshalAndVerify(credentialBytes, cert.Leaf, VersionTLS11, testConfig.Time) // wrong version -> wrong signature -> error
 	expectError(err, "ECDSA verification failed", t)
-	credentialAfter, err = unmarshalAndVerify(credentialBytes, cert.Leaf, VersionTLS12) // correct version -> ok
+	credentialAfter, err = unmarshalAndVerify(credentialBytes, cert.Leaf, VersionTLS12, testConfig.Time) // correct version -> ok
 	expectError(err, "", t)
 
 	if credentialBefore.ValidTime != credentialAfter.ValidTime {
@@ -159,8 +159,70 @@ func TestDelegatedCredentialsHandshake12RSA(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, testCase.ServerConfig.Time)
 	testCase.doHandshake(t)
+}
+
+func TestDelegatedCredentialCache(t *testing.T) {
+
+	timeCounter := time.Unix(0, 0)
+	now := func() time.Time {
+		return timeCounter
+	}
+
+	serverConfig := testConfig.Clone()
+	cert, key := getCertAndKey(testDelUsageRSACertificate, testDelUsageRSAPrivateKey)
+	certificate := &Certificate{
+		Certificate: [][]byte{cert.Raw},
+		Leaf:        cert,
+		PrivateKey:  key,
+	}
+	serverConfig.Certificates = nil
+	serverConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, now)
+
+	clientHello := &clientHelloMsg{
+		vers:                 VersionTLS12,
+		compressionMethods:   []uint8{compressionNone},
+		random:               make([]byte, 32),
+		cipherSuites:         []uint16{TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256},
+		delegatedCredentials: true,
+		signatureAndHashes:   supportedSignatureAlgorithms,
+		supportedCurves:      testConfig.curvePreferences(),
+		supportedPoints:      []uint8{pointFormatUncompressed},
+	}
+	var reply interface{}
+	var err error
+
+	getCredentialFromServer := func() []byte {
+		c, s := net.Pipe()
+		go func() {
+			server := Server(s, serverConfig)
+			server.Handshake()
+		}()
+
+		client := Client(c, testConfig)
+		client.writeRecord(recordTypeHandshake, clientHello.marshal())
+		reply, err = client.readHandshake()
+		if err != nil {
+			t.Fatal(err)
+		}
+		serverHello, _ := reply.(*serverHelloMsg)
+
+		c.Close()
+		s.Close()
+		return serverHello.delegatedCredential
+	}
+
+	a := getCredentialFromServer()
+	b := getCredentialFromServer()
+	if !bytes.Equal(a, b) {
+		t.Errorf("The delegated credentials should match (its validity should be ok)")
+	}
+	timeCounter = timeCounter.Add(10 * time.Minute) // will expire -> new DC
+	c := getCredentialFromServer()
+	if bytes.Equal(a, c) {
+		t.Errorf("The delegated credentials should not match (first one is expired)")
+	}
 }
 
 // TLS 1.2 ECDHE+ECSDA with DC
@@ -182,7 +244,7 @@ func TestDelegatedCredentialsHandshake12EC(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, testCase.ServerConfig.Time)
 	testCase.doHandshake(t)
 }
 
