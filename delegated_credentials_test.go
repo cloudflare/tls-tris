@@ -164,7 +164,6 @@ func TestDelegatedCredentialsHandshake12RSA(t *testing.T) {
 }
 
 func TestDelegatedCredentialCache(t *testing.T) {
-
 	timeCounter := time.Unix(0, 0)
 	now := func() time.Time {
 		return timeCounter

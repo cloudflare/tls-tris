@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var DelegatedCredentialsIdentifier = asn1.ObjectIdentifier{2, 5, 29, 99}
+var delegatedCredentialsIdentifier = asn1.ObjectIdentifier{2, 5, 29, 99}
 
 type GetCertificate func(*ClientHelloInfo) (*Certificate, error)
 
@@ -26,13 +26,13 @@ type DelegatedCredential struct {
 	PublicKey interface{}
 }
 
-type CachedCredential struct {
+type cachedCredential struct {
 	credential []byte
 	validTime  int64
 	privateKey crypto.PrivateKey
 }
 
-type CredentialsSetup struct {
+type credentialsSetup struct {
 	scheme   SignatureScheme
 	cert     *Certificate
 	version  uint16
@@ -40,10 +40,11 @@ type CredentialsSetup struct {
 	timeFunc func() time.Time
 }
 
-var cachedCredentials map[SignatureScheme]*CachedCredential
+var cachedCredentials map[SignatureScheme]*cachedCredential
 
+// Creates new GetCertificate function which modifies the certificate
+// to include a delegated credential.
 func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Duration, timeFunc func() time.Time) GetCertificate {
-
 	return func(clientHelloInfo *ClientHelloInfo) (*Certificate, error) {
 		if !isCertificateValidForDelegationUsage(cert.Leaf) {
 			return nil, errors.New("tls: Delegated Credentials not supported by the certificate (DelegationUsage extension missing)")
@@ -57,7 +58,7 @@ func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Dura
 			return nil, errors.New("tls: Only TLS 1.2 or 1.3 are supported")
 		}
 
-		err := fetchCredentialFromCache(&CredentialsSetup{
+		err := fetchCredentialFromCache(&credentialsSetup{
 			scheme:   selectedScheme,
 			cert:     cert,
 			version:  version,
@@ -74,9 +75,11 @@ func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Dura
 	}
 }
 
-func fetchCredentialFromCache(setup *CredentialsSetup) (err error) {
+// Checks if a credential is already stored in memory. If not or the credential
+// is already expired a new credential is created.
+func fetchCredentialFromCache(setup *credentialsSetup) (err error) {
 	if cachedCredentials == nil {
-		cachedCredentials = make(map[SignatureScheme]*CachedCredential)
+		cachedCredentials = make(map[SignatureScheme]*cachedCredential)
 	}
 	if cachedCredentials[setup.scheme] == nil {
 		cachedCredentials[setup.scheme], err = newCredential(setup)
@@ -89,13 +92,13 @@ func fetchCredentialFromCache(setup *CredentialsSetup) (err error) {
 	return
 }
 
-func newCredential(setup *CredentialsSetup) (*CachedCredential, error) {
+func newCredential(setup *credentialsSetup) (*cachedCredential, error) {
 	credential, privateKey, err := createDelegatedCredential(setup)
 	credentialBytes, err := credential.marshalAndSign(setup.cert, setup.scheme, setup.version)
 	if err != nil {
 		return nil, fmt.Errorf("tls: creating Delegated Credential failed (%s)", err)
 	}
-	return &CachedCredential{
+	return &cachedCredential{
 		credential: credentialBytes,
 		validTime:  credential.ValidTime,
 		privateKey: privateKey,
@@ -130,8 +133,8 @@ func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certif
 }
 
 // Creates new Delegated Credential. The type of the credential is decided based on the selected
-// SignatureScheme to ensure client's support
-func createDelegatedCredential(setup *CredentialsSetup) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
+// SignatureScheme to ensure client's support.
+func createDelegatedCredential(setup *credentialsSetup) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
 	validTill := setup.timeFunc().Add(setup.validity)
 	relativeToCert := validTill.Sub(setup.cert.Leaf.NotBefore)
 	credential = DelegatedCredential{
@@ -148,17 +151,19 @@ func createDelegatedCredential(setup *CredentialsSetup) (credential DelegatedCre
 	return
 }
 
-// Checks certificate if it contains the DelegationUsage extension
-// required for Delegated Credentials
+// Checks certificate if it contains the DelegationUsage extension required
+// for Delegated Credentials.
 func isCertificateValidForDelegationUsage(certificate *x509.Certificate) bool {
 	for _, extension := range certificate.Extensions {
-		if extension.Id.Equal(DelegatedCredentialsIdentifier) {
+		if extension.Id.Equal(delegatedCredentialsIdentifier) {
 			return true
 		}
 	}
 	return false
 }
 
+// Marshals the credential and provides a signature based on the signature
+// scheme and the cert's private key.
 func (dc *DelegatedCredential) marshalAndSign(cert *Certificate, scheme SignatureScheme, version uint16) ([]byte, error) {
 	cred := make([]byte, 2000)
 	cred[0] = uint8(dc.ValidTime >> 24)
@@ -195,6 +200,7 @@ func checkValidity(validTime int64, certificate *x509.Certificate, now func() ti
 	return nil
 }
 
+// Unmarshals the credential and verifies its signature and its validity.
 func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, version uint16, now func() time.Time) (dc DelegatedCredential, err error) {
 	dc = DelegatedCredential{}
 	if !isCertificateValidForDelegationUsage(certificate) {
@@ -264,7 +270,7 @@ func sign(cred []byte, cert *Certificate, scheme SignatureScheme, version uint16
 }
 
 // Returns hash of the credential adding some additional fields
-// as defined in the RFC draft
+// as defined in the RFC draft.
 func getHash(cred []byte, certificate *x509.Certificate, version uint16, hashFunc crypto.Hash, publicKeyLength int) []byte {
 	// 64x 0x20, 33 long string, version, DER certificate, signature scheme, DC data
 	toSign := make([]byte, 64+33+2+len(certificate.RawTBSCertificate)+2+4+publicKeyLength)

@@ -326,7 +326,6 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		hs.serverPublicKey = certs[0].PublicKey
 
 		if hs.hello.delegatedCredentials && len(hs.serverHello.delegatedCredential) > 0 {
-
 			dc, err := unmarshalAndVerify(hs.serverHello.delegatedCredential, certs[0], hs.c.vers, hs.c.config.Time)
 			if err != nil {
 				c.sendAlert(alertBadCertificate)
