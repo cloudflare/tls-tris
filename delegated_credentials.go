@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+// After only renewThreshold of credential's validTime is left a new one is created
+const renewThreshold = 0.2
+
+// The Delegation Usage x509 extension identifier - temporary, TBD
 var delegatedCredentialsIdentifier = asn1.ObjectIdentifier{2, 5, 29, 99}
 
 type GetCertificate func(*ClientHelloInfo) (*Certificate, error)
@@ -30,26 +34,28 @@ type cachedCredential struct {
 	credential []byte
 	validTime  int64
 	privateKey crypto.PrivateKey
+	renewAfter time.Time
 }
 
-type credentialsSetup struct {
-	scheme   SignatureScheme
-	cert     *Certificate
-	version  uint16
-	validity time.Duration
-	timeFunc func() time.Time
+type CredentialsConfig struct {
+	Cert      *Certificate
+	Validity  time.Duration
+	scheme    SignatureScheme
+	version   uint16
+	timeFunc  func() time.Time
+	renewChan chan struct{}
 }
 
 var cachedCredentials map[SignatureScheme]*cachedCredential
 
 // Creates new GetCertificate function which modifies the certificate
 // to include a delegated credential.
-func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Duration, timeFunc func() time.Time) GetCertificate {
+func NewDelegatedCredentialsGetCertificate(config *CredentialsConfig) GetCertificate {
 	return func(clientHelloInfo *ClientHelloInfo) (*Certificate, error) {
-		if !isCertificateValidForDelegationUsage(cert.Leaf) {
+		if !isCertificateValidForDelegationUsage(config.Cert.Leaf) {
 			return nil, errors.New("tls: Delegated Credentials not supported by the certificate (DelegationUsage extension missing)")
 		}
-		selectedScheme := selectSignatureScheme(clientHelloInfo.SignatureSchemes, cert.Leaf)
+		selectedScheme := selectSignatureScheme(clientHelloInfo.SignatureSchemes, config.Cert.Leaf)
 		if selectedScheme == 0 {
 			return nil, errors.New("tls: No valid signature scheme found for Delegated Credentials")
 		}
@@ -57,44 +63,47 @@ func NewDelegatedCredentialsGetCertificate(cert *Certificate, validity time.Dura
 		if version == 0 {
 			return nil, errors.New("tls: Only TLS 1.2 or 1.3 are supported")
 		}
+		if config.timeFunc == nil {
+			config.timeFunc = time.Now
+		}
 
-		err := fetchCredentialFromCache(&credentialsSetup{
-			scheme:   selectedScheme,
-			cert:     cert,
-			version:  version,
-			validity: validity,
-			timeFunc: timeFunc,
-		})
+		config.scheme = selectedScheme
+		config.version = version
+		err := fetchCredentialFromCache(config)
 		if err != nil {
 			return nil, err
 		}
 
-		cert.DelegatedCredential = cachedCredentials[selectedScheme].credential
-		cert.PrivateKey = cachedCredentials[selectedScheme].privateKey
-		return cert, nil
+		config.Cert.DelegatedCredential = cachedCredentials[selectedScheme].credential
+		config.Cert.PrivateKey = cachedCredentials[selectedScheme].privateKey
+		return config.Cert, nil
 	}
 }
 
 // Checks if a credential is already stored in memory. If not or the credential
 // is already expired a new credential is created.
-func fetchCredentialFromCache(setup *credentialsSetup) (err error) {
+func fetchCredentialFromCache(config *CredentialsConfig) (err error) {
 	if cachedCredentials == nil {
 		cachedCredentials = make(map[SignatureScheme]*cachedCredential)
 	}
-	if cachedCredentials[setup.scheme] == nil {
-		cachedCredentials[setup.scheme], err = newCredential(setup)
+	if cachedCredentials[config.scheme] == nil {
+		cachedCredentials[config.scheme], err = newCredential(config)
 	} else {
-		err := checkValidity(cachedCredentials[setup.scheme].validTime, setup.cert.Leaf, setup.timeFunc)
-		if err != nil {
-			cachedCredentials[setup.scheme], err = newCredential(setup)
+		if config.timeFunc().After(cachedCredentials[config.scheme].renewAfter) {
+			go func() {
+				cachedCredentials[config.scheme], err = newCredential(config)
+				if config.renewChan != nil {
+					config.renewChan <- struct{}{}
+				}
+			}()
 		}
 	}
 	return
 }
 
-func newCredential(setup *credentialsSetup) (*cachedCredential, error) {
-	credential, privateKey, err := createDelegatedCredential(setup)
-	credentialBytes, err := credential.marshalAndSign(setup.cert, setup.scheme, setup.version)
+func newCredential(config *CredentialsConfig) (*cachedCredential, error) {
+	credential, privateKey, renewAfter, err := createDelegatedCredential(config)
+	credentialBytes, err := credential.marshalAndSign(config.Cert, config.scheme, config.version)
 	if err != nil {
 		return nil, fmt.Errorf("tls: creating Delegated Credential failed (%s)", err)
 	}
@@ -102,6 +111,7 @@ func newCredential(setup *credentialsSetup) (*cachedCredential, error) {
 		credential: credentialBytes,
 		validTime:  credential.ValidTime,
 		privateKey: privateKey,
+		renewAfter: renewAfter,
 	}, nil
 }
 
@@ -134,14 +144,15 @@ func selectSignatureScheme(signatureSchemes []SignatureScheme, cert *x509.Certif
 
 // Creates new Delegated Credential. The type of the credential is decided based on the selected
 // SignatureScheme to ensure client's support.
-func createDelegatedCredential(setup *credentialsSetup) (credential DelegatedCredential, privateKey crypto.PrivateKey, err error) {
-	validTill := setup.timeFunc().Add(setup.validity)
-	relativeToCert := validTill.Sub(setup.cert.Leaf.NotBefore)
+func createDelegatedCredential(config *CredentialsConfig) (credential DelegatedCredential, privateKey crypto.PrivateKey, renewAfter time.Time, err error) {
+	validTill := config.timeFunc().Add(config.Validity)
+	relativeToCert := validTill.Sub(config.Cert.Leaf.NotBefore)
+	renewAfter = validTill.Add(-time.Duration(config.Validity.Seconds()*renewThreshold) * time.Second)
 	credential = DelegatedCredential{
 		ValidTime: int64(relativeToCert.Seconds()),
 	}
 
-	if setup.scheme == ECDSAWithP256AndSHA256 {
+	if config.scheme == ECDSAWithP256AndSHA256 {
 		privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		credential.PublicKey = privateKey.(crypto.Signer).Public()
 	} else {
@@ -192,14 +203,6 @@ func (dc *DelegatedCredential) marshalAndSign(cert *Certificate, scheme Signatur
 	return cred[0 : publicKeyLength+11+signatureLength], err
 }
 
-func checkValidity(validTime int64, certificate *x509.Certificate, now func() time.Time) error {
-	validTill := certificate.NotBefore.Add(time.Duration(validTime) * time.Second)
-	if validTill.Before(now()) {
-		return errors.New("expired")
-	}
-	return nil
-}
-
 // Unmarshals the credential and verifies its signature and its validity.
 func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, version uint16, now func() time.Time) (dc DelegatedCredential, err error) {
 	dc = DelegatedCredential{}
@@ -212,9 +215,9 @@ func unmarshalAndVerify(credentialBytes []byte, certificate *x509.Certificate, v
 	PublicKeyBytes := make([]byte, publicKeyLength)
 	copy(PublicKeyBytes, credentialBytes[7:7+publicKeyLength])
 	dc.PublicKey, err = x509.ParsePKIXPublicKey(PublicKeyBytes)
-	err = checkValidity(dc.ValidTime, certificate, now)
-	if err != nil {
-		return dc, err
+	validTill := certificate.NotBefore.Add(time.Duration(dc.ValidTime) * time.Second)
+	if validTill.Before(now()) {
+		return dc, errors.New("expired")
 	}
 
 	signatureScheme := SignatureScheme(credentialBytes[publicKeyLength+7])<<8 + SignatureScheme(credentialBytes[publicKeyLength+8])

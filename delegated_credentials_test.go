@@ -25,7 +25,7 @@ func TestGetCertificateFunctionWithInvalidSignatureScheme(t *testing.T) {
 		CipherSuites:      []uint16{TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(&CredentialsConfig{Cert: cert, Validity: 5 * time.Minute})
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "No valid signature scheme", t)
@@ -54,7 +54,7 @@ func TestGetCertificateFunctionWithInvalidCertificate(t *testing.T) {
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(&CredentialsConfig{Cert: cert, Validity: 5 * time.Minute})
 
 	_, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "Delegated Credentials not supported by the certificate (DelegationUsage extension missing)", t)
@@ -67,7 +67,7 @@ func TestGetCertificateFunction(t *testing.T) {
 		SignatureSchemes:  []SignatureScheme{ECDSAWithP256AndSHA256},
 		SupportedVersions: []uint16{VersionTLS12},
 	}
-	getCertificateFn := NewDelegatedCredentialsGetCertificate(cert, 5*time.Minute, testConfig.Time)
+	getCertificateFn := NewDelegatedCredentialsGetCertificate(&CredentialsConfig{Cert: cert, Validity: 5 * time.Minute})
 
 	delCredCert, err := getCertificateFn(clientHelloInfo)
 	expectError(err, "", t)
@@ -138,6 +138,40 @@ func TestMarshalling(t *testing.T) {
 	}
 }
 
+func TestNewCredential(t *testing.T) {
+	cert := getTLSCertificate(testDelUsageECCertificate, testDelUsageECPrivateKey)
+	now := func() time.Time {
+		t, _ := time.Parse("Jan 2 15:04:05 2006", "Aug 2 15:00:00 2017")
+		return t
+	}
+	run := func(d time.Duration) *cachedCredential {
+		setup := CredentialsConfig{
+			scheme:   ECDSAWithP256AndSHA256,
+			Cert:     cert,
+			version:  VersionTLS12,
+			Validity: d,
+			timeFunc: now,
+		}
+		cred, err := newCredential(&setup)
+		if err != nil || cred.credential == nil {
+			t.Error("Unexpected error")
+		}
+		return cred
+	}
+
+	result := map[string]*cachedCredential{
+		"2017-08-02 15:04:00 +0000 UTC": run(5 * time.Minute),
+		"2017-08-02 15:00:08 +0000 UTC": run(10 * time.Second),
+		"2017-08-02 15:00:48 +0000 UTC": run(59 * time.Second),
+		"2017-08-02 18:12:00 +0000 UTC": run(4 * time.Hour),
+	}
+	for expected, actual := range result {
+		if actual.renewAfter.String() != expected {
+			t.Errorf("Expected cachedCredential's renewAfter time to be equal to %s, but was %s", expected, actual.renewAfter.String())
+		}
+	}
+}
+
 // ---------------- integration tests ---------------- //
 
 // TLS 1.2 RSA with DC
@@ -159,15 +193,16 @@ func TestDelegatedCredentialsHandshake12RSA(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, testCase.ServerConfig.Time)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(&CredentialsConfig{Cert: certificate, Validity: 5 * time.Minute})
 	testCase.doHandshake(t)
 }
 
 func TestDelegatedCredentialCache(t *testing.T) {
-	timeCounter := time.Unix(0, 0)
+	timeCounter, _ := time.Parse("Jan 2 15:04:05 2006", "Aug 2 15:00:00 2017")
 	now := func() time.Time {
 		return timeCounter
 	}
+	cachedCredentials = nil // clear all previously saved credentials (if any)
 
 	serverConfig := testConfig.Clone()
 	cert, key := getCertAndKey(testDelUsageRSACertificate, testDelUsageRSAPrivateKey)
@@ -177,7 +212,13 @@ func TestDelegatedCredentialCache(t *testing.T) {
 		PrivateKey:  key,
 	}
 	serverConfig.Certificates = nil
-	serverConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, now)
+	config := &CredentialsConfig{
+		Cert:      certificate,
+		Validity:  5 * time.Minute,
+		timeFunc:  now,
+		renewChan: make(chan struct{}),
+	}
+	serverConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(config)
 
 	clientHello := &clientHelloMsg{
 		vers:                 VersionTLS12,
@@ -213,13 +254,23 @@ func TestDelegatedCredentialCache(t *testing.T) {
 	}
 
 	a := getCredentialFromServer()
+	timeCounter = timeCounter.Add(1 * time.Minute) // will not expire yet
 	b := getCredentialFromServer()
-	if !bytes.Equal(a, b) {
+	timeCounter = timeCounter.Add(3 * time.Minute) // will not expire yet
+	c := getCredentialFromServer()
+	if !bytes.Equal(a, b) || !bytes.Equal(b, c) {
 		t.Errorf("The delegated credentials should match (its validity should be ok)")
 	}
-	timeCounter = timeCounter.Add(10 * time.Minute) // will expire -> new DC
-	c := getCredentialFromServer()
-	if bytes.Equal(a, c) {
+
+	timeCounter = timeCounter.Add(10 * time.Minute) // will expire -> new DC for next run
+	d := getCredentialFromServer()
+	if !bytes.Equal(a, d) {
+		t.Errorf("The delegated credentials should still match (new DC created for next run)")
+	}
+	<-config.renewChan
+
+	e := getCredentialFromServer() // new DC
+	if bytes.Equal(a, e) {
 		t.Errorf("The delegated credentials should not match (first one is expired)")
 	}
 }
@@ -243,7 +294,7 @@ func TestDelegatedCredentialsHandshake12EC(t *testing.T) {
 		PrivateKey:  key,
 	}
 	testCase.ServerConfig.Certificates = nil
-	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(certificate, 5*time.Minute, testCase.ServerConfig.Time)
+	testCase.ServerConfig.GetCertificate = NewDelegatedCredentialsGetCertificate(&CredentialsConfig{Cert: certificate, Validity: 5 * time.Minute})
 	testCase.doHandshake(t)
 }
 
