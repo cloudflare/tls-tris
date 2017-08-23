@@ -93,6 +93,7 @@ const (
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 	extensionShortHeaders        uint16 = 0xff03 // Experimental
+	extensionDelegatedCredential uint16 = 0xff99 // not IANA assigned yet - https://tools.ietf.org/html/draft-rescorla-tls-subcerts-01
 )
 
 // TLS signaling cipher suite values
@@ -600,6 +601,9 @@ type Config struct {
 	// Allow short headers (experimental, and only applies to server).
 	AllowShortHeaders bool
 
+	// states if Delegated Credentials should be used
+	UseDelegatedCredentials bool
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys and originalConfig.
@@ -682,6 +686,7 @@ func (c *Config) Clone() *Config {
 		Max0RTTDataSize:             c.Max0RTTDataSize,
 		AllowShortHeaders:           c.AllowShortHeaders,
 		SessionTicketSealer:         c.SessionTicketSealer,
+		UseDelegatedCredentials:     c.UseDelegatedCredentials,
 		sessionTicketKeys:           sessionTicketKeys,
 		// originalConfig is deliberately not duplicated.
 	}
@@ -949,6 +954,9 @@ type Certificate struct {
 	// OCSPStaple contains an optional OCSP response which will be served
 	// to clients that request it.
 	OCSPStaple []byte
+	// DelegatedCredential contains a signed object containing a public
+	// key for signing handshakes
+	DelegatedCredential []byte
 	// SignedCertificateTimestamps contains an optional list of Signed
 	// Certificate Timestamps which will be served to clients that request it.
 	SignedCertificateTimestamps [][]byte
