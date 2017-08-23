@@ -18,7 +18,7 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS13Draft18: "1.3 (draft 18)",
 }
 
-func startServer(addr string, rsa, offer0RTT, accept0RTT, shortHdr bool) {
+func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 	cert, err := tls.X509KeyPair([]byte(ecdsaCert), []byte(ecdsaKey))
 	if rsa {
 		cert, err = tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
@@ -30,7 +30,8 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT, shortHdr bool) {
 	if offer0RTT {
 		Max0RTTDataSize = 100 * 1024
 	}
-
+	allowShortHeaders := os.Getenv("TLSTRIS_SHORT_HEADERS")
+	
 	s := &http.Server{
 		Addr: addr,
 		TLSConfig: &tls.Config{
@@ -42,7 +43,7 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT, shortHdr bool) {
 				time.Sleep(500 * time.Millisecond)
 				return nil, nil
 			},
-			AllowShortHeaders: shortHdr,
+			AllowShortHeaders: allowShortHeaders == "true",
 		},
 	}
 	log.Fatal(s.ListenAndServeTLS("", ""))
@@ -91,14 +92,14 @@ func main() {
 
 	switch len(os.Args) {
 	case 2:
-		startServer(os.Args[1], true, true, true, true)
+		startServer(os.Args[1], true, true, true)
 	case 6:
 		confirmingAddr = os.Args[5]
-		go startServer(os.Args[1], false, false, false, false) // first port: ECDSA (and no 0-RTT)
-		go startServer(os.Args[2], true, false, true, true)    // second port: RSA (and accept 0-RTT but not offer it, and short headers)
-		go startServer(os.Args[3], false, true, false, false)  // third port: offer and reject 0-RTT
-		go startServer(os.Args[4], false, true, true, false)   // fourth port: offer and accept 0-RTT
-		startServer(os.Args[5], false, true, true, false)      // fifth port: offer and accept 0-RTT but confirm
+		go startServer(os.Args[1], false, false, false) // first port: ECDSA (and no 0-RTT)
+		go startServer(os.Args[2], true, false, true)   // second port: RSA (and accept 0-RTT but not offer it)
+		go startServer(os.Args[3], false, true, false)  // third port: offer and reject 0-RTT
+		go startServer(os.Args[4], false, true, true)   // fourth port: offer and accept 0-RTT
+		startServer(os.Args[5], false, true, true)      // fifth port: offer and accept 0-RTT but confirm
 	}
 }
 
