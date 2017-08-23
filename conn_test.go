@@ -142,7 +142,7 @@ func runDynamicRecordSizingTest(t *testing.T, config *Config) {
 			return
 		}
 
-		var recordHeader [normalRecordHeaderLen]byte
+		var recordHeader [recordHeaderLen]byte
 		var record []byte
 		var recordSizes []int
 
@@ -170,7 +170,7 @@ func runDynamicRecordSizingTest(t *testing.T, config *Config) {
 			// The last record will be a close_notify alert, which
 			// we don't wish to record.
 			if recordType(recordHeader[0]) == recordTypeApplicationData {
-				recordSizes = append(recordSizes, normalRecordHeaderLen+length)
+				recordSizes = append(recordSizes, recordHeaderLen+length)
 			}
 		}
 
