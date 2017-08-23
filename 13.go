@@ -80,11 +80,6 @@ CurvePreferenceLoop:
 		c.didResume = true
 	}
 
-	// Negotiate short headers
-	if config.AllowShortHeaders && hs.clientHello.shortHeaders {
-		hs.hello13.shortHeaders = true
-	}
-
 	hs.finishedHash13 = hash.New()
 	hs.finishedHash13.Write(hs.clientHello.marshal())
 
@@ -111,11 +106,6 @@ CurvePreferenceLoop:
 
 	serverFinishedKey := hkdfExpandLabel(hash, sTrafficSecret, nil, "finished", hashSize)
 	hs.clientFinishedKey = hkdfExpandLabel(hash, cTrafficSecret, nil, "finished", hashSize)
-
-	if hs.hello13.shortHeaders {
-		c.in.shortHeaders = true
-		c.out.shortHeaders = true
-	}
 
 	hs.finishedHash13.Write(hs.hello13Enc.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13Enc.marshal()); err != nil {

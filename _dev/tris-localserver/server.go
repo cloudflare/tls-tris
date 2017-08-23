@@ -30,8 +30,6 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 	if offer0RTT {
 		Max0RTTDataSize = 100 * 1024
 	}
-	allowShortHeaders := os.Getenv("TLSTRIS_SHORT_HEADERS")
-	
 	s := &http.Server{
 		Addr: addr,
 		TLSConfig: &tls.Config{
@@ -43,7 +41,6 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 				time.Sleep(500 * time.Millisecond)
 				return nil, nil
 			},
-			AllowShortHeaders: allowShortHeaders == "true",
 		},
 	}
 	log.Fatal(s.ListenAndServeTLS("", ""))
