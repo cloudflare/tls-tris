@@ -44,9 +44,8 @@ type CredentialsConfig struct {
 	version   uint16
 	timeFunc  func() time.Time
 	renewChan chan struct{}
+	cache     map[SignatureScheme]*cachedCredential
 }
-
-var cachedCredentials map[SignatureScheme]*cachedCredential
 
 // Creates new GetCertificate function which modifies the certificate
 // to include a delegated credential.
@@ -74,8 +73,8 @@ func NewDelegatedCredentialsGetCertificate(config *CredentialsConfig) GetCertifi
 			return nil, err
 		}
 
-		config.Cert.DelegatedCredential = cachedCredentials[selectedScheme].credential
-		config.Cert.PrivateKey = cachedCredentials[selectedScheme].privateKey
+		config.Cert.DelegatedCredential = config.cache[selectedScheme].credential
+		config.Cert.PrivateKey = config.cache[selectedScheme].privateKey
 		return config.Cert, nil
 	}
 }
@@ -83,15 +82,15 @@ func NewDelegatedCredentialsGetCertificate(config *CredentialsConfig) GetCertifi
 // Checks if a credential is already stored in memory. If not or the credential
 // is already expired a new credential is created.
 func fetchCredentialFromCache(config *CredentialsConfig) (err error) {
-	if cachedCredentials == nil {
-		cachedCredentials = make(map[SignatureScheme]*cachedCredential)
+	if config.cache == nil {
+		config.cache = make(map[SignatureScheme]*cachedCredential)
 	}
-	if cachedCredentials[config.scheme] == nil {
-		cachedCredentials[config.scheme], err = newCredential(config)
+	if config.cache[config.scheme] == nil {
+		config.cache[config.scheme], err = newCredential(config)
 	} else {
-		if config.timeFunc().After(cachedCredentials[config.scheme].renewAfter) {
+		if config.timeFunc().After(config.cache[config.scheme].renewAfter) {
 			go func() {
-				cachedCredentials[config.scheme], err = newCredential(config)
+				config.cache[config.scheme], err = newCredential(config)
 				if config.renewChan != nil {
 					config.renewChan <- struct{}{}
 				}

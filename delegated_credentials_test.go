@@ -202,7 +202,6 @@ func TestDelegatedCredentialCache(t *testing.T) {
 	now := func() time.Time {
 		return timeCounter
 	}
-	cachedCredentials = nil // clear all previously saved credentials (if any)
 
 	serverConfig := testConfig.Clone()
 	cert, key := getCertAndKey(testDelUsageRSACertificate, testDelUsageRSAPrivateKey)
