@@ -173,6 +173,9 @@ const (
 const (
 	signatureRSA   uint8 = 1
 	signatureECDSA uint8 = 3
+	// Bogus value used internally to signal RSA-PSS.  TLS 1.3
+	// requires accepting RSA-PSS even when negotiating 1.2.
+	signaturePSS uint8 = 8
 )
 
 // signatureAndHash mirrors the TLS 1.2, SignatureAndHashAlgorithm struct. See
@@ -282,6 +285,24 @@ const (
 	ECDSAWithP384AndSHA384 SignatureScheme = 0x0503
 	ECDSAWithP521AndSHA512 SignatureScheme = 0x0603
 )
+
+// supportedSignatureSchemes13 contains the TLS 1.3 signature schemes
+// that the client advertises as supported in a TLS 1.3 Universal
+// ClientHello.
+var supportedSignatureSchemes13 = []SignatureScheme{
+	ECDSAWithP521AndSHA512,
+	ECDSAWithP384AndSHA384,
+	ECDSAWithP256AndSHA256,
+
+	PSSWithSHA512,
+	PSSWithSHA384,
+	PSSWithSHA256,
+
+	PKCS1WithSHA512,
+	PKCS1WithSHA384,
+	PKCS1WithSHA256,
+	PKCS1WithSHA1,
+}
 
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide certificate selection in the GetCertificate callback.

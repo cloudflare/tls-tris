@@ -114,10 +114,18 @@ func md5SHA1Hash(slices [][]byte) []byte {
 // only used for >= TLS 1.2 and precisely identifies the hash function to use.
 func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slices ...[]byte) ([]byte, crypto.Hash, error) {
 	if version >= VersionTLS12 {
-		if !isSupportedSignatureAndHash(sigAndHash, supportedSignatureAlgorithms) {
+		var hashFunc crypto.Hash
+		var err error
+		if signatureSchemeIsPSS(sigAndHashToSigScheme(sigAndHash)) {
+			// 1.3 PSS schemes, when interpreted as 1.2
+			// Sig+Hash pairs, keep the hash in the
+			// signature byte.
+			hashFunc, err = lookupTLSHash(sigAndHash.signature)
+		} else if !isSupportedSignatureAndHash(sigAndHash, supportedSignatureAlgorithms) {
 			return nil, crypto.Hash(0), errors.New("tls: unsupported hash function used by peer")
+		} else {
+			hashFunc, err = lookupTLSHash(sigAndHash.hash)
 		}
-		hashFunc, err := lookupTLSHash(sigAndHash.hash)
 		if err != nil {
 			return nil, crypto.Hash(0), err
 		}
@@ -379,7 +387,10 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 	if ka.version >= VersionTLS12 {
 		// handle SignatureAndHashAlgorithm
 		sigAndHash = signatureAndHash{hash: sig[0], signature: sig[1]}
-		if sigAndHash.signature != ka.sigType {
+
+		if signatureSchemeIsPSS(sigAndHashToSigScheme(sigAndHash)) {
+			ka.sigType = signaturePSS
+		} else if sigAndHash.signature != ka.sigType {
 			return errServerKeyExchange
 		}
 		sig = sig[2:]
@@ -419,6 +430,15 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 			return errors.New("tls: ECDHE RSA requires a RSA server public key")
 		}
 		if err := rsa.VerifyPKCS1v15(pubKey, hashFunc, digest, sig); err != nil {
+			return err
+		}
+	case signaturePSS:
+		pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
+		if !ok {
+			return errors.New("tls: ECDHE PSS requires a RSA server public key")
+		}
+		opts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: hashFunc}
+		if err := rsa.VerifyPSS(pubKey, hashFunc, digest, sig, opts); err != nil {
 			return err
 		}
 	default:

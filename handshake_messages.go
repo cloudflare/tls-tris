@@ -1042,6 +1042,10 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	return alertSuccess
 }
 
+func peekServerHelloVersion(data []byte) uint16 {
+	return uint16(data[4])<<8 | uint16(data[5])
+}
+
 type serverHelloMsg13 struct {
 	raw          []byte
 	vers         uint16
