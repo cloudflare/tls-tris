@@ -42,6 +42,7 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 	s := &http.Server{
 		Addr: addr,
 		TLSConfig: &tls.Config{
+			CurvePreferences: []tls.CurveID{tls.SIDHP751AndX25519, tls.X25519},
 			Certificates:    []tls.Certificate{cert},
 			Max0RTTDataSize: Max0RTTDataSize,
 			Accept0RTTData:  accept0RTT,

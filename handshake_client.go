@@ -183,7 +183,7 @@ NextCipherSuite:
 		// Create one keyshare for the first default curve. If it is not
 		// appropriate, the server should raise a HRR.
 		defaultGroup := c.config.curvePreferences()[0]
-		privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup)
+		privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup, dhRoleClient)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err

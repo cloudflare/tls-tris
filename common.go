@@ -112,10 +112,11 @@ const (
 type CurveID uint16
 
 const (
-	CurveP256 CurveID = 23
-	CurveP384 CurveID = 24
-	CurveP521 CurveID = 25
-	X25519    CurveID = 29
+	CurveP256         CurveID = 23
+	CurveP384         CurveID = 24
+	CurveP521         CurveID = 25
+	X25519            CurveID = 29
+	SIDHP751AndX25519 CurveID = 0xFE24 // 0xFE00-0xFEFF private use block; 24 is magic
 )
 
 // TLS 1.3 Key Share

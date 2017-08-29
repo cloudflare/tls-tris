@@ -23,11 +23,21 @@ import (
 	"time"
 
 	"golang_org/x/crypto/curve25519"
+
+	"github_com/cloudflare/p751sidh"
 )
 
 // numSessionTickets is the number of different session tickets the
 // server sends to a TLS 1.3 client, who will use each only once.
 const numSessionTickets = 2
+
+// In SIDH, the computations done by Alice are different from Bob's.
+type dhRole bool
+
+const (
+	dhRoleServer dhRole = true
+	dhRoleClient dhRole = false
+)
 
 type secretLabel int
 
@@ -155,7 +165,7 @@ CurvePreferenceLoop:
 		}
 	}
 
-	privateKey, serverKS, err := config.generateKeyShare(ks.group)
+	privateKey, serverKS, err := config.generateKeyShare(ks.group, dhRoleServer)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -183,10 +193,10 @@ CurvePreferenceLoop:
 
 	earlyClientCipher, _ := hs.keySchedule.prepareCipher(secretEarlyClient)
 
-	ecdheSecret := deriveECDHESecret(ks, privateKey)
-	if ecdheSecret == nil {
+	dheSecret := deriveDHESecret(ks, privateKey, dhRoleServer)
+	if dheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: bad ECDHE client share")
+		return errors.New("tls: bad DHE client share")
 	}
 
 	hs.keySchedule.write(hs.hello13.marshal())
@@ -194,7 +204,7 @@ CurvePreferenceLoop:
 		return err
 	}
 
-	hs.keySchedule.setSecret(ecdheSecret)
+	hs.keySchedule.setSecret(dheSecret)
 	clientCipher, cTrafficSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
 	hs.hsClientCipher = clientCipher
 	serverCipher, sTrafficSecret := hs.keySchedule.prepareCipher(secretHandshakeServer)
@@ -457,7 +467,38 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	return h.Sum(nil)
 }
 
-func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
+func (c *Config) generateKeyShare(curveID CurveID, role dhRole) ([]byte, keyShare, error) {
+	if curveID == SIDHP751AndX25519 {
+		var scalarX25519, publicX25519 [32]byte
+		if _, err := io.ReadFull(c.rand(), scalarX25519[:]); err != nil {
+			return nil, keyShare{}, err
+		}
+		curve25519.ScalarBaseMult(&publicX25519, &scalarX25519)
+
+		var secret [32 + p751sidh.SecretKeySize]byte
+		var public [32 + p751sidh.PublicKeySize]byte
+		copy(secret[:32], scalarX25519[:])
+		copy(public[:32], publicX25519[:])
+
+		// Alice's computations are slightly cheaper, so we use them on the server.
+		if role == dhRoleServer {
+			var publicSIDH, secretSIDH, err = p751sidh.GenerateAliceKeypair(c.rand())
+			if err != nil {
+				return nil, keyShare{}, err
+			}
+			copy(secret[32:], secretSIDH.Scalar[:])
+			publicSIDH.ToBytes(public[32:])
+		} else {
+			var publicSIDH, secretSIDH, err = p751sidh.GenerateBobKeypair(c.rand())
+			if err != nil {
+				return nil, keyShare{}, err
+			}
+			copy(secret[32:], secretSIDH.Scalar[:])
+			publicSIDH.ToBytes(public[32:])
+		}
+
+		return secret[:], keyShare{group: curveID, data: public[:]}, nil
+	}
 	if curveID == X25519 {
 		var scalar, public [32]byte
 		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
@@ -482,7 +523,48 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
 }
 
-func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
+func deriveDHESecret(ks keyShare, secretKey []byte, role dhRole) []byte {
+	if ks.group == SIDHP751AndX25519 {
+		if len(ks.data) != 32+p751sidh.PublicKeySize {
+			return nil
+		}
+		if len(secretKey) != 32+p751sidh.SecretKeySize {
+			return nil
+		}
+
+		var theirX25519Public, sharedX25519Secret, ourX25519Secret [32]byte
+		copy(theirX25519Public[:], ks.data[:32])
+		copy(ourX25519Secret[:], secretKey[:32])
+		curve25519.ScalarMult(&sharedX25519Secret, &ourX25519Secret, &theirX25519Public)
+
+		var sharedSIDHSecret [p751sidh.SharedSecretSize]byte
+
+		// Alice's computations are slightly cheaper, so we use them on the server.
+		if role == dhRoleServer {
+			var theirSIDHPublic p751sidh.SIDHPublicKeyBob
+			theirSIDHPublic.FromBytes(ks.data[32:])
+
+			var ourSIDHSecret p751sidh.SIDHSecretKeyAlice
+			copy(ourSIDHSecret.Scalar[:], secretKey[32:])
+
+			sharedSIDHSecret = ourSIDHSecret.SharedSecret(&theirSIDHPublic)
+		} else {
+			var theirSIDHPublic p751sidh.SIDHPublicKeyAlice
+			theirSIDHPublic.FromBytes(ks.data[32:])
+
+			var ourSIDHSecret p751sidh.SIDHSecretKeyBob
+			copy(ourSIDHSecret.Scalar[:], secretKey[32:])
+
+			sharedSIDHSecret = ourSIDHSecret.SharedSecret(&theirSIDHPublic)
+		}
+
+		var sharedSecret [32 + p751sidh.SharedSecretSize]byte
+		copy(sharedSecret[:32], sharedX25519Secret[:])
+		copy(sharedSecret[32:], sharedSIDHSecret[:])
+
+		return sharedSecret[:]
+	}
+
 	if ks.group == X25519 {
 		if len(ks.data) != 32 {
 			return nil
@@ -800,14 +882,14 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 
 	// 0-RTT is not supported yet, so use an empty PSK.
 	hs.keySchedule.setSecret(nil)
-	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey)
-	if ecdheSecret == nil {
+	dheSecret := deriveDHESecret(serverHello.keyShare, hs.privateKey, dhRoleClient)
+	if dheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: bad ECDHE server share")
+		return errors.New("tls: bad DHE server share")
 	}
 
 	// Calculate handshake secrets.
-	hs.keySchedule.setSecret(ecdheSecret)
+	hs.keySchedule.setSecret(dheSecret)
 	clientCipher, clientHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
 	serverCipher, serverHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeServer)
 	if c.hand.Len() > 0 {
