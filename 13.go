@@ -23,12 +23,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github_com/cloudflare/p751sidh"
 	"golang_org/x/crypto/curve25519"
 )
 
 // numSessionTickets is the number of different session tickets the
 // server sends to a TLS 1.3 client, who will use each only once.
 const numSessionTickets = 2
+
+// In SIDH, the computations done by Alice are different from Bob's.
+type dhRole bool
+
+const (
+	dhRoleServer dhRole = true
+	dhRoleClient dhRole = false
+)
 
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
@@ -61,7 +70,7 @@ CurvePreferenceLoop:
 		}
 	}
 
-	privateKey, serverKS, err := config.generateKeyShare(ks.group)
+	privateKey, serverKS, err := config.generateKeyShare(ks.group, dhRoleServer)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -93,8 +102,8 @@ CurvePreferenceLoop:
 	handshakeCtx := hs.finishedHash13.Sum(nil)
 	earlyClientCipher, _ := hs.suite.prepareCipher(handshakeCtx, earlySecret, "client early traffic secret")
 
-	ecdheSecret := deriveECDHESecret(ks, privateKey)
-	if ecdheSecret == nil {
+	dheSecret := deriveDHESecret(ks, privateKey, dhRoleServer)
+	if dheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
 	}
@@ -104,7 +113,7 @@ CurvePreferenceLoop:
 		return err
 	}
 
-	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
+	handshakeSecret := hkdfExtract(hash, dheSecret, earlySecret)
 	handshakeCtx = hs.finishedHash13.Sum(nil)
 	clientCipher, cTrafficSecret := hs.suite.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
 	hs.hsClientCipher = clientCipher
@@ -367,7 +376,38 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	return h.Sum(nil)
 }
 
-func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
+func (c *Config) generateKeyShare(curveID CurveID, role dhRole) ([]byte, keyShare, error) {
+	if curveID == SIDHP751AndX25519 {
+		var scalarX25519, publicX25519 [32]byte
+		if _, err := io.ReadFull(c.rand(), scalarX25519[:]); err != nil {
+			return nil, keyShare{}, err
+		}
+		curve25519.ScalarBaseMult(&publicX25519, &scalarX25519)
+
+		var secret [32 + p751sidh.SecretKeySize]byte
+		var public [32 + p751sidh.PublicKeySize]byte
+		copy(secret[:32], scalarX25519[:])
+		copy(public[:32], publicX25519[:])
+
+		// Alice's computations are slightly cheaper, so we use them on the server.
+		if role == dhRoleServer {
+			var publicSIDH, secretSIDH, err = p751sidh.GenerateAliceKeypair(c.rand())
+			if err != nil {
+				return nil, keyShare{}, err
+			}
+			copy(secret[32:], secretSIDH.Scalar[:])
+			publicSIDH.ToBytes(public[32:])
+		} else {
+			var publicSIDH, secretSIDH, err = p751sidh.GenerateBobKeypair(c.rand())
+			if err != nil {
+				return nil, keyShare{}, err
+			}
+			copy(secret[32:], secretSIDH.Scalar[:])
+			publicSIDH.ToBytes(public[32:])
+		}
+
+		return secret[:], keyShare{group: curveID, data: public[:]}, nil
+	}
 	if curveID == X25519 {
 		var scalar, public [32]byte
 		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
@@ -392,7 +432,48 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
 }
 
-func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
+func deriveDHESecret(ks keyShare, secretKey []byte, role dhRole) []byte {
+	if ks.group == SIDHP751AndX25519 {
+		if len(ks.data) != 32+p751sidh.PublicKeySize {
+			return nil
+		}
+		if len(secretKey) != 32+p751sidh.SecretKeySize {
+			return nil
+		}
+
+		var theirX25519Public, sharedX25519Secret, ourX25519Secret [32]byte
+		copy(theirX25519Public[:], ks.data[:32])
+		copy(ourX25519Secret[:], secretKey[:32])
+		curve25519.ScalarMult(&sharedX25519Secret, &ourX25519Secret, &theirX25519Public)
+
+		var sharedSIDHSecret [p751sidh.SharedSecretSize]byte
+
+		// Alice's computations are slightly cheaper, so we use them on the server.
+		if role == dhRoleServer {
+			var theirSIDHPublic p751sidh.SIDHPublicKeyBob
+			theirSIDHPublic.FromBytes(ks.data[32:])
+
+			var ourSIDHSecret p751sidh.SIDHSecretKeyAlice
+			copy(ourSIDHSecret.Scalar[:], secretKey[32:])
+
+			sharedSIDHSecret = ourSIDHSecret.SharedSecret(&theirSIDHPublic)
+		} else {
+			var theirSIDHPublic p751sidh.SIDHPublicKeyAlice
+			theirSIDHPublic.FromBytes(ks.data[32:])
+
+			var ourSIDHSecret p751sidh.SIDHSecretKeyBob
+			copy(ourSIDHSecret.Scalar[:], secretKey[32:])
+
+			sharedSIDHSecret = ourSIDHSecret.SharedSecret(&theirSIDHPublic)
+		}
+
+		var sharedSecret [32 + p751sidh.SharedSecretSize]byte
+		copy(sharedSecret[:32], sharedX25519Secret[:])
+		copy(sharedSecret[32:], sharedSIDHSecret[:])
+
+		return sharedSecret[:]
+	}
+
 	if ks.group == X25519 {
 		if len(ks.data) != 32 {
 			return nil
@@ -730,7 +811,7 @@ func (hs *clientHandshakeState) startTLS13ClientHandshake() error {
 	// forces handling the case of an extra round trip
 
 	var preferredCurve = hello.supportedCurves[0]
-	privateKey, clientKeyShare, err := config.generateKeyShare(preferredCurve)
+	privateKey, clientKeyShare, err := config.generateKeyShare(preferredCurve, dhRoleClient)
 	if err != nil {
 		return err
 	}
@@ -783,15 +864,15 @@ func (hs *clientHandshakeState) doTLS13ClientHandshake() error {
 	earlySecret := hkdfExtract(hash, nil, nil)
 
 	serverKeyShare := hs.serverHello13.keyShare
-	ecdheSecret := deriveECDHESecret(serverKeyShare, hs.keySharePrivateKey)
-	if ecdheSecret == nil {
+	dheSecret := deriveDHESecret(serverKeyShare, hs.keySharePrivateKey, dhRoleClient)
+	if dheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
 	}
 
 	hs.finishedHash13.Write(hs.serverHello13.marshal())
 
-	handshakeSecret := hkdfExtract(hash, ecdheSecret, earlySecret)
+	handshakeSecret := hkdfExtract(hash, dheSecret, earlySecret)
 	handshakeCtx := hs.finishedHash13.Sum(nil)
 	clientCipher, cTrafficSecret := suite.prepareCipher(handshakeCtx, handshakeSecret, "client handshake traffic secret")
 	serverCipher, sTrafficSecret := suite.prepareCipher(handshakeCtx, handshakeSecret, "server handshake traffic secret")
