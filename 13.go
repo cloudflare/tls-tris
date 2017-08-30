@@ -106,7 +106,7 @@ CurvePreferenceLoop:
 	dheSecret := deriveDHESecret(ks, privateKey, dhRoleServer)
 	if dheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
-		return errors.New("tls: bad ECDHE client share")
+		return errors.New("tls: bad DHE client share")
 	}
 
 	hs.finishedHash13.Write(hs.hello13.marshal())
