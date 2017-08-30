@@ -23,8 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github_com/cloudflare/p751sidh"
 	"golang_org/x/crypto/curve25519"
+
+	"github_com/cloudflare/p751sidh"
 )
 
 // numSessionTickets is the number of different session tickets the
