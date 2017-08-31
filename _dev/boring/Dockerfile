@@ -12,11 +12,7 @@ RUN apk add --update \
 
 RUN git clone https://boringssl.googlesource.com/boringssl
 
-# Cacheable layer of compilation, to make the next incremental
-RUN cd boringssl && git checkout 9b885c5
 RUN mkdir boringssl/build
-RUN cd boringssl/build && cmake -GNinja ..
-RUN cd boringssl && ninja -C build
 
 # Draft 14
 # ARG REVISION=88536c3
@@ -38,7 +34,9 @@ RUN cd boringssl && ninja -C build
 # ARG REVISION=89917a5
 
 # Draft 18
-ARG REVISION=9b885c5
+#ARG REVISION=9b885c5
+# Draft 18, but with "bssl server -loop -www" support and build fix
+ARG REVISION=40b24c8154
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
@@ -47,4 +45,5 @@ RUN cd boringssl && ninja -C build
 
 ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
+ADD server.sh rsa.pem ecdsa.pem /
 ENTRYPOINT ["/run.sh"]
