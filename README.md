@@ -23,7 +23,7 @@ So, to build with tls-tris, you need to use a custom GOROOT.
 A script is provided that will take care of it for you: `./_dev/go.sh`.
 Just use that instead of the `go` tool.
 
-The script also transparently fetches the custom Cloudflare Go 1.8rc3 compiler with the required backports.
+The script also transparently fetches the custom Cloudflare Go 1.9 compiler with the required backports.
 
 ```
 ./_dev/go.sh build ./_dev/tris-localserver
