@@ -174,6 +174,7 @@ type signatureType uint8
 
 const (
 	signaturePKCS1v15 signatureType = iota + 1
+	signatureRSAPSS
 	signatureECDSA
 )
 
@@ -1144,7 +1145,15 @@ func unexpectedMessageError(wanted, got interface{}) error {
 	return fmt.Errorf("tls: received unexpected handshake message of type %T when waiting for %T", got, wanted)
 }
 
+// isSupportedSignatureAlgorithm returns true if the signature algorithm is
+// allowed to be used for signing handshake messages.
 func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlgorithms []SignatureScheme) bool {
+	// TODO unhack this, PSS should be advertised in
+	// supportedSignatureAlgorithms, but that possibly needs additional
+	// support of PSS public keys and PSS signatures in certificates.
+	if sigAlg == PSSWithSHA256 || sigAlg == PSSWithSHA384 {
+		return true
+	}
 	for _, s := range supportedSignatureAlgorithms {
 		if s == sigAlg {
 			return true
@@ -1159,6 +1168,8 @@ func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) signatureT
 	switch signatureAlgorithm {
 	case PKCS1WithSHA1, PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512:
 		return signaturePKCS1v15
+	case PSSWithSHA256, PSSWithSHA384, PSSWithSHA512:
+		return signatureRSAPSS
 	case ECDSAWithSHA1, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512:
 		return signatureECDSA
 	default:

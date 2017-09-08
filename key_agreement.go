@@ -281,7 +281,11 @@ NextCandidate:
 	default:
 		return nil, errors.New("tls: unknown ECDHE signature algorithm")
 	}
-	sig, err = priv.Sign(config.rand(), digest, hashFunc)
+	signOpts := crypto.SignerOpts(hashFunc)
+	if signatureFromSignatureScheme(signatureAlgorithm) == signatureRSAPSS {
+		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: hashFunc}
+	}
+	sig, err = priv.Sign(config.rand(), digest, signOpts)
 	if err != nil {
 		return nil, errors.New("tls: failed to sign ECDHE parameters: " + err.Error())
 	}
@@ -483,7 +487,7 @@ func (ka *ecdheKeyAgreement) generateClientKeyExchange(config *Config, clientHel
 func keySupportsSignatureScheme(keyType pubkeyType, signatureAlgorithm SignatureScheme) bool {
 	sigType := signatureFromSignatureScheme(signatureAlgorithm)
 	switch sigType {
-	case signaturePKCS1v15:
+	case signaturePKCS1v15, signatureRSAPSS:
 		return keyType == keyRSA
 	case signatureECDSA:
 		return keyType == keyECDSA
