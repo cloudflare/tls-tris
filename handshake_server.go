@@ -613,6 +613,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			case *ecdsa.PublicKey:
 				sigType = signatureECDSA
 			case *rsa.PublicKey:
+				// since PSS cannot be negotiated, assume PKCS1.
 				sigType = signaturePKCS1v15
 			}
 		}
@@ -639,7 +640,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 				err = errors.New("tls: ECDSA verification failure")
 			}
 		case *rsa.PublicKey:
-			if sigType != signaturePKCS1v15 {
+			if sigType != signaturePKCS1v15 && sigType != signatureRSAPSS {
 				err = errors.New("tls: bad signature type for client's RSA certificate")
 				break
 			}
@@ -648,7 +649,12 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			if digest, hashFunc, err = hs.finishedHash.hashForClientCertificate(sigType, signatureAlgorithm, hs.masterSecret); err != nil {
 				break
 			}
-			err = rsa.VerifyPKCS1v15(key, hashFunc, digest, certVerify.signature)
+			if sigType == signatureRSAPSS {
+				signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+				err = rsa.VerifyPSS(key, hashFunc, digest, certVerify.signature, signOpts)
+			} else {
+				err = rsa.VerifyPKCS1v15(key, hashFunc, digest, certVerify.signature)
+			}
 		}
 		if err != nil {
 			c.sendAlert(alertBadCertificate)
