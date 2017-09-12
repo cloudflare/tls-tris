@@ -816,29 +816,42 @@ func (c *Config) mutualVersion(vers uint16) (uint16, bool) {
 
 // pickVersion returns the protocol version to use given the advertised
 // versions of the peer using the Supported Versions extension.
-func (c *Config) pickVersion(supportedVersions []uint16) (uint16, bool) {
-	minVersion := c.minVersion()
-	maxVersion := c.maxVersion()
-	if c == nil || c.MaxVersion == 0 {
-		maxVersion = VersionTLS13 // override the default if pickVersion is used
-	}
-
-	tls13Enabled := maxVersion >= VersionTLS13
-	if maxVersion > VersionTLS12 {
-		maxVersion = VersionTLS12
-	}
-
-	var vers uint16
-	for _, v := range supportedVersions {
-		if v >= minVersion && v <= maxVersion ||
-			(tls13Enabled && v == VersionTLS13Draft18) {
-			if v > vers {
-				vers = v
+func (c *Config) pickVersion(peerSupportedVersions []uint16) (uint16, bool) {
+	supportedVersions := c.getSupportedVersions()
+	for _, supportedVersion := range supportedVersions {
+		for _, version := range peerSupportedVersions {
+			if version == supportedVersion {
+				return version, true
 			}
 		}
 	}
+	return 0, false
+}
 
-	return vers, vers != 0
+// getSupportedVersions returns the protocol versions that are supported by the
+// current configuration.
+func (c *Config) getSupportedVersions() []uint16 {
+	minVersion := c.minVersion()
+	maxVersion := c.maxVersion()
+	// Sanity check to avoid advertising unsupported versions.
+	if minVersion < VersionSSL30 {
+		minVersion = VersionSSL30
+	}
+	if maxVersion > VersionTLS13 {
+		maxVersion = VersionTLS13
+	}
+
+	supportedVersions := []uint16{}
+	// Prefer newer versions over older versions.
+	for v := maxVersion; v >= minVersion; v-- {
+		if v == VersionTLS13 {
+			// Advertise all supported draft versions.
+			supportedVersions = append(supportedVersions, VersionTLS13Draft18)
+			continue // final TLS 1.3 version is not supported yet.
+		}
+		supportedVersions = append(supportedVersions, v)
+	}
+	return supportedVersions
 }
 
 // getCertificate returns the best certificate for the given ClientHelloInfo,
