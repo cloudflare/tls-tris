@@ -119,7 +119,8 @@ func (c *Conn) clientHandshake() error {
 	var session *ClientSessionState
 	var cacheKey string
 	sessionCache := c.config.ClientSessionCache
-	if c.config.SessionTicketsDisabled {
+	// TLS 1.3 has no session resumption based on session tickets.
+	if c.config.SessionTicketsDisabled || c.config.maxVersion() >= VersionTLS13 {
 		sessionCache = nil
 	}
 
@@ -177,7 +178,7 @@ func (c *Conn) clientHandshake() error {
 
 	// If we had a successful handshake and hs.session is different from
 	// the one already cached - cache a new one
-	if sessionCache != nil && hs.session != nil && session != hs.session {
+	if sessionCache != nil && hs.session != nil && session != hs.session && c.vers < VersionTLS13 {
 		sessionCache.Put(cacheKey, hs.session)
 	}
 
