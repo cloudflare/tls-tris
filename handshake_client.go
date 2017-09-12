@@ -172,7 +172,7 @@ NextCipherSuite:
 		return unexpectedMessageError(serverHello, msg)
 	}
 
-	vers, ok := c.config.mutualVersion(serverHello.vers)
+	vers, ok := c.config.pickVersion([]uint16{serverHello.vers})
 	if !ok || vers < VersionTLS10 {
 		// TLS 1.0 is the minimum version supported as a client.
 		c.sendAlert(alertProtocolVersion)
