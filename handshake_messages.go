@@ -1161,6 +1161,14 @@ func (m *serverHelloMsg13) unmarshal(data []byte) alert {
 	return alertSuccess
 }
 
+func isTLS13ServerHello(data []byte) bool {
+	if len(data) <= 5 {
+		return false
+	}
+	vers := uint16(data[4])<<8 | uint16(data[5])
+	return vers >= VersionTLS13
+}
+
 type encryptedExtensionsMsg struct {
 	raw          []byte
 	alpnProtocol string
