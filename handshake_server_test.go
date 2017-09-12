@@ -49,18 +49,6 @@ func allCipherSuites() []uint16 {
 	return ids
 }
 
-func allTLS13CipherSuites() []uint16 {
-	var ids []uint16
-	for _, suite := range cipherSuites {
-		if suite.flags&suiteTLS13 == 0 {
-			continue
-		}
-		ids = append(ids, suite.id)
-	}
-
-	return ids
-}
-
 func init() {
 	testConfig = &Config{
 		Time:               func() time.Time { return time.Unix(0, 0) },
@@ -70,7 +58,6 @@ func init() {
 		MinVersion:         VersionSSL30,
 		MaxVersion:         VersionTLS12,
 		CipherSuites:       allCipherSuites(),
-		TLS13CipherSuites:  allTLS13CipherSuites(),
 	}
 	testConfig.Certificates[0].Certificate = [][]byte{testRSACertificate}
 	testConfig.Certificates[0].PrivateKey = testRSAPrivateKey

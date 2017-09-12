@@ -322,11 +322,11 @@ Curves:
 
 	var preferenceList, supportedList []uint16
 	if c.config.PreferServerCipherSuites {
-		preferenceList = c.config.cipherSuites(c.vers)
+		preferenceList = c.config.cipherSuites()
 		supportedList = hs.clientHello.cipherSuites
 	} else {
 		preferenceList = hs.clientHello.cipherSuites
-		supportedList = c.config.cipherSuites(c.vers)
+		supportedList = c.config.cipherSuites()
 	}
 
 	for _, id := range preferenceList {
@@ -388,7 +388,7 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 	}
 
 	// Check that we also support the ciphersuite from the session.
-	if !hs.setCipherSuite(hs.sessionState.cipherSuite, c.config.cipherSuites(c.vers), hs.sessionState.vers) {
+	if !hs.setCipherSuite(hs.sessionState.cipherSuite, c.config.cipherSuites(), hs.sessionState.vers) {
 		return false
 	}
 
