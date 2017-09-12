@@ -159,6 +159,14 @@ NextCipherSuite:
 		}
 	}
 
+	if c.config.maxVersion() >= VersionTLS13 {
+		// Version preference is indicated via "supported_extensions",
+		// set legacy_version to TLS 1.2 for backwards compatibility.
+		hello.vers = VersionTLS12
+		hello.supportedVersions = c.config.getSupportedVersions()
+		// TODO keyshare
+	}
+
 	if _, err := c.writeRecord(recordTypeHandshake, hello.marshal()); err != nil {
 		return err
 	}
@@ -167,22 +175,32 @@ NextCipherSuite:
 	if err != nil {
 		return err
 	}
-	serverHello, ok := msg.(*serverHelloMsg)
-	if !ok {
+
+	var serverHello *serverHelloMsg
+	var vers, cipherSuite uint16
+	switch m := msg.(type) {
+	case *serverHelloMsg:
+		serverHello = m
+		vers = m.vers
+		cipherSuite = m.cipherSuite
+	case *serverHelloMsg13:
+		vers = m.vers
+		cipherSuite = m.cipherSuite
+	default:
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(serverHello, msg)
 	}
 
-	vers, ok := c.config.pickVersion([]uint16{serverHello.vers})
+	vers, ok := c.config.pickVersion([]uint16{vers})
 	if !ok || vers < VersionTLS10 {
 		// TLS 1.0 is the minimum version supported as a client.
 		c.sendAlert(alertProtocolVersion)
-		return fmt.Errorf("tls: server selected unsupported protocol version %x", serverHello.vers)
+		return fmt.Errorf("tls: server selected unsupported protocol version %x", vers)
 	}
 	c.vers = vers
 	c.haveVers = true
 
-	suite := mutualCipherSuite(hello.cipherSuites, serverHello.cipherSuite)
+	suite := mutualCipherSuite(hello.cipherSuites, cipherSuite)
 	if suite == nil {
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: server chose an unconfigured cipher suite")
