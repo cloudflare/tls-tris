@@ -731,3 +731,10 @@ func (hs *serverHandshakeState) traceErr(err error) {
 		}
 	}
 }
+
+func (hs *clientHandshakeState) doTLS13Handshake() error {
+	// TODO key exchange phase
+	// TODO server params phase
+	// TODO auth phase
+	return nil
+}

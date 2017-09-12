@@ -22,12 +22,18 @@ import (
 
 type clientHandshakeState struct {
 	c            *Conn
-	serverHello  *serverHelloMsg
 	hello        *clientHelloMsg
 	suite        *cipherSuite
-	finishedHash finishedHash
 	masterSecret []byte
 	session      *ClientSessionState
+
+	// TLS 1.0-1.2 fields
+	serverHello  *serverHelloMsg
+	finishedHash finishedHash
+
+	// TLS 1.3 fields
+	serverHello13 *serverHelloMsg13
+	keySchedule   *keySchedule13
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -177,6 +183,7 @@ NextCipherSuite:
 	}
 
 	var serverHello *serverHelloMsg
+	var serverHello13 *serverHelloMsg13
 	var vers, cipherSuite uint16
 	switch m := msg.(type) {
 	case *serverHelloMsg:
@@ -184,6 +191,7 @@ NextCipherSuite:
 		vers = m.vers
 		cipherSuite = m.cipherSuite
 	case *serverHelloMsg13:
+		serverHello13 = m
 		vers = m.vers
 		cipherSuite = m.cipherSuite
 	default:
@@ -213,32 +221,48 @@ NextCipherSuite:
 	}
 
 	hs := &clientHandshakeState{
-		c:            c,
-		serverHello:  serverHello,
-		hello:        hello,
-		suite:        suite,
-		finishedHash: newFinishedHash(c.vers, suite),
-		session:      session,
+		c:             c,
+		serverHello:   serverHello,
+		serverHello13: serverHello13,
+		hello:         hello,
+		suite:         suite,
+		session:       session,
 	}
 
-	isResume, err := hs.processServerHello()
-	if err != nil {
-		return err
-	}
+	var isResume bool
+	if c.vers >= VersionTLS13 {
+		hs.keySchedule = newKeySchedule13(hs.suite, c.config, hs.hello.random)
+		hs.keySchedule.write(hs.hello.marshal())
+		hs.keySchedule.write(hs.serverHello13.marshal())
+	} else {
+		hs.finishedHash = newFinishedHash(c.vers, suite)
 
-	// No signatures of the handshake are needed in a resumption.
-	// Otherwise, in a full handshake, if we don't have any certificates
-	// configured then we will never send a CertificateVerify message and
-	// thus no signatures are needed in that case either.
-	if isResume || (len(c.config.Certificates) == 0 && c.config.GetClientCertificate == nil) {
-		hs.finishedHash.discardHandshakeBuffer()
-	}
+		isResume, err = hs.processServerHello()
+		if err != nil {
+			return err
+		}
 
-	hs.finishedHash.Write(hs.hello.marshal())
-	hs.finishedHash.Write(hs.serverHello.marshal())
+		// No signatures of the handshake are needed in a resumption.
+		// Otherwise, in a full handshake, if we don't have any certificates
+		// configured then we will never send a CertificateVerify message and
+		// thus no signatures are needed in that case either.
+		if isResume || (len(c.config.Certificates) == 0 && c.config.GetClientCertificate == nil) {
+			hs.finishedHash.discardHandshakeBuffer()
+		}
+
+		hs.finishedHash.Write(hs.hello.marshal())
+		hs.finishedHash.Write(hs.serverHello.marshal())
+	}
 
 	c.buffering = true
-	if isResume {
+	if c.vers >= VersionTLS13 {
+		if err := hs.doTLS13Handshake(); err != nil {
+			return err
+		}
+		if _, err := c.flush(); err != nil {
+			return err
+		}
+	} else if isResume {
 		if err := hs.establishKeys(); err != nil {
 			return err
 		}
