@@ -389,7 +389,7 @@ func mutualCipherSuite(have []uint16, want uint16) *cipherSuite {
 //
 // Taken from http://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 const (
-	// TLS 1.0 - 1.2 cipher suites. To be used in Config.CipherSuites.
+	// TLS 1.0 - 1.2 cipher suites.
 	TLS_RSA_WITH_RC4_128_SHA                uint16 = 0x0005
 	TLS_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0x000a
 	TLS_RSA_WITH_AES_128_CBC_SHA            uint16 = 0x002f
@@ -413,7 +413,7 @@ const (
 	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
 	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
 
-	// TLS 1.3+ cipher suites. To be used in Config.TLS13CipherSuites.
+	// TLS 1.3+ cipher suites.
 	TLS_AES_128_GCM_SHA256       uint16 = 0x1301
 	TLS_AES_256_GCM_SHA384       uint16 = 0x1302
 	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303

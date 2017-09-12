@@ -510,10 +510,6 @@ type Config struct {
 	// supported by the implementation.
 	CipherSuites []uint16
 
-	// TLS13CipherSuites is a list of supported cipher suites to be used in
-	// TLS 1.3. If nil, uses a list of suites supported by the implementation.
-	TLS13CipherSuites []uint16
-
 	// PreferServerCipherSuites controls whether the server selects the
 	// client's most preferred ciphersuite, or the server's most preferred
 	// ciphersuite. If true then the server's preference, as expressed in
@@ -659,7 +655,6 @@ func (c *Config) Clone() *Config {
 		ClientCAs:                   c.ClientCAs,
 		InsecureSkipVerify:          c.InsecureSkipVerify,
 		CipherSuites:                c.CipherSuites,
-		TLS13CipherSuites:           c.TLS13CipherSuites,
 		PreferServerCipherSuites:    c.PreferServerCipherSuites,
 		SessionTicketsDisabled:      c.SessionTicketsDisabled,
 		SessionTicketKey:            c.SessionTicketKey,
@@ -756,17 +751,30 @@ func (c *Config) time() time.Time {
 	return t()
 }
 
-func (c *Config) cipherSuites(version uint16) []uint16 {
-	if version >= VersionTLS13 {
-		s := c.TLS13CipherSuites
-		if s == nil {
-			s = defaultTLS13CipherSuites()
+func hasOverlappingCipherSuites(cs1, cs2 []uint16) bool {
+	for _, c1 := range cs1 {
+		for _, c2 := range cs2 {
+			if c1 == c2 {
+				return true
+			}
 		}
-		return s
 	}
+	return false
+}
+
+func (c *Config) cipherSuites() []uint16 {
 	s := c.CipherSuites
 	if s == nil {
 		s = defaultCipherSuites()
+	} else if c.maxVersion() >= VersionTLS13 {
+		// Ensure that TLS 1.3 suites are always present, but respect
+		// the application cipher suite preferences.
+		s13 := defaultTLS13CipherSuites()
+		if !hasOverlappingCipherSuites(s, s13) {
+			allSuites := make([]uint16, len(s13)+len(s))
+			allSuites = append(allSuites, s13...)
+			s = append(allSuites, s...)
+		}
 	}
 	return s
 }
@@ -1089,9 +1097,7 @@ func initDefaultCipherSuites() {
 	}
 
 	varDefaultTLS13CipherSuites = make([]uint16, 0, len(cipherSuites))
-	for _, topCipher := range topTLS13CipherSuites {
-		varDefaultTLS13CipherSuites = append(varDefaultTLS13CipherSuites, topCipher)
-	}
+	varDefaultTLS13CipherSuites = append(varDefaultTLS13CipherSuites, topTLS13CipherSuites...)
 	varDefaultCipherSuites = make([]uint16, 0, len(cipherSuites))
 	varDefaultCipherSuites = append(varDefaultCipherSuites, topCipherSuites...)
 
@@ -1116,6 +1122,7 @@ NextCipherSuite:
 			varDefaultCipherSuites = append(varDefaultCipherSuites, suite.id)
 		}
 	}
+	varDefaultCipherSuites = append(varDefaultTLS13CipherSuites, varDefaultCipherSuites...)
 }
 
 func unexpectedMessageError(wanted, got interface{}) error {
