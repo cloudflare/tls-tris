@@ -111,7 +111,8 @@ NextCipherSuite:
 	var session *ClientSessionState
 	var cacheKey string
 	sessionCache := c.config.ClientSessionCache
-	if c.config.SessionTicketsDisabled {
+	// TLS 1.3 has no session resumption based on session tickets.
+	if c.config.SessionTicketsDisabled || c.config.maxVersion() >= VersionTLS13 {
 		sessionCache = nil
 	}
 
@@ -258,7 +259,7 @@ NextCipherSuite:
 		}
 	}
 
-	if sessionCache != nil && hs.session != nil && session != hs.session {
+	if sessionCache != nil && hs.session != nil && session != hs.session && c.vers < VersionTLS13 {
 		sessionCache.Put(cacheKey, hs.session)
 	}
 
