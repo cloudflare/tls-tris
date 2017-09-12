@@ -186,6 +186,12 @@ NextCipherSuite:
 		c.sendAlert(alertHandshakeFailure)
 		return errors.New("tls: server chose an unconfigured cipher suite")
 	}
+	// Check that the chosen cipher suite matches the protocol version.
+	if c.vers >= VersionTLS13 && suite.flags&suiteTLS13 == 0 ||
+		c.vers < VersionTLS13 && suite.flags&suiteTLS13 != 0 {
+		c.sendAlert(alertHandshakeFailure)
+		return errors.New("tls: server chose an inappropriate cipher suite")
+	}
 
 	hs := &clientHandshakeState{
 		c:            c,
