@@ -34,6 +34,7 @@ type clientHandshakeState struct {
 	// TLS 1.3 fields
 	serverHello13 *serverHelloMsg13
 	keySchedule   *keySchedule13
+	privateKey    []byte
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -165,12 +166,22 @@ NextCipherSuite:
 		}
 	}
 
+	var privateKey []byte
+	var clientKS keyShare
 	if c.config.maxVersion() >= VersionTLS13 {
 		// Version preference is indicated via "supported_extensions",
 		// set legacy_version to TLS 1.2 for backwards compatibility.
 		hello.vers = VersionTLS12
 		hello.supportedVersions = c.config.getSupportedVersions()
-		// TODO keyshare
+		// Create one keyshare for the first default curve. If it is not
+		// appropriate, the server should raise a HRR.
+		defaultGroup := c.config.curvePreferences()[0]
+		privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hello.keyShares = []keyShare{clientKS}
 	}
 
 	if _, err := c.writeRecord(recordTypeHandshake, hello.marshal()); err != nil {
@@ -227,6 +238,7 @@ NextCipherSuite:
 		hello:         hello,
 		suite:         suite,
 		session:       session,
+		privateKey:    privateKey,
 	}
 
 	var isResume bool

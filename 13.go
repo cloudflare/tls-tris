@@ -733,8 +733,114 @@ func (hs *serverHandshakeState) traceErr(err error) {
 }
 
 func (hs *clientHandshakeState) doTLS13Handshake() error {
-	// TODO key exchange phase
-	// TODO server params phase
-	// TODO auth phase
+	c := hs.c
+	hash := hashForSuite(hs.suite)
+	hashSize := hash.Size()
+	serverHello := hs.serverHello13
+	// TODO check if keyshare is unacceptable, raise HRR.
+
+	clientKS := hs.hello.keyShares[0]
+	if serverHello.keyShare.group != clientKS.group {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("bad or missing key share from server")
+	}
+
+	// 0-RTT is not supported yet, so use an empty PSK.
+	hs.keySchedule.setSecret(nil)
+	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey)
+	if ecdheSecret == nil {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: bad ECDHE server share")
+	}
+
+	// Calculate handshake secrets.
+	hs.keySchedule.setSecret(ecdheSecret)
+	clientCipher, clientHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
+	serverCipher, serverHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeServer)
+	// Do not change the sender key yet, the server must authenticate first.
+	c.in.setCipher(c.vers, serverCipher)
+
+	// Calculate MAC key for Finished messages.
+	serverFinishedKey := hkdfExpandLabel(hash, serverHandshakeSecret, nil, "finished", hashSize)
+	clientFinishedKey := hkdfExpandLabel(hash, clientHandshakeSecret, nil, "finished", hashSize)
+
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+	encryptedExtensions, ok := msg.(*encryptedExtensionsMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(encryptedExtensions, msg)
+	}
+	hs.keySchedule.write(encryptedExtensions.marshal())
+	// TODO process encryptedExtensions
+
+	// PSKs are not supported, so receive Certificate message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	// TODO handle optional CertificateRequest
+	certMsg, ok := msg.(*certificateMsg13)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certMsg, msg)
+	}
+	hs.keySchedule.write(certMsg.marshal())
+	// TODO process Certificate
+
+	// Receive CertificateVerify message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	certVerifyMsg, ok := msg.(*certificateVerifyMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certVerifyMsg, msg)
+	}
+	// TODO process CertificateVerify
+	hs.keySchedule.write(certVerifyMsg.marshal())
+
+	// Receive Finished message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	serverFinished, ok := msg.(*finishedMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(serverFinished, msg)
+	}
+	// Validate server Finished hash.
+	expectedVerifyData := hmacOfSum(hash, hs.keySchedule.transcriptHash, serverFinishedKey)
+	if subtle.ConstantTimeCompare(expectedVerifyData, serverFinished.verifyData) != 1 {
+		c.sendAlert(alertDecryptError)
+		return errors.New("tls: server's Finished message is incorrect")
+	}
+	hs.keySchedule.write(serverFinished.marshal())
+
+	// Server has authenticated itself, change our cipher.
+	c.out.setCipher(c.vers, clientCipher)
+
+	// TODO optionally send a client cert
+
+	// Send Finished
+	verifyData := hmacOfSum(hash, hs.keySchedule.transcriptHash, clientFinishedKey)
+	clientFinished := &finishedMsg{
+		verifyData: verifyData,
+	}
+	if _, err := c.writeRecord(recordTypeHandshake, clientFinished.marshal()); err != nil {
+		return err
+	}
+
+	// Calculate application traffic secrets.
+	hs.keySchedule.setSecret(nil) // derive master secret
+	// TODO store initial traffic secret key for KeyUpdate
+	clientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
+	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
+	c.out.setCipher(c.vers, clientCipher)
+	c.in.setCipher(c.vers, serverCipher)
 	return nil
 }
