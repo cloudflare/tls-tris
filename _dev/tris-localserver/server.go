@@ -41,6 +41,7 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 				time.Sleep(500 * time.Millisecond)
 				return nil, nil
 			},
+			MaxVersion: tls.VersionTLS13,
 		},
 	}
 	log.Fatal(s.ListenAndServeTLS("", ""))
