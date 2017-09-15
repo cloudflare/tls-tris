@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/subtle"
+	"encoding/asn1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -732,6 +733,49 @@ func (hs *serverHandshakeState) traceErr(err error) {
 	}
 }
 
+func (hs *clientHandshakeState) processCertsFromServer13(certMsg *certificateMsg13) error {
+	certs := make([][]byte, len(certMsg.certificates))
+	for i, cert := range certMsg.certificates {
+		certs[i] = cert.data
+	}
+	return hs.processCertsFromServer(certs)
+}
+
+func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg) error {
+	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms) {
+		return errors.New("tls: unsupported signature algorithm for server certificate")
+	}
+	sigHash := hashForSignatureScheme(certVerify.signatureAlgorithm)
+	sigAlg := signatureFromSignatureScheme(certVerify.signatureAlgorithm)
+	pub := hs.c.peerCertificates[0].PublicKey
+	digest := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
+	switch key := pub.(type) {
+	case *ecdsa.PublicKey:
+		if sigAlg != signatureECDSA {
+			return errors.New("tls: bad signature type for server's ECDSA certificate")
+		}
+		ecdsaSig := new(ecdsaSignature)
+		if _, err := asn1.Unmarshal(certVerify.signature, ecdsaSig); err != nil {
+			return err
+		}
+		if ecdsaSig.R.Sign() <= 0 || ecdsaSig.S.Sign() <= 0 {
+			return errors.New("tls: ECDSA signature contained zero or negative values")
+		}
+		if !ecdsa.Verify(key, digest, ecdsaSig.R, ecdsaSig.S) {
+			return errors.New("tls: ECDSA verification failure")
+		}
+		return nil
+	case *rsa.PublicKey:
+		if sigAlg != signatureRSAPSS {
+			return errors.New("tls: bad signature type for server's RSA certificate")
+		}
+		signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+		return rsa.VerifyPSS(key, sigHash, digest, certVerify.signature, signOpts)
+	default:
+		return errors.New("tls: unsupported certificate type")
+	}
+}
+
 func (hs *clientHandshakeState) doTLS13Handshake() error {
 	c := hs.c
 	hash := hashForSuite(hs.suite)
@@ -792,7 +836,10 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return unexpectedMessageError(certMsg, msg)
 	}
 	hs.keySchedule.write(certMsg.marshal())
-	// TODO process Certificate
+	// Validate certificates.
+	if err := hs.processCertsFromServer13(certMsg); err != nil {
+		return err
+	}
 
 	// Receive CertificateVerify message.
 	msg, err = c.readHandshake()
@@ -804,7 +851,9 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(certVerifyMsg, msg)
 	}
-	// TODO process CertificateVerify
+	if err = hs.verifyPeerCertificate(certVerifyMsg); err != nil {
+		return err
+	}
 	hs.keySchedule.write(certVerifyMsg.marshal())
 
 	// Receive Finished message.
