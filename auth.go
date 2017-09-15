@@ -45,6 +45,11 @@ func pickSignatureAlgorithm(pubkey crypto.PublicKey, peerSigAlgs, ourSigAlgs []S
 			panic("tls: supported signature algorithm has an unknown hash function")
 		}
 		sigType := signatureFromSignatureScheme(sigAlg)
+		if (sigType == signaturePKCS1v15 || hashAlg == crypto.SHA1) && tlsVersion >= VersionTLS13 {
+			// TLS 1.3 forbids RSASSA-PKCS1-v1_5 and SHA-1 for
+			// handshake messages.
+			continue
+		}
 		switch pubkey.(type) {
 		case *rsa.PublicKey:
 			if sigType == signaturePKCS1v15 || sigType == signatureRSAPSS {
