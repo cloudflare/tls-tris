@@ -28,6 +28,84 @@ import (
 // server sends to a TLS 1.3 client, who will use each only once.
 const numSessionTickets = 2
 
+type secretLabel int
+
+const (
+	secretResumptionPskBinder secretLabel = iota
+	secretEarlyClient
+	secretHandshakeClient
+	secretHandshakeServer
+	secretApplicationClient
+	secretApplicationServer
+	secretResumption
+)
+
+type keySchedule13 struct {
+	suite          *cipherSuite
+	transcriptHash hash.Hash // uses the cipher suite hash algo
+	secret         []byte    // Current secret as used for Derive-Secret
+	handshakeCtx   []byte    // cached handshake context, invalidated on updates.
+}
+
+func newKeySchedule13(suite *cipherSuite) *keySchedule13 {
+	return &keySchedule13{
+		suite:          suite,
+		transcriptHash: hashForSuite(suite).New(),
+	}
+}
+
+// setSecret sets the early/handshake/master secret based on the given secret
+// (IKM). The salt is based on previous secrets (nil for the early secret).
+func (ks *keySchedule13) setSecret(secret []byte) {
+	hash := hashForSuite(ks.suite)
+	salt := ks.secret
+	ks.secret = hkdfExtract(hash, secret, salt)
+}
+
+// write appends the data to the transcript hash context.
+func (ks *keySchedule13) write(data []byte) {
+	ks.handshakeCtx = nil
+	ks.transcriptHash.Write(data)
+}
+
+func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label string) {
+	switch secretLabel {
+	case secretResumptionPskBinder:
+		label = "resumption psk binder key"
+	case secretEarlyClient:
+		label = "client early traffic secret"
+	case secretHandshakeClient:
+		label = "client handshake traffic secret"
+	case secretHandshakeServer:
+		label = "server handshake traffic secret"
+	case secretApplicationClient:
+		label = "client application traffic secret"
+	case secretApplicationServer:
+		label = "server application traffic secret"
+	case secretResumption:
+		label = "resumption master secret"
+	}
+	return
+}
+
+// deriveSecret returns the secret derived from the handshake context and label.
+func (ks *keySchedule13) deriveSecret(secretLabel secretLabel) []byte {
+	label := ks.getLabel(secretLabel)
+	if ks.handshakeCtx == nil {
+		ks.handshakeCtx = ks.transcriptHash.Sum(nil)
+	}
+	hash := hashForSuite(ks.suite)
+	return hkdfExpandLabel(hash, ks.secret, ks.handshakeCtx, label, hash.Size())
+}
+
+func (ks *keySchedule13) prepareCipher(secretLabel secretLabel) (interface{}, []byte) {
+	trafficSecret := ks.deriveSecret(secretLabel)
+	hash := hashForSuite(ks.suite)
+	key := hkdfExpandLabel(hash, trafficSecret, nil, "key", ks.suite.keyLen)
+	iv := hkdfExpandLabel(hash, trafficSecret, nil, "iv", 12)
+	return ks.suite.aead(key, iv), trafficSecret
+}
+
 func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
