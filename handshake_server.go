@@ -13,7 +13,6 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"sync/atomic"
 )
@@ -45,7 +44,7 @@ type serverHandshakeState struct {
 	// TLS 1.3 fields
 	hello13           *serverHelloMsg13
 	hello13Enc        *encryptedExtensionsMsg
-	finishedHash13    hash.Hash
+	keySchedule       *keySchedule13
 	clientFinishedKey []byte
 	hsClientCipher    interface{}
 	appClientCipher   interface{}
