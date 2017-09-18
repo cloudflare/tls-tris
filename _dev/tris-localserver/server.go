@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -30,12 +31,21 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 	if offer0RTT {
 		Max0RTTDataSize = 100 * 1024
 	}
+	var keyLogWriter io.Writer
+	if keyLogFile := os.Getenv("SSLKEYLOGFILE"); keyLogFile != "" {
+		keyLogWriter, err = os.OpenFile(keyLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			log.Fatalf("Cannot open keylog file: %v", err)
+		}
+		log.Println("Enabled keylog")
+	}
 	s := &http.Server{
 		Addr: addr,
 		TLSConfig: &tls.Config{
 			Certificates:    []tls.Certificate{cert},
 			Max0RTTDataSize: Max0RTTDataSize,
 			Accept0RTTData:  accept0RTT,
+			KeyLogWriter:    keyLogWriter,
 			GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 				// If we send the first flight too fast, NSS sends empty early data.
 				time.Sleep(500 * time.Millisecond)

@@ -45,12 +45,20 @@ type keySchedule13 struct {
 	transcriptHash hash.Hash // uses the cipher suite hash algo
 	secret         []byte    // Current secret as used for Derive-Secret
 	handshakeCtx   []byte    // cached handshake context, invalidated on updates.
+	clientRandom   []byte    // Used for keylogging, nil if keylogging is disabled.
+	config         *Config   // Used for KeyLogWriter callback, nil if keylogging is disabled.
 }
 
-func newKeySchedule13(suite *cipherSuite) *keySchedule13 {
+func newKeySchedule13(suite *cipherSuite, config *Config, clientRandom []byte) *keySchedule13 {
+	if config.KeyLogWriter == nil {
+		clientRandom = nil
+		config = nil
+	}
 	return &keySchedule13{
 		suite:          suite,
 		transcriptHash: hashForSuite(suite).New(),
+		clientRandom:   clientRandom,
+		config:         config,
 	}
 }
 
@@ -68,20 +76,25 @@ func (ks *keySchedule13) write(data []byte) {
 	ks.transcriptHash.Write(data)
 }
 
-func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label string) {
+func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label, keylogType string) {
 	switch secretLabel {
 	case secretResumptionPskBinder:
 		label = "resumption psk binder key"
 	case secretEarlyClient:
 		label = "client early traffic secret"
+		keylogType = "CLIENT_EARLY_TRAFFIC_SECRET"
 	case secretHandshakeClient:
 		label = "client handshake traffic secret"
+		keylogType = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
 	case secretHandshakeServer:
 		label = "server handshake traffic secret"
+		keylogType = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
 	case secretApplicationClient:
 		label = "client application traffic secret"
+		keylogType = "CLIENT_TRAFFIC_SECRET_0"
 	case secretApplicationServer:
 		label = "server application traffic secret"
+		keylogType = "SERVER_TRAFFIC_SECRET_0"
 	case secretResumption:
 		label = "resumption master secret"
 	}
@@ -90,12 +103,16 @@ func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label string) {
 
 // deriveSecret returns the secret derived from the handshake context and label.
 func (ks *keySchedule13) deriveSecret(secretLabel secretLabel) []byte {
-	label := ks.getLabel(secretLabel)
+	label, keylogType := ks.getLabel(secretLabel)
 	if ks.handshakeCtx == nil {
 		ks.handshakeCtx = ks.transcriptHash.Sum(nil)
 	}
 	hash := hashForSuite(ks.suite)
-	return hkdfExpandLabel(hash, ks.secret, ks.handshakeCtx, label, hash.Size())
+	secret := hkdfExpandLabel(hash, ks.secret, ks.handshakeCtx, label, hash.Size())
+	if keylogType != "" && ks.config != nil {
+		ks.config.writeKeyLog(keylogType, ks.clientRandom, secret)
+	}
+	return secret
 }
 
 func (ks *keySchedule13) prepareCipher(secretLabel secretLabel) (interface{}, []byte) {
@@ -146,7 +163,7 @@ CurvePreferenceLoop:
 
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
-	hs.keySchedule = newKeySchedule13(hs.suite)
+	hs.keySchedule = newKeySchedule13(hs.suite, config, hs.clientHello.random)
 
 	// Check for PSK and update key schedule with new early secret key
 	isResumed, pskAlert := hs.checkPSK()
