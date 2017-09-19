@@ -313,7 +313,7 @@ func (h finishedHash) serverSum(masterSecret []byte) []byte {
 
 // selectClientCertSignatureAlgorithm returns a SignatureScheme to sign a
 // client's CertificateVerify with, or an error if none can be found.
-func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []SignatureScheme, sigType uint8) (SignatureScheme, error) {
+func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []SignatureScheme, sigType signatureType) (SignatureScheme, error) {
 	for _, v := range serverList {
 		if signatureFromSignatureScheme(v) == sigType && isSupportedSignatureAlgorithm(v, supportedSignatureAlgorithms) {
 			return v, nil
@@ -324,13 +324,13 @@ func (h finishedHash) selectClientCertSignatureAlgorithm(serverList []SignatureS
 
 // hashForClientCertificate returns a digest, hash function, and TLS 1.2 hash
 // id suitable for signing by a TLS client certificate.
-func (h finishedHash) hashForClientCertificate(sigType uint8, signatureAlgorithm SignatureScheme, masterSecret []byte) ([]byte, crypto.Hash, error) {
+func (h finishedHash) hashForClientCertificate(sigType signatureType, signatureAlgorithm SignatureScheme, masterSecret []byte) ([]byte, crypto.Hash, error) {
 	if (h.version == VersionSSL30 || h.version >= VersionTLS12) && h.buffer == nil {
 		panic("a handshake hash for a client-certificate was requested after discarding the handshake buffer")
 	}
 
 	if h.version == VersionSSL30 {
-		if sigType != signatureRSA {
+		if sigType != signaturePKCS1v15 {
 			return nil, 0, errors.New("tls: unsupported signature type for client certificate")
 		}
 

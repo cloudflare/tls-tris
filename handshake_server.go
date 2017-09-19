@@ -597,7 +597,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 
 		// Determine the signature type.
 		var signatureAlgorithm SignatureScheme
-		var sigType uint8
+		var sigType signatureType
 		if certVerify.hasSignatureAndHash {
 			signatureAlgorithm = certVerify.signatureAlgorithm
 			if !isSupportedSignatureAlgorithm(signatureAlgorithm, supportedSignatureAlgorithms) {
@@ -613,7 +613,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 			case *ecdsa.PublicKey:
 				sigType = signatureECDSA
 			case *rsa.PublicKey:
-				sigType = signatureRSA
+				sigType = signaturePKCS1v15
 			}
 		}
 
@@ -639,7 +639,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 				err = errors.New("tls: ECDSA verification failure")
 			}
 		case *rsa.PublicKey:
-			if sigType != signatureRSA {
+			if sigType != signaturePKCS1v15 {
 				err = errors.New("tls: bad signature type for client's RSA certificate")
 				break
 			}
