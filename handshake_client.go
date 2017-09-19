@@ -114,6 +114,13 @@ NextCipherSuite:
 	if hello.vers >= VersionTLS12 {
 		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 	}
+	// TODO fix PSS support for certificates and advertise these algorithms
+	// in the global supportedSignatureAlgorithms.
+	if hello.vers >= VersionTLS13 {
+		hello.supportedSignatureAlgorithms =
+			append([]SignatureScheme{PSSWithSHA256, PSSWithSHA384},
+				hello.supportedSignatureAlgorithms...)
+	}
 
 	var session *ClientSessionState
 	var cacheKey string
