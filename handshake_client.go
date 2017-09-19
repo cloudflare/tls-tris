@@ -446,12 +446,12 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			return fmt.Errorf("tls: client certificate private key of type %T does not implement crypto.Signer", chainToSend.PrivateKey)
 		}
 
-		var signatureType uint8
+		var signatureType signatureType
 		switch key.Public().(type) {
 		case *ecdsa.PublicKey:
 			signatureType = signatureECDSA
 		case *rsa.PublicKey:
-			signatureType = signatureRSA
+			signatureType = signaturePKCS1v15
 		default:
 			c.sendAlert(alertInternalError)
 			return fmt.Errorf("tls: failed to sign handshake with client certificate: unknown client certificate key type: %T", key)

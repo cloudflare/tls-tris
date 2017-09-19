@@ -160,10 +160,21 @@ const (
 	// Rest of these are reserved by the TLS spec
 )
 
-// Signature algorithms for TLS 1.2 (See RFC 5246, section A.4.1)
+// Public key algorithm type.
+type pubkeyType uint8
+
 const (
-	signatureRSA   uint8 = 1
-	signatureECDSA uint8 = 3
+	keyRSA pubkeyType = iota + 1
+	keyECDSA
+)
+
+// signatureType is the generic signature algorithm, not include options like
+// the hash function.
+type signatureType uint8
+
+const (
+	signaturePKCS1v15 signatureType = iota + 1
+	signatureECDSA
 )
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
@@ -1144,10 +1155,10 @@ func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlg
 
 // signatureFromSignatureScheme maps a signature algorithm to the underlying
 // signature method (without hash function).
-func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) uint8 {
+func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) signatureType {
 	switch signatureAlgorithm {
 	case PKCS1WithSHA1, PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512:
-		return signatureRSA
+		return signaturePKCS1v15
 	case ECDSAWithSHA1, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512:
 		return signatureECDSA
 	default:
