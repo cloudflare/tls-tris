@@ -741,6 +741,15 @@ func (hs *clientHandshakeState) processCertsFromServer13(certMsg *certificateMsg
 	return hs.processCertsFromServer(certs)
 }
 
+func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensionsMsg) error {
+	c := hs.c
+	if ee.alpnProtocol != "" {
+		c.clientProtocol = ee.alpnProtocol
+		c.clientProtocolFallback = false
+	}
+	return nil
+}
+
 func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg) error {
 	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms) {
 		return errors.New("tls: unsupported signature algorithm for server certificate")
@@ -821,8 +830,10 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(encryptedExtensions, msg)
 	}
+	if err := hs.processEncryptedExtensions(encryptedExtensions); err != nil {
+		return err
+	}
 	hs.keySchedule.write(encryptedExtensions.marshal())
-	// TODO process encryptedExtensions
 
 	// PSKs are not supported, so receive Certificate message.
 	msg, err = c.readHandshake()
