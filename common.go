@@ -505,14 +505,11 @@ type Config struct {
 	// This should be used only for testing.
 	InsecureSkipVerify bool
 
-	// CipherSuites is a list of supported cipher suites to be used in
-	// TLS 1.0-1.2. If CipherSuites is nil, TLS uses a list of suites
-	// supported by the implementation.
+	// CipherSuites is a list of supported cipher suites. If CipherSuites
+	// is nil, TLS uses a list of suites supported by the implementation.
+	// If CipherSuites does not contain a TLS1.3 suite, TLS uses a list
+	// of suites supported by the implementation when negotiating TLS1.3.
 	CipherSuites []uint16
-
-	// TLS13CipherSuites is a list of supported cipher suites to be used in
-	// TLS 1.3. If nil, uses a list of suites supported by the implementation.
-	TLS13CipherSuites []uint16
 
 	// PreferServerCipherSuites controls whether the server selects the
 	// client's most preferred ciphersuite, or the server's most preferred
@@ -659,7 +656,6 @@ func (c *Config) Clone() *Config {
 		ClientCAs:                   c.ClientCAs,
 		InsecureSkipVerify:          c.InsecureSkipVerify,
 		CipherSuites:                c.CipherSuites,
-		TLS13CipherSuites:           c.TLS13CipherSuites,
 		PreferServerCipherSuites:    c.PreferServerCipherSuites,
 		SessionTicketsDisabled:      c.SessionTicketsDisabled,
 		SessionTicketKey:            c.SessionTicketKey,
@@ -758,11 +754,20 @@ func (c *Config) time() time.Time {
 
 func (c *Config) cipherSuites(version uint16) []uint16 {
 	if version >= VersionTLS13 {
-		s := c.TLS13CipherSuites
-		if s == nil {
-			s = defaultTLS13CipherSuites()
+	NextCipherSuite:
+		for _, id := range c.CipherSuites {
+			for _, s := range cipherSuites {
+				if s.id != id {
+					continue
+				}
+				if s.flags&suiteTLS13 == 0 {
+					continue NextCipherSuite
+				}
+				return c.CipherSuites
+			}
 		}
-		return s
+		// TODO: this breaks client cipher advertisement.
+		return defaultCipherSuites()
 	}
 	s := c.CipherSuites
 	if s == nil {
@@ -1037,9 +1042,8 @@ func defaultConfig() *Config {
 }
 
 var (
-	once                        sync.Once
-	varDefaultCipherSuites      []uint16
-	varDefaultTLS13CipherSuites []uint16
+	once                   sync.Once
+	varDefaultCipherSuites []uint16
 )
 
 func defaultCipherSuites() []uint16 {
@@ -1047,22 +1051,15 @@ func defaultCipherSuites() []uint16 {
 	return varDefaultCipherSuites
 }
 
-func defaultTLS13CipherSuites() []uint16 {
-	once.Do(initDefaultCipherSuites)
-	return varDefaultTLS13CipherSuites
-}
-
 func initDefaultCipherSuites() {
-	var topCipherSuites, topTLS13CipherSuites []uint16
+	var topCipherSuites []uint16
 	if cipherhw.AESGCMSupport() {
 		// If AES-GCM hardware is provided then prioritise AES-GCM
 		// cipher suites.
-		topTLS13CipherSuites = []uint16{
+		topCipherSuites = []uint16{
 			TLS_AES_128_GCM_SHA256,
 			TLS_AES_256_GCM_SHA384,
 			TLS_CHACHA20_POLY1305_SHA256,
-		}
-		topCipherSuites = []uint16{
 			TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 			TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 			TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
@@ -1073,12 +1070,10 @@ func initDefaultCipherSuites() {
 	} else {
 		// Without AES-GCM hardware, we put the ChaCha20-Poly1305
 		// cipher suites first.
-		topTLS13CipherSuites = []uint16{
+		topCipherSuites = []uint16{
 			TLS_CHACHA20_POLY1305_SHA256,
 			TLS_AES_128_GCM_SHA256,
 			TLS_AES_256_GCM_SHA384,
-		}
-		topCipherSuites = []uint16{
 			TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 			TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
 			TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
@@ -1088,10 +1083,6 @@ func initDefaultCipherSuites() {
 		}
 	}
 
-	varDefaultTLS13CipherSuites = make([]uint16, 0, len(cipherSuites))
-	for _, topCipher := range topTLS13CipherSuites {
-		varDefaultTLS13CipherSuites = append(varDefaultTLS13CipherSuites, topCipher)
-	}
 	varDefaultCipherSuites = make([]uint16, 0, len(cipherSuites))
 	varDefaultCipherSuites = append(varDefaultCipherSuites, topCipherSuites...)
 
@@ -1100,21 +1091,12 @@ NextCipherSuite:
 		if suite.flags&suiteDefaultOff != 0 {
 			continue
 		}
-		if suite.flags&suiteTLS13 != 0 {
-			for _, existing := range varDefaultTLS13CipherSuites {
-				if existing == suite.id {
-					continue NextCipherSuite
-				}
+		for _, existing := range varDefaultCipherSuites {
+			if existing == suite.id {
+				continue NextCipherSuite
 			}
-			varDefaultTLS13CipherSuites = append(varDefaultTLS13CipherSuites, suite.id)
-		} else {
-			for _, existing := range varDefaultCipherSuites {
-				if existing == suite.id {
-					continue NextCipherSuite
-				}
-			}
-			varDefaultCipherSuites = append(varDefaultCipherSuites, suite.id)
 		}
+		varDefaultCipherSuites = append(varDefaultCipherSuites, suite.id)
 	}
 }
 
