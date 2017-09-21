@@ -244,11 +244,32 @@ CurvePreferenceLoop:
 	return nil
 }
 
-// readClientFinished13 is called when, on the second flight of the client,
-// a handshake message is received. This might be immediately or after the
-// early data. Once done it sends the session tickets. Under c.in lock.
-func (hs *serverHandshakeState) readClientFinished13() error {
+// readClientFinished13 is called during the server handshake (when no early
+// data it available) or after reading all early data. It discards early data if
+// the server did not accept it and then verifies the Finished message. Once
+// done it sends the session tickets. Under c.in lock.
+func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error {
 	c := hs.c
+
+	// If the client advertised and sends early data while the server does
+	// not accept it, it must be fully skipped until the Finished message.
+	for c.phase == discardingEarlyData {
+		if err := c.readRecord(recordTypeApplicationData); err != nil {
+			return err
+		}
+		// Assume receipt of Finished message (will be checked below).
+		if c.hand.Len() > 0 {
+			c.phase = waitingClientFinished
+			break
+		}
+	}
+
+	// If the client sends early data followed by a Finished message (but
+	// no end_of_early_data), the server MUST terminate the connection.
+	if c.phase != waitingClientFinished {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: did not expect Client Finished yet")
+	}
 
 	c.phase = readingClientFinished
 	msg, err := c.readHandshake()
@@ -283,7 +304,13 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	// Any read operation after handshakeRunning and before handshakeConfirmed
 	// will be holding this lock, which we release as soon as the confirmation
 	// happens, even if the Read call might do more work.
-	c.confirmMutex.Unlock()
+	// If a Handshake is pending, c.confirmMutex will never be locked as
+	// ConfirmHandshake will wait for the handshake to complete. If a
+	// handshake was complete, and this was a confirmation, unlock
+	// c.confirmMutex now to allow readers to proceed.
+	if hasConfirmLock {
+		c.confirmMutex.Unlock()
+	}
 
 	return hs.sendSessionTicket13() // TODO: do in a goroutine
 }

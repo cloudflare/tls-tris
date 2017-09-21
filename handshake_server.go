@@ -77,6 +77,16 @@ func (c *Conn) serverHandshake() error {
 			return err
 		}
 		c.hs = &hs
+		// If the client is sending early data while the server expects
+		// it, delay the Finished check until HandshakeConfirmed() is
+		// called or until all early data is Read(). Otherwise, complete
+		// authenticating the client now (there is no support for
+		// sending 0.5-RTT data to a potential unauthenticated client).
+		if c.phase != readingEarlyData {
+			if err := hs.readClientFinished13(false); err != nil {
+				return err
+			}
+		}
 		c.handshakeComplete = true
 		return nil
 	} else if isResume {

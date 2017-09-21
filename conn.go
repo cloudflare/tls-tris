@@ -844,12 +844,6 @@ Again:
 			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 		c.hand.Write(data)
-		if typ != want && c.phase == waitingClientFinished {
-			if err := c.hs.readClientFinished13(); err != nil {
-				c.in.setErrorLocked(err)
-				break
-			}
-		}
 	}
 
 	if b != nil {
@@ -1315,6 +1309,10 @@ func (c *Conn) handleRenegotiation(*helloRequestMsg) error {
 // client sent valid 0-RTT data. In any other case it's equivalent to
 // calling Handshake.
 func (c *Conn) ConfirmHandshake() error {
+	if c.isClient {
+		panic("ConfirmHandshake should only be called for servers")
+	}
+
 	if err := c.Handshake(); err != nil {
 		return err
 	}
@@ -1341,6 +1339,9 @@ func (c *Conn) ConfirmHandshake() error {
 	defer c.in.Unlock()
 
 	var input *block
+	// Try to read all data (if phase==readingEarlyData) or extract the
+	// remaining data from the previous read that could not fit in the read
+	// buffer (if c.input != nil).
 	if c.phase == readingEarlyData || c.input != nil {
 		buf := &bytes.Buffer{}
 		if _, err := buf.ReadFrom(earlyDataReader{c}); err != nil {
@@ -1350,8 +1351,12 @@ func (c *Conn) ConfirmHandshake() error {
 		input = &block{data: buf.Bytes()}
 	}
 
+	// At this point, earlyDataReader has read all early data and received
+	// the end_of_early_data signal. Expect a Finished message.
+	// Locks held so far: c.confirmMutex, c.in
+	// not confirmed implies c.phase == discardingEarlyData || c.phase == waitingClientFinished
 	for c.phase != handshakeConfirmed {
-		if err := c.readRecord(recordTypeApplicationData); err != nil {
+		if err := c.hs.readClientFinished13(true); err != nil {
 			c.in.setErrorLocked(err)
 			return err
 		}
@@ -1402,6 +1407,7 @@ func (r earlyDataReader) Read(b []byte) (n int, err error) {
 		}
 	}
 
+	// Following early application data, an end_of_early_data is expected.
 	if err == nil && c.phase != readingEarlyData && c.input == nil {
 		err = io.EOF
 	}
@@ -1446,6 +1452,15 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 				return 0, err
 			}
 			if c.hand.Len() > 0 {
+				if c.phase == waitingClientFinished {
+					// Server has received all early data, confirm
+					// by reading the Client Finished message.
+					if err := c.hs.readClientFinished13(true); err != nil {
+						c.in.setErrorLocked(err)
+						return 0, err
+					}
+					continue
+				}
 				if err := c.handlePostHandshake(); err != nil {
 					return 0, err
 				}
