@@ -1591,7 +1591,7 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 				if len(body) < 2 {
 					return alertDecodeError
 				}
-				listLen := int(body[0]<<8) | int(body[1])
+				listLen := int(body[0])<<8 | int(body[1])
 				body = body[2:]
 				if len(body) != listLen {
 					return alertDecodeError
@@ -1600,7 +1600,7 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 					if len(body) < 2 {
 						return alertDecodeError
 					}
-					sctLen := int(body[0]<<8) | int(body[1])
+					sctLen := int(body[0])<<8 | int(body[1])
 					if len(body) < 2+sctLen {
 						return alertDecodeError
 					}
