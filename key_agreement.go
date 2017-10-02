@@ -388,15 +388,29 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 	}
 
 	var signatureAlgorithm SignatureScheme
+	var sigType signatureType
 	if ka.version >= VersionTLS12 {
 		// handle SignatureAndHashAlgorithm
 		signatureAlgorithm = SignatureScheme(sig[0])<<8 | SignatureScheme(sig[1])
 		if !keySupportsSignatureScheme(ka.keyType, signatureAlgorithm) {
 			return errServerKeyExchange
 		}
+		sigType = signatureFromSignatureScheme(signatureAlgorithm)
 		sig = sig[2:]
 		if len(sig) < 2 {
 			return errServerKeyExchange
+		}
+	} else {
+		// Before TLS 1.2 the signature algorithm was implicit
+		// from the key type, and only one hash per signature
+		// algorithm was possible. Leave signatureAlgorithm
+		// unset.
+		switch cert.PublicKey.(type) {
+		case *ecdsa.PublicKey:
+			sigType = signatureECDSA
+		case *rsa.PublicKey:
+			// since PSS cannot be negotiated, assume PKCS1.
+			sigType = signaturePKCS1v15
 		}
 	}
 	sigLen := int(sig[0])<<8 | int(sig[1])
@@ -430,8 +444,15 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 		if !ok {
 			return errors.New("tls: ECDHE RSA requires a RSA server public key")
 		}
-		if err := rsa.VerifyPKCS1v15(pubKey, hashFunc, digest, sig); err != nil {
-			return err
+		if sigType == signatureRSAPSS {
+			signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+			if err := rsa.VerifyPSS(pubKey, hashFunc, digest, sig, signOpts); err != nil {
+				return err
+			}
+		} else {
+			if err := rsa.VerifyPKCS1v15(pubKey, hashFunc, digest, sig); err != nil {
+				return err
+			}
 		}
 	default:
 		return errors.New("tls: unknown ECDHE signature algorithm")
