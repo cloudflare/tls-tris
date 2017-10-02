@@ -836,6 +836,15 @@ func (c *Config) pickVersion(peerSupportedVersions []uint16) (uint16, bool) {
 	return 0, false
 }
 
+// configSuppVersArray is the backing array of Config.getSupportedVersions
+var configSuppVersArray = [...]uint16{VersionTLS13, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
+
+// tls13DraftSuppVersArray is the backing array of Config.getSupportedVersions
+// with TLS 1.3 draft versions included.
+//
+// TODO: remove once TLS 1.3 is finalised.
+var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft18, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
+
 // getSupportedVersions returns the protocol versions that are supported by the
 // current configuration.
 func (c *Config) getSupportedVersions() []uint16 {
@@ -848,18 +857,14 @@ func (c *Config) getSupportedVersions() []uint16 {
 	if maxVersion > VersionTLS13 {
 		maxVersion = VersionTLS13
 	}
-
-	supportedVersions := []uint16{}
-	// Prefer newer versions over older versions.
-	for v := maxVersion; v >= minVersion; v-- {
-		if v == VersionTLS13 {
-			// Advertise all supported draft versions.
-			supportedVersions = append(supportedVersions, VersionTLS13Draft18)
-			continue // final TLS 1.3 version is not supported yet.
-		}
-		supportedVersions = append(supportedVersions, v)
+	if maxVersion < minVersion {
+		return nil
 	}
-	return supportedVersions
+	// TODO: remove once TLS 1.3 is finalised.
+	if maxVersion == VersionTLS13 {
+		return tls13DraftSuppVersArray[:len(tls13DraftSuppVersArray)-int(minVersion-VersionSSL30)]
+	}
+	return configSuppVersArray[VersionTLS13-maxVersion : VersionTLS13-minVersion+1]
 }
 
 // getCertificate returns the best certificate for the given ClientHelloInfo,
