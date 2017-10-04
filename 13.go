@@ -757,6 +757,10 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	hs.keySchedule.setSecret(ecdheSecret)
 	clientCipher, clientHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
 	serverCipher, serverHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeServer)
+	if c.hand.Len() > 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: unexpected data after Server Hello")
+	}
 	// Do not change the sender key yet, the server must authenticate first.
 	c.in.setCipher(c.vers, serverCipher)
 
@@ -841,6 +845,10 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	clientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
 	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
 	c.out.setCipher(c.vers, clientCipher)
+	if c.hand.Len() > 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: unexpected data after handshake")
+	}
 	c.in.setCipher(c.vers, serverCipher)
 	return nil
 }
