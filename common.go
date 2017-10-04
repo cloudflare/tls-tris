@@ -160,35 +160,35 @@ const (
 	// Rest of these are reserved by the TLS spec
 )
 
-// Hash functions for TLS 1.2 (See RFC 5246, section A.4.1)
+// Public key algorithm type.
+type pubkeyType uint8
+
 const (
-	hashSHA1   uint8 = 2
-	hashSHA256 uint8 = 4
-	hashSHA384 uint8 = 5
+	keyRSA pubkeyType = iota + 1
+	keyECDSA
 )
 
-// Signature algorithms for TLS 1.2 (See RFC 5246, section A.4.1)
-const (
-	signatureRSA   uint8 = 1
-	signatureECDSA uint8 = 3
-)
+// signatureType is the generic signature algorithm, not include options like
+// the hash function.
+type signatureType uint8
 
-// signatureAndHash mirrors the TLS 1.2, SignatureAndHashAlgorithm struct. See
-// RFC 5246, section A.4.1.
-type signatureAndHash struct {
-	hash, signature uint8
-}
+const (
+	signaturePKCS1v15 signatureType = iota + 1
+	signatureRSAPSS
+	signatureECDSA
+)
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
 // the code advertises as supported in a TLS 1.2 ClientHello and in a TLS 1.2
-// CertificateRequest.
-var supportedSignatureAlgorithms = []signatureAndHash{
-	{hashSHA256, signatureRSA},
-	{hashSHA256, signatureECDSA},
-	{hashSHA384, signatureRSA},
-	{hashSHA384, signatureECDSA},
-	{hashSHA1, signatureRSA},
-	{hashSHA1, signatureECDSA},
+// CertificateRequest. The two fields are merged to match with TLS 1.3.
+// Note that in TLS 1.2, the ECDSA algorithms are not constrained to P-256, etc.
+var supportedSignatureAlgorithms = []SignatureScheme{
+	PKCS1WithSHA256,
+	ECDSAWithP256AndSHA256,
+	PKCS1WithSHA384,
+	ECDSAWithP384AndSHA384,
+	PKCS1WithSHA1,
+	ECDSAWithSHA1,
 }
 
 // ConnectionState records basic TLS details about the connection.
@@ -280,6 +280,9 @@ const (
 	ECDSAWithP256AndSHA256 SignatureScheme = 0x0403
 	ECDSAWithP384AndSHA384 SignatureScheme = 0x0503
 	ECDSAWithP521AndSHA512 SignatureScheme = 0x0603
+
+	// Legacy signature and hash algorithms for TLS 1.2.
+	ECDSAWithSHA1 SignatureScheme = 0x0203
 )
 
 // ClientHelloInfo contains information from a ClientHello message in order to
@@ -1147,11 +1150,34 @@ func unexpectedMessageError(wanted, got interface{}) error {
 	return fmt.Errorf("tls: received unexpected handshake message of type %T when waiting for %T", got, wanted)
 }
 
-func isSupportedSignatureAndHash(sigHash signatureAndHash, sigHashes []signatureAndHash) bool {
-	for _, s := range sigHashes {
-		if s == sigHash {
+// isSupportedSignatureAlgorithm returns true if the signature algorithm is
+// allowed to be used for signing handshake messages.
+func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlgorithms []SignatureScheme) bool {
+	// TODO unhack this, PSS should be advertised in
+	// supportedSignatureAlgorithms, but that possibly needs additional
+	// support of PSS public keys and PSS signatures in certificates.
+	if sigAlg == PSSWithSHA256 || sigAlg == PSSWithSHA384 {
+		return true
+	}
+	for _, s := range supportedSignatureAlgorithms {
+		if s == sigAlg {
 			return true
 		}
 	}
 	return false
+}
+
+// signatureFromSignatureScheme maps a signature algorithm to the underlying
+// signature method (without hash function).
+func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) signatureType {
+	switch signatureAlgorithm {
+	case PKCS1WithSHA1, PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512:
+		return signaturePKCS1v15
+	case PSSWithSHA256, PSSWithSHA384, PSSWithSHA512:
+		return signatureRSAPSS
+	case ECDSAWithSHA1, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512:
+		return signatureECDSA
+	default:
+		return 0
+	}
 }

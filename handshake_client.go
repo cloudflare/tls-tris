@@ -105,7 +105,7 @@ NextCipherSuite:
 	}
 
 	if hello.vers >= VersionTLS12 {
-		hello.signatureAndHashes = supportedSignatureAlgorithms
+		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 	}
 
 	var session *ClientSessionState
@@ -446,23 +446,26 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			return fmt.Errorf("tls: client certificate private key of type %T does not implement crypto.Signer", chainToSend.PrivateKey)
 		}
 
-		var signatureType uint8
+		var signatureType signatureType
 		switch key.Public().(type) {
 		case *ecdsa.PublicKey:
 			signatureType = signatureECDSA
 		case *rsa.PublicKey:
-			signatureType = signatureRSA
+			signatureType = signaturePKCS1v15
 		default:
 			c.sendAlert(alertInternalError)
 			return fmt.Errorf("tls: failed to sign handshake with client certificate: unknown client certificate key type: %T", key)
 		}
 
-		certVerify.signatureAndHash, err = hs.finishedHash.selectClientCertSignatureAlgorithm(certReq.signatureAndHashes, signatureType)
-		if err != nil {
-			c.sendAlert(alertInternalError)
-			return err
+		// SignatureAndHashAlgorithm was introduced in TLS 1.2.
+		if certVerify.hasSignatureAndHash {
+			certVerify.signatureAlgorithm, err = hs.finishedHash.selectClientCertSignatureAlgorithm(certReq.supportedSignatureAlgorithms, signatureType)
+			if err != nil {
+				c.sendAlert(alertInternalError)
+				return err
+			}
 		}
-		digest, hashFunc, err := hs.finishedHash.hashForClientCertificate(certVerify.signatureAndHash, hs.masterSecret)
+		digest, hashFunc, err := hs.finishedHash.hashForClientCertificate(signatureType, certVerify.signatureAlgorithm, hs.masterSecret)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
@@ -721,10 +724,7 @@ func (hs *clientHandshakeState) getCertificate(certReq *certificateRequestMsg) (
 				signatureSchemes = signatureSchemes[:len(signatureSchemes)-tls11SignatureSchemesNumRSA]
 			}
 		} else {
-			signatureSchemes = make([]SignatureScheme, 0, len(certReq.signatureAndHashes))
-			for _, sah := range certReq.signatureAndHashes {
-				signatureSchemes = append(signatureSchemes, SignatureScheme(sah.hash)<<8+SignatureScheme(sah.signature))
-			}
+			signatureSchemes = certReq.supportedSignatureAlgorithms
 		}
 
 		return c.config.GetClientCertificate(&CertificateRequestInfo{

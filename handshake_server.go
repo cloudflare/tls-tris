@@ -491,7 +491,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 		if c.vers >= VersionTLS12 {
 			certReq.hasSignatureAndHash = true
-			certReq.signatureAndHashes = supportedSignatureAlgorithms
+			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 		}
 
 		// An empty list of certificateAuthorities signals to
@@ -596,27 +596,31 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 		}
 
 		// Determine the signature type.
-		var signatureAndHash signatureAndHash
+		var signatureAlgorithm SignatureScheme
+		var sigType signatureType
 		if certVerify.hasSignatureAndHash {
-			signatureAndHash = certVerify.signatureAndHash
-			if !isSupportedSignatureAndHash(signatureAndHash, supportedSignatureAlgorithms) {
+			signatureAlgorithm = certVerify.signatureAlgorithm
+			if !isSupportedSignatureAlgorithm(signatureAlgorithm, supportedSignatureAlgorithms) {
 				return errors.New("tls: unsupported hash function for client certificate")
 			}
+			sigType = signatureFromSignatureScheme(signatureAlgorithm)
 		} else {
 			// Before TLS 1.2 the signature algorithm was implicit
 			// from the key type, and only one hash per signature
-			// algorithm was possible. Leave the hash as zero.
+			// algorithm was possible. Leave signatureAlgorithm
+			// unset.
 			switch pub.(type) {
 			case *ecdsa.PublicKey:
-				signatureAndHash.signature = signatureECDSA
+				sigType = signatureECDSA
 			case *rsa.PublicKey:
-				signatureAndHash.signature = signatureRSA
+				// since PSS cannot be negotiated, assume PKCS1.
+				sigType = signaturePKCS1v15
 			}
 		}
 
 		switch key := pub.(type) {
 		case *ecdsa.PublicKey:
-			if signatureAndHash.signature != signatureECDSA {
+			if sigType != signatureECDSA {
 				err = errors.New("tls: bad signature type for client's ECDSA certificate")
 				break
 			}
@@ -629,23 +633,28 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 				break
 			}
 			var digest []byte
-			if digest, _, err = hs.finishedHash.hashForClientCertificate(signatureAndHash, hs.masterSecret); err != nil {
+			if digest, _, err = hs.finishedHash.hashForClientCertificate(sigType, signatureAlgorithm, hs.masterSecret); err != nil {
 				break
 			}
 			if !ecdsa.Verify(key, digest, ecdsaSig.R, ecdsaSig.S) {
 				err = errors.New("tls: ECDSA verification failure")
 			}
 		case *rsa.PublicKey:
-			if signatureAndHash.signature != signatureRSA {
+			if sigType != signaturePKCS1v15 && sigType != signatureRSAPSS {
 				err = errors.New("tls: bad signature type for client's RSA certificate")
 				break
 			}
 			var digest []byte
 			var hashFunc crypto.Hash
-			if digest, hashFunc, err = hs.finishedHash.hashForClientCertificate(signatureAndHash, hs.masterSecret); err != nil {
+			if digest, hashFunc, err = hs.finishedHash.hashForClientCertificate(sigType, signatureAlgorithm, hs.masterSecret); err != nil {
 				break
 			}
-			err = rsa.VerifyPKCS1v15(key, hashFunc, digest, certVerify.signature)
+			if sigType == signatureRSAPSS {
+				signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+				err = rsa.VerifyPSS(key, hashFunc, digest, certVerify.signature, signOpts)
+			} else {
+				err = rsa.VerifyPKCS1v15(key, hashFunc, digest, certVerify.signature)
+			}
 		}
 		if err != nil {
 			c.sendAlert(alertBadCertificate)
@@ -906,11 +915,6 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		supportedVersions = suppVersArray[VersionTLS12-hs.clientHello.vers:]
 	}
 
-	signatureSchemes := make([]SignatureScheme, 0, len(hs.clientHello.signatureAndHashes))
-	for _, sah := range hs.clientHello.signatureAndHashes {
-		signatureSchemes = append(signatureSchemes, SignatureScheme(sah.hash)<<8+SignatureScheme(sah.signature))
-	}
-
 	var pskBinder []byte
 	if len(hs.clientHello.psks) > 0 {
 		pskBinder = hs.clientHello.psks[0].binder
@@ -921,7 +925,7 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		ServerName:        hs.clientHello.serverName,
 		SupportedCurves:   hs.clientHello.supportedCurves,
 		SupportedPoints:   hs.clientHello.supportedPoints,
-		SignatureSchemes:  signatureSchemes,
+		SignatureSchemes:  hs.clientHello.supportedSignatureAlgorithms,
 		SupportedProtos:   hs.clientHello.alpnProtocols,
 		SupportedVersions: supportedVersions,
 		Conn:              hs.c.conn,

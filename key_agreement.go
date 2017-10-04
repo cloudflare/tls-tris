@@ -110,14 +110,14 @@ func md5SHA1Hash(slices [][]byte) []byte {
 }
 
 // hashForServerKeyExchange hashes the given slices and returns their digest
-// and the identifier of the hash function used. The sigAndHash argument is
-// only used for >= TLS 1.2 and precisely identifies the hash function to use.
-func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slices ...[]byte) ([]byte, crypto.Hash, error) {
+// and the identifier of the hash function used. The signatureAlgorithm argument
+// is only used for >= TLS 1.2 and identifies the hash function to use.
+func hashForServerKeyExchange(keyType pubkeyType, signatureAlgorithm SignatureScheme, version uint16, slices ...[]byte) ([]byte, crypto.Hash, error) {
 	if version >= VersionTLS12 {
-		if !isSupportedSignatureAndHash(sigAndHash, supportedSignatureAlgorithms) {
+		if !isSupportedSignatureAlgorithm(signatureAlgorithm, supportedSignatureAlgorithms) {
 			return nil, crypto.Hash(0), errors.New("tls: unsupported hash function used by peer")
 		}
-		hashFunc, err := lookupTLSHash(sigAndHash.hash)
+		hashFunc, err := lookupTLSHash(signatureAlgorithm)
 		if err != nil {
 			return nil, crypto.Hash(0), err
 		}
@@ -128,7 +128,7 @@ func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slice
 		digest := h.Sum(nil)
 		return digest, hashFunc, nil
 	}
-	if sigAndHash.signature == signatureECDSA {
+	if keyType == keyECDSA {
 		return sha1Hash(slices), crypto.SHA1, nil
 	}
 	return md5SHA1Hash(slices), crypto.MD5SHA1, nil
@@ -137,20 +137,27 @@ func hashForServerKeyExchange(sigAndHash signatureAndHash, version uint16, slice
 // pickTLS12HashForSignature returns a TLS 1.2 hash identifier for signing a
 // ServerKeyExchange given the signature type being used and the client's
 // advertised list of supported signature and hash combinations.
-func pickTLS12HashForSignature(sigType uint8, clientList []signatureAndHash) (uint8, error) {
+func pickTLS12HashForSignature(keyType pubkeyType, clientList []SignatureScheme) (SignatureScheme, error) {
 	if len(clientList) == 0 {
 		// If the client didn't specify any signature_algorithms
 		// extension then we can assume that it supports SHA1. See
 		// http://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
-		return hashSHA1, nil
+		switch keyType {
+		case keyRSA:
+			return PKCS1WithSHA1, nil
+		case keyECDSA:
+			return ECDSAWithSHA1, nil
+		default:
+			return 0, errors.New("tls: unknown signature algorithm")
+		}
 	}
 
-	for _, sigAndHash := range clientList {
-		if sigAndHash.signature != sigType {
+	for _, sigAlg := range clientList {
+		if !keySupportsSignatureScheme(keyType, sigAlg) {
 			continue
 		}
-		if isSupportedSignatureAndHash(sigAndHash, supportedSignatureAlgorithms) {
-			return sigAndHash.hash, nil
+		if isSupportedSignatureAlgorithm(sigAlg, supportedSignatureAlgorithms) {
+			return sigAlg, nil
 		}
 	}
 
@@ -171,13 +178,13 @@ func curveForCurveID(id CurveID) (elliptic.Curve, bool) {
 
 }
 
-// ecdheRSAKeyAgreement implements a TLS key agreement where the server
+// ecdheKeyAgreement implements a TLS key agreement where the server
 // generates a ephemeral EC public/private key pair and signs it. The
 // pre-master secret is then calculated using ECDH. The signature may
 // either be ECDSA or RSA.
 type ecdheKeyAgreement struct {
 	version    uint16
-	sigType    uint8
+	keyType    pubkeyType
 	privateKey []byte
 	curveid    CurveID
 
@@ -240,16 +247,17 @@ NextCandidate:
 	serverECDHParams[3] = byte(len(ecdhePublic))
 	copy(serverECDHParams[4:], ecdhePublic)
 
-	sigAndHash := signatureAndHash{signature: ka.sigType}
+	var signatureAlgorithm SignatureScheme
 
 	if ka.version >= VersionTLS12 {
 		var err error
-		if sigAndHash.hash, err = pickTLS12HashForSignature(ka.sigType, clientHello.signatureAndHashes); err != nil {
+		signatureAlgorithm, err = pickTLS12HashForSignature(ka.keyType, clientHello.supportedSignatureAlgorithms)
+		if err != nil {
 			return nil, err
 		}
 	}
 
-	digest, hashFunc, err := hashForServerKeyExchange(sigAndHash, ka.version, clientHello.random, hello.random, serverECDHParams)
+	digest, hashFunc, err := hashForServerKeyExchange(ka.keyType, signatureAlgorithm, ka.version, clientHello.random, hello.random, serverECDHParams)
 	if err != nil {
 		return nil, err
 	}
@@ -259,13 +267,13 @@ NextCandidate:
 		return nil, errors.New("tls: certificate private key does not implement crypto.Signer")
 	}
 	var sig []byte
-	switch ka.sigType {
-	case signatureECDSA:
+	switch ka.keyType {
+	case keyECDSA:
 		_, ok := priv.Public().(*ecdsa.PublicKey)
 		if !ok {
 			return nil, errors.New("tls: ECDHE ECDSA requires an ECDSA server key")
 		}
-	case signatureRSA:
+	case keyRSA:
 		_, ok := priv.Public().(*rsa.PublicKey)
 		if !ok {
 			return nil, errors.New("tls: ECDHE RSA requires a RSA server key")
@@ -273,7 +281,11 @@ NextCandidate:
 	default:
 		return nil, errors.New("tls: unknown ECDHE signature algorithm")
 	}
-	sig, err = priv.Sign(config.rand(), digest, hashFunc)
+	signOpts := crypto.SignerOpts(hashFunc)
+	if signatureFromSignatureScheme(signatureAlgorithm) == signatureRSAPSS {
+		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: hashFunc}
+	}
+	sig, err = priv.Sign(config.rand(), digest, signOpts)
 	if err != nil {
 		return nil, errors.New("tls: failed to sign ECDHE parameters: " + err.Error())
 	}
@@ -287,8 +299,8 @@ NextCandidate:
 	copy(skx.key, serverECDHParams)
 	k := skx.key[len(serverECDHParams):]
 	if ka.version >= VersionTLS12 {
-		k[0] = sigAndHash.hash
-		k[1] = sigAndHash.signature
+		k[0] = byte(signatureAlgorithm >> 8)
+		k[1] = byte(signatureAlgorithm)
 		k = k[2:]
 	}
 	k[0] = byte(len(sig) >> 8)
@@ -375,16 +387,30 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 		}
 	}
 
-	sigAndHash := signatureAndHash{signature: ka.sigType}
+	var signatureAlgorithm SignatureScheme
+	var sigType signatureType
 	if ka.version >= VersionTLS12 {
 		// handle SignatureAndHashAlgorithm
-		sigAndHash = signatureAndHash{hash: sig[0], signature: sig[1]}
-		if sigAndHash.signature != ka.sigType {
+		signatureAlgorithm = SignatureScheme(sig[0])<<8 | SignatureScheme(sig[1])
+		if !keySupportsSignatureScheme(ka.keyType, signatureAlgorithm) {
 			return errServerKeyExchange
 		}
+		sigType = signatureFromSignatureScheme(signatureAlgorithm)
 		sig = sig[2:]
 		if len(sig) < 2 {
 			return errServerKeyExchange
+		}
+	} else {
+		// Before TLS 1.2 the signature algorithm was implicit
+		// from the key type, and only one hash per signature
+		// algorithm was possible. Leave signatureAlgorithm
+		// unset.
+		switch cert.PublicKey.(type) {
+		case *ecdsa.PublicKey:
+			sigType = signatureECDSA
+		case *rsa.PublicKey:
+			// since PSS cannot be negotiated, assume PKCS1.
+			sigType = signaturePKCS1v15
 		}
 	}
 	sigLen := int(sig[0])<<8 | int(sig[1])
@@ -393,12 +419,12 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 	}
 	sig = sig[2:]
 
-	digest, hashFunc, err := hashForServerKeyExchange(sigAndHash, ka.version, clientHello.random, serverHello.random, serverECDHParams)
+	digest, hashFunc, err := hashForServerKeyExchange(ka.keyType, signatureAlgorithm, ka.version, clientHello.random, serverHello.random, serverECDHParams)
 	if err != nil {
 		return err
 	}
-	switch ka.sigType {
-	case signatureECDSA:
+	switch ka.keyType {
+	case keyECDSA:
 		pubKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
 		if !ok {
 			return errors.New("tls: ECDHE ECDSA requires a ECDSA server public key")
@@ -413,13 +439,20 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 		if !ecdsa.Verify(pubKey, digest, ecdsaSig.R, ecdsaSig.S) {
 			return errors.New("tls: ECDSA verification failure")
 		}
-	case signatureRSA:
+	case keyRSA:
 		pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
 		if !ok {
 			return errors.New("tls: ECDHE RSA requires a RSA server public key")
 		}
-		if err := rsa.VerifyPKCS1v15(pubKey, hashFunc, digest, sig); err != nil {
-			return err
+		if sigType == signatureRSAPSS {
+			signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+			if err := rsa.VerifyPSS(pubKey, hashFunc, digest, sig, signOpts); err != nil {
+				return err
+			}
+		} else {
+			if err := rsa.VerifyPKCS1v15(pubKey, hashFunc, digest, sig); err != nil {
+				return err
+			}
 		}
 	default:
 		return errors.New("tls: unknown ECDHE signature algorithm")
@@ -470,4 +503,16 @@ func (ka *ecdheKeyAgreement) generateClientKeyExchange(config *Config, clientHel
 	copy(ckx.ciphertext[1:], serialized)
 
 	return preMasterSecret, ckx, nil
+}
+
+func keySupportsSignatureScheme(keyType pubkeyType, signatureAlgorithm SignatureScheme) bool {
+	sigType := signatureFromSignatureScheme(signatureAlgorithm)
+	switch sigType {
+	case signaturePKCS1v15, signatureRSAPSS:
+		return keyType == keyRSA
+	case signatureECDSA:
+		return keyType == keyECDSA
+	default:
+		return false
+	}
 }
