@@ -62,7 +62,7 @@ func (ka rsaKeyAgreement) processClientKeyExchange(config *Config, cert *Certifi
 	return preMasterSecret, nil
 }
 
-func (ka rsaKeyAgreement) processServerKeyExchange(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, cert *x509.Certificate, skx *serverKeyExchangeMsg) error {
+func (ka rsaKeyAgreement) processServerKeyExchange(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, certPublicKey crypto.PublicKey, skx *serverKeyExchangeMsg) error {
 	return errors.New("tls: unexpected ServerKeyExchange")
 }
 
@@ -334,7 +334,7 @@ func (ka *ecdheKeyAgreement) processClientKeyExchange(config *Config, cert *Cert
 	return preMasterSecret, nil
 }
 
-func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, cert *x509.Certificate, skx *serverKeyExchangeMsg) error {
+func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHello *clientHelloMsg, serverHello *serverHelloMsg, certPublicKey crypto.PublicKey, skx *serverKeyExchangeMsg) error {
 	if len(skx.key) < 4 {
 		return errServerKeyExchange
 	}
@@ -399,7 +399,7 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 	}
 	switch ka.sigType {
 	case signatureECDSA:
-		pubKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
+		pubKey, ok := certPublicKey.(*ecdsa.PublicKey)
 		if !ok {
 			return errors.New("tls: ECDHE ECDSA requires a ECDSA server public key")
 		}
@@ -414,7 +414,7 @@ func (ka *ecdheKeyAgreement) processServerKeyExchange(config *Config, clientHell
 			return errors.New("tls: ECDSA verification failure")
 		}
 	case signatureRSA:
-		pubKey, ok := cert.PublicKey.(*rsa.PublicKey)
+		pubKey, ok := certPublicKey.(*rsa.PublicKey)
 		if !ok {
 			return errors.New("tls: ECDHE RSA requires a RSA server public key")
 		}

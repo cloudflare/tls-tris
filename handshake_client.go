@@ -21,13 +21,14 @@ import (
 )
 
 type clientHandshakeState struct {
-	c            *Conn
-	serverHello  *serverHelloMsg
-	hello        *clientHelloMsg
-	suite        *cipherSuite
-	finishedHash finishedHash
-	masterSecret []byte
-	session      *ClientSessionState
+	c               *Conn
+	serverHello     *serverHelloMsg
+	hello           *clientHelloMsg
+	suite           *cipherSuite
+	finishedHash    finishedHash
+	masterSecret    []byte
+	session         *ClientSessionState
+	serverPublicKey crypto.PublicKey
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -68,6 +69,7 @@ func (c *Conn) clientHandshake() error {
 		nextProtoNeg:                 len(c.config.NextProtos) > 0,
 		secureRenegotiationSupported: true,
 		alpnProtocols:                c.config.NextProtos,
+		delegatedCredentials:         c.config.UseDelegatedCredentials,
 	}
 
 	if c.handshakes > 0 {
@@ -332,6 +334,16 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			c.sendAlert(alertUnsupportedCertificate)
 			return fmt.Errorf("tls: server's certificate contains an unsupported type of public key: %T", certs[0].PublicKey)
 		}
+		hs.serverPublicKey = certs[0].PublicKey
+
+		if hs.hello.delegatedCredentials && len(hs.serverHello.delegatedCredential) > 0 {
+			dc, err := unmarshalAndVerify(hs.serverHello.delegatedCredential, certs[0], hs.c.vers, hs.c.config.Time)
+			if err != nil {
+				c.sendAlert(alertBadCertificate)
+				return fmt.Errorf("tls: server provided invalid Delegated Credential (%s)", err)
+			}
+			hs.serverPublicKey = dc.PublicKey
+		}
 
 		c.peerCertificates = certs
 	} else {
@@ -345,6 +357,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 			c.sendAlert(alertBadCertificate)
 			return errors.New("tls: server's identity changed during renegotiation")
 		}
+		hs.serverPublicKey = c.peerCertificates[0].PublicKey
 	}
 
 	if hs.serverHello.ocspStapling {
@@ -374,7 +387,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	skx, ok := msg.(*serverKeyExchangeMsg)
 	if ok {
 		hs.finishedHash.Write(skx.marshal())
-		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, c.peerCertificates[0], skx)
+		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, hs.serverPublicKey, skx)
 		if err != nil {
 			c.sendAlert(alertUnexpectedMessage)
 			return err
@@ -570,6 +583,11 @@ func (hs *clientHandshakeState) processServerHello() (bool, error) {
 		c.clientProtocolFallback = false
 	}
 	c.scts = hs.serverHello.scts
+
+	if !hs.hello.delegatedCredentials && len(hs.serverHello.delegatedCredential) > 0 {
+		c.sendAlert(alertHandshakeFailure)
+		return false, errors.New("tls: server advertised unrequested Delegation Credentials extension")
+	}
 
 	if !hs.serverResumedSession() {
 		return false, nil
