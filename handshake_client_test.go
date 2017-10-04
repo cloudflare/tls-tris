@@ -1207,6 +1207,32 @@ func TestVerifyPeerCertificate(t *testing.T) {
 				}
 			},
 		},
+		{
+			configureServer: func(config *Config, called *bool) {
+				config.MinVersion = VersionTLS13
+				config.MaxVersion = VersionTLS13
+				config.InsecureSkipVerify = true
+			},
+			configureClient: func(config *Config, called *bool) {
+				config.MinVersion = VersionTLS13
+				config.MaxVersion = VersionTLS13
+				config.InsecureSkipVerify = false
+				config.VerifyPeerCertificate = func(rawCerts [][]byte, validatedChains [][]*x509.Certificate) error {
+					return verifyCallback(called, rawCerts, validatedChains)
+				}
+			},
+			validate: func(t *testing.T, testNo int, clientCalled, serverCalled bool, clientErr, serverErr error) {
+				if clientErr != nil {
+					t.Errorf("test[%d]: client handshake failed: %v", testNo, clientErr)
+				}
+				if serverErr != nil {
+					t.Errorf("test[%d]: server handshake failed: %v", testNo, serverErr)
+				}
+				if !clientCalled {
+					t.Errorf("test[%d]: client did not call callback", testNo)
+				}
+			},
+		},
 	}
 
 	for i, test := range tests {

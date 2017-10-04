@@ -1,5 +1,6 @@
 /GOROOT
 /go
 /tris-localserver/tris-localserver
+/tris-testclient/tris-testclient
 /caddy/caddy
 /caddy/echo

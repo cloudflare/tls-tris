@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/rsa"
 	"crypto/subtle"
+	"encoding/asn1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -244,11 +245,32 @@ CurvePreferenceLoop:
 	return nil
 }
 
-// readClientFinished13 is called when, on the second flight of the client,
-// a handshake message is received. This might be immediately or after the
-// early data. Once done it sends the session tickets. Under c.in lock.
-func (hs *serverHandshakeState) readClientFinished13() error {
+// readClientFinished13 is called during the server handshake (when no early
+// data it available) or after reading all early data. It discards early data if
+// the server did not accept it and then verifies the Finished message. Once
+// done it sends the session tickets. Under c.in lock.
+func (hs *serverHandshakeState) readClientFinished13(hasHandshakeLock bool) error {
 	c := hs.c
+
+	// If the client advertised and sends early data while the server does
+	// not accept it, it must be fully skipped until the Finished message.
+	for c.phase == discardingEarlyData {
+		if err := c.readRecord(recordTypeApplicationData); err != nil {
+			return err
+		}
+		// Assume receipt of Finished message (will be checked below).
+		if c.hand.Len() > 0 {
+			c.phase = waitingClientFinished
+			break
+		}
+	}
+
+	// If the client sends early data followed by a Finished message (but
+	// no end_of_early_data), the server MUST terminate the connection.
+	if c.phase != waitingClientFinished {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: did not expect Client Finished yet")
+	}
 
 	c.phase = readingClientFinished
 	msg, err := c.readHandshake()
@@ -283,7 +305,9 @@ func (hs *serverHandshakeState) readClientFinished13() error {
 	// Any read operation after handshakeRunning and before handshakeConfirmed
 	// will be holding this lock, which we release as soon as the confirmation
 	// happens, even if the Read call might do more work.
-	c.confirmMutex.Unlock()
+	if !hasHandshakeLock {
+		c.confirmMutex.Unlock()
+	}
 
 	return hs.sendSessionTicket13() // TODO: do in a goroutine
 }
@@ -329,7 +353,7 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 
 	verifyMsg := &certificateVerifyMsg{
 		hasSignatureAndHash: true,
-		signatureAndHash:    sigSchemeToSigAndHash(sigScheme),
+		signatureAlgorithm:  sigScheme,
 		signature:           signature,
 	}
 	hs.keySchedule.write(verifyMsg.marshal())
@@ -387,24 +411,14 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (sigScheme Signatur
 	}
 
 	for _, ss := range supportedSchemes {
-		for _, cs := range hs.clientHello.signatureAndHashes {
-			if ss == sigAndHashToSigScheme(cs) {
+		for _, cs := range hs.clientHello.supportedSignatureAlgorithms {
+			if ss == cs {
 				return ss, nil
 			}
 		}
 	}
 
 	return sigScheme, nil
-}
-
-func sigSchemeToSigAndHash(s SignatureScheme) (sah signatureAndHash) {
-	sah.hash = byte(s >> 8)
-	sah.signature = byte(s)
-	return
-}
-
-func sigAndHashToSigScheme(sah signatureAndHash) SignatureScheme {
-	return SignatureScheme(sah.hash)<<8 | SignatureScheme(sah.signature)
 }
 
 func signatureSchemeIsPSS(s SignatureScheme) bool {
@@ -717,4 +731,184 @@ func (hs *serverHandshakeState) traceErr(err error) {
 			}
 		}
 	}
+}
+
+func (hs *clientHandshakeState) processCertsFromServer13(certMsg *certificateMsg13) error {
+	certs := make([][]byte, len(certMsg.certificates))
+	for i, cert := range certMsg.certificates {
+		certs[i] = cert.data
+	}
+	return hs.processCertsFromServer(certs)
+}
+
+func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensionsMsg) error {
+	c := hs.c
+	if ee.alpnProtocol != "" {
+		c.clientProtocol = ee.alpnProtocol
+		c.clientProtocolFallback = false
+	}
+	return nil
+}
+
+func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg) error {
+	if !isSupportedSignatureAlgorithm(certVerify.signatureAlgorithm, supportedSignatureAlgorithms) {
+		return errors.New("tls: unsupported signature algorithm for server certificate")
+	}
+	sigHash := hashForSignatureScheme(certVerify.signatureAlgorithm)
+	sigAlg := signatureFromSignatureScheme(certVerify.signatureAlgorithm)
+	pub := hs.c.peerCertificates[0].PublicKey
+	digest := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
+	switch key := pub.(type) {
+	case *ecdsa.PublicKey:
+		if sigAlg != signatureECDSA {
+			return errors.New("tls: bad signature type for server's ECDSA certificate")
+		}
+		ecdsaSig := new(ecdsaSignature)
+		if _, err := asn1.Unmarshal(certVerify.signature, ecdsaSig); err != nil {
+			return err
+		}
+		if ecdsaSig.R.Sign() <= 0 || ecdsaSig.S.Sign() <= 0 {
+			return errors.New("tls: ECDSA signature contained zero or negative values")
+		}
+		if !ecdsa.Verify(key, digest, ecdsaSig.R, ecdsaSig.S) {
+			return errors.New("tls: ECDSA verification failure")
+		}
+		return nil
+	case *rsa.PublicKey:
+		if sigAlg != signatureRSAPSS {
+			return errors.New("tls: bad signature type for server's RSA certificate")
+		}
+		signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
+		return rsa.VerifyPSS(key, sigHash, digest, certVerify.signature, signOpts)
+	default:
+		return errors.New("tls: unsupported certificate type")
+	}
+}
+
+func (hs *clientHandshakeState) doTLS13Handshake() error {
+	c := hs.c
+	hash := hashForSuite(hs.suite)
+	hashSize := hash.Size()
+	serverHello := hs.serverHello13
+	// TODO check if keyshare is unacceptable, raise HRR.
+
+	clientKS := hs.hello.keyShares[0]
+	if serverHello.keyShare.group != clientKS.group {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("bad or missing key share from server")
+	}
+
+	// 0-RTT is not supported yet, so use an empty PSK.
+	hs.keySchedule.setSecret(nil)
+	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey)
+	if ecdheSecret == nil {
+		c.sendAlert(alertIllegalParameter)
+		return errors.New("tls: bad ECDHE server share")
+	}
+
+	// Calculate handshake secrets.
+	hs.keySchedule.setSecret(ecdheSecret)
+	clientCipher, clientHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
+	serverCipher, serverHandshakeSecret := hs.keySchedule.prepareCipher(secretHandshakeServer)
+	if c.hand.Len() > 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: unexpected data after Server Hello")
+	}
+	// Do not change the sender key yet, the server must authenticate first.
+	c.in.setCipher(c.vers, serverCipher)
+
+	// Calculate MAC key for Finished messages.
+	serverFinishedKey := hkdfExpandLabel(hash, serverHandshakeSecret, nil, "finished", hashSize)
+	clientFinishedKey := hkdfExpandLabel(hash, clientHandshakeSecret, nil, "finished", hashSize)
+
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+	encryptedExtensions, ok := msg.(*encryptedExtensionsMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(encryptedExtensions, msg)
+	}
+	if err := hs.processEncryptedExtensions(encryptedExtensions); err != nil {
+		return err
+	}
+	hs.keySchedule.write(encryptedExtensions.marshal())
+
+	// PSKs are not supported, so receive Certificate message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	// TODO handle optional CertificateRequest
+	certMsg, ok := msg.(*certificateMsg13)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certMsg, msg)
+	}
+	hs.keySchedule.write(certMsg.marshal())
+	// Validate certificates.
+	if err := hs.processCertsFromServer13(certMsg); err != nil {
+		return err
+	}
+
+	// Receive CertificateVerify message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	certVerifyMsg, ok := msg.(*certificateVerifyMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certVerifyMsg, msg)
+	}
+	if err = hs.verifyPeerCertificate(certVerifyMsg); err != nil {
+		return err
+	}
+	hs.keySchedule.write(certVerifyMsg.marshal())
+
+	// Receive Finished message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	serverFinished, ok := msg.(*finishedMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(serverFinished, msg)
+	}
+	// Validate server Finished hash.
+	expectedVerifyData := hmacOfSum(hash, hs.keySchedule.transcriptHash, serverFinishedKey)
+	if subtle.ConstantTimeCompare(expectedVerifyData, serverFinished.verifyData) != 1 {
+		c.sendAlert(alertDecryptError)
+		return errors.New("tls: server's Finished message is incorrect")
+	}
+	hs.keySchedule.write(serverFinished.marshal())
+
+	// Server has authenticated itself, change our cipher.
+	c.out.setCipher(c.vers, clientCipher)
+
+	// TODO optionally send a client cert
+
+	// Send Finished
+	verifyData := hmacOfSum(hash, hs.keySchedule.transcriptHash, clientFinishedKey)
+	clientFinished := &finishedMsg{
+		verifyData: verifyData,
+	}
+	if _, err := c.writeRecord(recordTypeHandshake, clientFinished.marshal()); err != nil {
+		return err
+	}
+
+	// Calculate application traffic secrets.
+	hs.keySchedule.setSecret(nil) // derive master secret
+	// TODO store initial traffic secret key for KeyUpdate
+	clientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
+	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
+	c.out.setCipher(c.vers, clientCipher)
+	if c.hand.Len() > 0 {
+		c.sendAlert(alertUnexpectedMessage)
+		return errors.New("tls: unexpected data after handshake")
+	}
+	c.in.setCipher(c.vers, serverCipher)
+	return nil
 }

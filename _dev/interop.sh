@@ -2,6 +2,7 @@
 set -xeuo pipefail
 
 if [ "$1" = "INSTALL" ]; then
+		# INSTALL <client> [<revision>]
 		if [ -n "${3:-}" ]; then
 				REVISION="--build-arg REVISION=$3"
 		else
@@ -10,6 +11,7 @@ if [ "$1" = "INSTALL" ]; then
 		docker build $REVISION -t tls-tris:$2 _dev/$2
 
 elif [ "$1" = "RUN" ]; then
+		# RUN <client>
 		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver)
 
 		docker run --rm tls-tris:$2 $IP:1443 | tee output.txt # RSA
@@ -21,6 +23,7 @@ elif [ "$1" = "RUN" ]; then
 		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
 
 elif [ "$1" = "0-RTT" ]; then
+		# 0-RTT <client>
 		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver)
 
 		docker run --rm tls-tris:$2 $IP:3443 | tee output.txt # rejecting 0-RTT
@@ -32,4 +35,24 @@ elif [ "$1" = "0-RTT" ]; then
 		docker run --rm tls-tris:$2 $IP:5443 | tee output.txt # confirming 0-RTT
 		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep "0-RTT confirmed"
 
+elif [ "$1" = "INSTALL-CLIENT" ]; then
+		cd "$(dirname "$0")/tris-testclient"
+		./build.sh
+
+elif [ "$1" = "RUN-CLIENT" ]; then
+		# RUN-CLIENT <target-server>
+		cd "$(dirname "$0")/tris-testclient"
+
+		servername="$2-localserver"
+		docker run --rm --detach --name "$servername" \
+			--entrypoint /server.sh \
+			--expose 1443 --expose 2443 \
+			tls-tris:$2
+		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' "$servername")
+		# Obtain information and stop server on exit
+		trap 'docker ps -a; docker logs "$servername"; docker kill "$servername"' EXIT
+
+		docker run --rm tris-testclient -ecdsa=false $IP:1443 # RSA
+		docker run --rm tris-testclient -rsa=false $IP:2443 # ECDSA
+		# TODO maybe check server logs for expected output?
 fi
