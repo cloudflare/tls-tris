@@ -736,7 +736,7 @@ Again:
 	}
 	b.off = off
 	data := b.data[b.off:]
-	if len(data) > maxPlaintext {
+	if (c.vers < VersionTLS13 && len(data) > maxPlaintext) || len(data) > maxPlaintext+1 {
 		c.in.freeBlock(b)
 		return c.in.setErrorLocked(c.sendAlert(alertRecordOverflow))
 	}
