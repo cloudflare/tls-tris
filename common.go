@@ -855,7 +855,7 @@ var configSuppVersArray = [...]uint16{VersionTLS13, VersionTLS12, VersionTLS11, 
 // with TLS 1.3 draft versions included.
 //
 // TODO: remove once TLS 1.3 is finalised.
-var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft18, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
+var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft21, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
 
 // getSupportedVersions returns the protocol versions that are supported by the
 // current configuration.

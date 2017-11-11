@@ -67,6 +67,10 @@ func newKeySchedule13(suite *cipherSuite, config *Config, clientRandom []byte) *
 func (ks *keySchedule13) setSecret(secret []byte) {
 	hash := hashForSuite(ks.suite)
 	salt := ks.secret
+	if salt != nil {
+		h0 := hash.New().Sum(nil)
+		salt = hkdfExpandLabel(hash, salt, h0, "derived", hash.Size())
+	}
 	ks.secret = hkdfExtract(hash, secret, salt)
 }
 
@@ -79,24 +83,24 @@ func (ks *keySchedule13) write(data []byte) {
 func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label, keylogType string) {
 	switch secretLabel {
 	case secretResumptionPskBinder:
-		label = "resumption psk binder key"
+		label = "res binder"
 	case secretEarlyClient:
-		label = "client early traffic secret"
+		label = "c e traffic"
 		keylogType = "CLIENT_EARLY_TRAFFIC_SECRET"
 	case secretHandshakeClient:
-		label = "client handshake traffic secret"
+		label = "c hs traffic"
 		keylogType = "CLIENT_HANDSHAKE_TRAFFIC_SECRET"
 	case secretHandshakeServer:
-		label = "server handshake traffic secret"
+		label = "s hs traffic"
 		keylogType = "SERVER_HANDSHAKE_TRAFFIC_SECRET"
 	case secretApplicationClient:
-		label = "client application traffic secret"
+		label = "c ap traffic"
 		keylogType = "CLIENT_TRAFFIC_SECRET_0"
 	case secretApplicationServer:
-		label = "server application traffic secret"
+		label = "s ap traffic"
 		keylogType = "SERVER_TRAFFIC_SECRET_0"
 	case secretResumption:
-		label = "resumption master secret"
+		label = "res master"
 	}
 	return
 }
@@ -518,12 +522,13 @@ func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
 }
 
 func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L int) []byte {
-	hkdfLabel := make([]byte, 4+len("TLS 1.3, ")+len(label)+len(hashValue))
+	prefix := "tls13 "
+	hkdfLabel := make([]byte, 4+len(prefix)+len(label)+len(hashValue))
 	hkdfLabel[0] = byte(L >> 8)
 	hkdfLabel[1] = byte(L)
-	hkdfLabel[2] = byte(len("TLS 1.3, ") + len(label))
-	copy(hkdfLabel[3:], "TLS 1.3, ")
-	z := hkdfLabel[3+len("TLS 1.3, "):]
+	hkdfLabel[2] = byte(len(prefix) + len(label))
+	copy(hkdfLabel[3:], prefix)
+	z := hkdfLabel[3+len(prefix):]
 	copy(z, label)
 	z = z[len(label):]
 	z[0] = byte(len(hashValue))
