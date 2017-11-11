@@ -69,7 +69,8 @@ func (ks *keySchedule13) setSecret(secret []byte) {
 	hash := hashForSuite(ks.suite)
 	salt := ks.secret
 	if salt != nil {
-		salt = hkdfExpandLabel(hash, salt, nil, "derived", hash.Size())
+		h0 := hash.New().Sum(nil)
+		salt = hkdfExpandLabel(hash, salt, h0, "derived", hash.Size())
 	}
 	ks.secret = hkdfExtract(hash, secret, salt)
 }
