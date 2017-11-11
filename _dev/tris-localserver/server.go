@@ -17,6 +17,7 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS12:        "1.2",
 	tls.VersionTLS13:        "1.3",
 	tls.VersionTLS13Draft18: "1.3 (draft 18)",
+	tls.VersionTLS13Draft21: "1.3 (draft 21)",
 }
 
 func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
