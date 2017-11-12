@@ -894,6 +894,11 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	hs.keySchedule.write(serverFinished.marshal())
 
+	// Send ChangeCipherSpec (middlebox compatibility).
+	if _, err := c.writeRecord(recordTypeChangeCipherSpec, []byte{1}); err != nil {
+		return err
+	}
+
 	// Server has authenticated itself, change our cipher.
 	c.out.setCipher(c.vers, clientCipher)
 

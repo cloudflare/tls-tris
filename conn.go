@@ -708,6 +708,15 @@ func (c *Conn) readRecord(want recordType) error {
 
 	// Process message.
 	b, c.rawInput = c.in.splitBlock(b, recordHeaderLen+n)
+
+	// TLS 1.3 middlebox compatibility: skip over unencrypted CCS.
+	if c.vers >= VersionTLS13 && typ == recordTypeChangeCipherSpec &&
+		want == recordTypeHandshake &&
+		(c.phase == handshakeRunning || c.phase == readingClientFinished) {
+		// TODO check contents
+		return nil
+	}
+
 	peekedAlert := peekAlert(b) // peek at a possible alert before decryption
 	ok, off, alertValue := c.in.decrypt(b)
 	switch {
@@ -1025,7 +1034,8 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		if c.vers >= VersionTLS13 {
 			// TLS 1.3 froze the record layer version at { 3, 1 }.
 			// See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-5.1.
-			vers = VersionTLS10
+			// But for draft 22, this was changed to { 3, 3 }.
+			vers = VersionTLS12
 		}
 		b.data[1] = byte(vers >> 8)
 		b.data[2] = byte(vers)
@@ -1050,7 +1060,7 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		data = data[m:]
 	}
 
-	if typ == recordTypeChangeCipherSpec {
+	if typ == recordTypeChangeCipherSpec && c.vers < VersionTLS13 {
 		if err := c.out.changeCipherSpec(); err != nil {
 			return n, c.sendAlertLocked(err.(alert))
 		}
