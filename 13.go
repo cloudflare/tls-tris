@@ -612,7 +612,7 @@ func (hs *serverHandshakeState) checkPSK() (isResumed bool, alert alert) {
 			continue
 		}
 
-		hs.keySchedule.setSecret(s.resumptionSecret)
+		hs.keySchedule.setSecret(s.pskSecret)
 		binderKey := hs.keySchedule.deriveSecret(secretResumptionPskBinder)
 		binderFinishedKey := hkdfExpandLabel(hash, binderKey, nil, "finished", hashSize)
 		chHash := hash.New()
@@ -660,18 +660,18 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		return nil
 	}
 
-	resumptionSecret := hs.keySchedule.deriveSecret(secretResumption)
+	resumptionMasterSecret := hs.keySchedule.deriveSecret(secretResumption)
 
 	ageAddBuf := make([]byte, 4)
 	sessionState := &sessionState13{
-		vers:             c.vers,
-		suite:            hs.suite.id,
-		createdAt:        uint64(time.Now().Unix()),
-		resumptionSecret: resumptionSecret,
-		alpnProtocol:     c.clientProtocol,
-		SNI:              c.serverName,
-		maxEarlyDataLen:  c.config.Max0RTTDataSize,
+		vers:            c.vers,
+		suite:           hs.suite.id,
+		createdAt:       uint64(time.Now().Unix()),
+		alpnProtocol:    c.clientProtocol,
+		SNI:             c.serverName,
+		maxEarlyDataLen: c.config.Max0RTTDataSize,
 	}
+	hash := hashForSuite(hs.suite)
 
 	for i := 0; i < numSessionTickets; i++ {
 		if _, err := io.ReadFull(c.config.rand(), ageAddBuf); err != nil {
@@ -680,6 +680,12 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		}
 		sessionState.ageAdd = uint32(ageAddBuf[0])<<24 | uint32(ageAddBuf[1])<<16 |
 			uint32(ageAddBuf[2])<<8 | uint32(ageAddBuf[3])
+		// ticketNonce must be a unique value for this connection.
+		// Assume there are no more than 255 tickets, otherwise two
+		// tickets might have the same PSK which could be a problem if
+		// one of them is compromised.
+		ticketNonce := []byte{byte(i)}
+		sessionState.pskSecret = hkdfExpandLabel(hash, resumptionMasterSecret, ticketNonce, "resumption", hash.Size())
 		ticket := sessionState.marshal()
 		var err error
 		if c.config.SessionTicketSealer != nil {
@@ -700,6 +706,7 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 			maxEarlyDataLength: c.config.Max0RTTDataSize,
 			withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
 			ageAdd:             sessionState.ageAdd,
+			nonce:              ticketNonce,
 			ticket:             ticket,
 		}
 		if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {

@@ -150,14 +150,14 @@ func (s *sessionState) unmarshal(data []byte) alert {
 }
 
 type sessionState13 struct {
-	vers             uint16
-	suite            uint16
-	ageAdd           uint32
-	createdAt        uint64
-	maxEarlyDataLen  uint32
-	resumptionSecret []byte
-	alpnProtocol     string
-	SNI              string
+	vers            uint16
+	suite           uint16
+	ageAdd          uint32
+	createdAt       uint64
+	maxEarlyDataLen uint32
+	pskSecret       []byte
+	alpnProtocol    string
+	SNI             string
 }
 
 func (s *sessionState13) equal(i interface{}) bool {
@@ -171,13 +171,13 @@ func (s *sessionState13) equal(i interface{}) bool {
 		s.ageAdd == s1.ageAdd &&
 		s.createdAt == s1.createdAt &&
 		s.maxEarlyDataLen == s1.maxEarlyDataLen &&
-		bytes.Equal(s.resumptionSecret, s1.resumptionSecret) &&
+		subtle.ConstantTimeCompare(s.pskSecret, s1.pskSecret) == 1 &&
 		s.alpnProtocol == s1.alpnProtocol &&
 		s.SNI == s1.SNI
 }
 
 func (s *sessionState13) marshal() []byte {
-	length := 2 + 2 + 4 + 8 + 4 + 2 + len(s.resumptionSecret) + 2 + len(s.alpnProtocol) + 2 + len(s.SNI)
+	length := 2 + 2 + 4 + 8 + 4 + 2 + len(s.pskSecret) + 2 + len(s.alpnProtocol) + 2 + len(s.SNI)
 
 	x := make([]byte, length)
 	x[0] = byte(s.vers >> 8)
@@ -200,10 +200,10 @@ func (s *sessionState13) marshal() []byte {
 	x[17] = byte(s.maxEarlyDataLen >> 16)
 	x[18] = byte(s.maxEarlyDataLen >> 8)
 	x[19] = byte(s.maxEarlyDataLen)
-	x[20] = byte(len(s.resumptionSecret) >> 8)
-	x[21] = byte(len(s.resumptionSecret))
-	copy(x[22:], s.resumptionSecret)
-	z := x[22+len(s.resumptionSecret):]
+	x[20] = byte(len(s.pskSecret) >> 8)
+	x[21] = byte(len(s.pskSecret))
+	copy(x[22:], s.pskSecret)
+	z := x[22+len(s.pskSecret):]
 	z[0] = byte(len(s.alpnProtocol) >> 8)
 	z[1] = byte(len(s.alpnProtocol))
 	copy(z[2:], s.alpnProtocol)
@@ -231,7 +231,7 @@ func (s *sessionState13) unmarshal(data []byte) alert {
 	if len(data) < 22+l+2 {
 		return alertDecodeError
 	}
-	s.resumptionSecret = data[22 : 22+l]
+	s.pskSecret = data[22 : 22+l]
 	z := data[22+l:]
 
 	l = int(z[0])<<8 | int(z[1])
