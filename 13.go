@@ -692,11 +692,15 @@ func (hs *serverHandshakeState) sendSessionTicket13() error {
 		if ticket == nil {
 			continue
 		}
+		// NOTE if sendSessionTicket13 is called more than once per
+		// connection or if numSessionTickets > 255, the nonce below
+		// must be changed.
 		ticketMsg := &newSessionTicketMsg13{
 			lifetime:           24 * 3600, // TODO(filippo)
 			maxEarlyDataLength: c.config.Max0RTTDataSize,
 			withEarlyDataInfo:  c.config.Max0RTTDataSize > 0,
 			ageAdd:             sessionState.ageAdd,
+			nonce:              []byte{byte(i)},
 			ticket:             ticket,
 		}
 		if _, err := c.writeRecord(recordTypeHandshake, ticketMsg.marshal()); err != nil {

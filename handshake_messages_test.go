@@ -324,7 +324,8 @@ func (*newSessionTicketMsg13) Generate(rand *rand.Rand, size int) reflect.Value 
 	m := &newSessionTicketMsg13{}
 	m.ageAdd = uint32(rand.Intn(0xffffffff))
 	m.lifetime = uint32(rand.Intn(0xffffffff))
-	m.ticket = randomBytes(rand.Intn(40), rand)
+	m.nonce = randomBytes(1+rand.Intn(255), rand)
+	m.ticket = randomBytes(1+rand.Intn(40), rand)
 	if rand.Intn(10) > 5 {
 		m.withEarlyDataInfo = true
 		m.maxEarlyDataLength = uint32(rand.Intn(0xffffffff))
