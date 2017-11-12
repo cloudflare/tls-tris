@@ -1231,6 +1231,12 @@ func (c *Conn) handlePostHandshake() error {
 	switch hm := msg.(type) {
 	case *helloRequestMsg:
 		return c.handleRenegotiation(hm)
+	case *newSessionTicketMsg13:
+		if !c.isClient {
+			c.sendAlert(alertUnexpectedMessage)
+			return alertUnexpectedMessage
+		}
+		return nil // TODO implement session tickets
 	default:
 		c.sendAlert(alertUnexpectedMessage)
 		return alertUnexpectedMessage
