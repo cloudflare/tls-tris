@@ -808,6 +808,11 @@ func (m *serverHelloMsg) marshal() []byte {
 		extensionsLength += 2
 		numExtensions++
 	}
+	// supported_versions extension
+	if m.vers >= VersionTLS13 {
+		extensionsLength += 2
+		numExtensions++
+	}
 
 	if numExtensions > 0 {
 		extensionsLength += 4 * numExtensions
@@ -819,8 +824,13 @@ func (m *serverHelloMsg) marshal() []byte {
 	x[1] = uint8(length >> 16)
 	x[2] = uint8(length >> 8)
 	x[3] = uint8(length)
-	x[4] = uint8(m.vers >> 8)
-	x[5] = uint8(m.vers)
+	if m.vers >= VersionTLS13 {
+		x[4] = 3
+		x[5] = 3
+	} else {
+		x[4] = uint8(m.vers >> 8)
+		x[5] = uint8(m.vers)
+	}
 	copy(x[6:38], m.random)
 	z := x[38:]
 	if !oldTLS13Draft {
@@ -842,6 +852,14 @@ func (m *serverHelloMsg) marshal() []byte {
 		z[0] = byte(extensionsLength >> 8)
 		z[1] = byte(extensionsLength)
 		z = z[2:]
+	}
+	if m.vers >= VersionTLS13 {
+		z[0] = byte(extensionSupportedVersions >> 8)
+		z[1] = byte(extensionSupportedVersions)
+		z[3] = 2
+		z[4] = uint8(m.vers >> 8)
+		z[5] = uint8(m.vers)
+		z = z[6:]
 	}
 	if m.nextProtoNeg {
 		z[0] = byte(extensionNextProtoNeg >> 8)
@@ -994,6 +1012,17 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	data = data[2:]
 	if len(data) != extensionsLength {
 		return alertDecodeError
+	}
+
+	svData := findExtension(data, extensionSupportedVersions)
+	if svData != nil {
+		if len(svData) != 2 {
+			return alertDecodeError
+		}
+		if m.vers != VersionTLS12 {
+			return alertDecodeError
+		}
+		m.vers = uint16(svData[0])<<8 | uint16(svData[1])
 	}
 
 	for len(data) != 0 {
@@ -2383,4 +2412,23 @@ func eqKeyShares(x, y []keyShare) bool {
 		}
 	}
 	return true
+}
+
+func findExtension(data []byte, extensionType uint16) []byte {
+	for len(data) != 0 {
+		if len(data) < 4 {
+			return nil
+		}
+		extension := uint16(data[0])<<8 | uint16(data[1])
+		length := int(data[2])<<8 | int(data[3])
+		data = data[4:]
+		if len(data) < length {
+			return nil
+		}
+		if extension == extensionType {
+			return data[:length]
+		}
+		data = data[length:]
+	}
+	return nil
 }
