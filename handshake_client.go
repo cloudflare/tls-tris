@@ -197,6 +197,11 @@ func (c *Conn) clientHandshake() error {
 			return err
 		}
 		hello.keyShares = []keyShare{clientKS}
+		// middlebox compatibility mode, provide a non-empty session ID
+		hello.sessionId = make([]byte, 16)
+		if _, err := io.ReadFull(c.config.rand(), hello.sessionId); err != nil {
+			return errors.New("tls: short read from Rand: " + err.Error())
+		}
 	}
 
 	if err = hs.handshake(); err != nil {

@@ -262,6 +262,7 @@ Curves:
 		hs.hello13Enc = new(encryptedExtensionsMsg)
 		hs.hello.vers = c.vers
 		hs.hello.random = make([]byte, 32)
+		hs.hello.sessionId = hs.clientHello.sessionId
 		_, err = io.ReadFull(c.config.rand(), hs.hello.random)
 		if err != nil {
 			c.sendAlert(alertInternalError)

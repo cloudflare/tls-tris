@@ -197,6 +197,11 @@ CurvePreferenceLoop:
 		return err
 	}
 
+	// middlebox compatibility mode: send CCS after first handshake message
+	if _, err := c.writeRecord(recordTypeChangeCipherSpec, []byte{1}); err != nil {
+		return err
+	}
+
 	hs.keySchedule.setSecret(ecdheSecret)
 	clientCipher, cTrafficSecret := hs.keySchedule.prepareCipher(secretHandshakeClient)
 	hs.hsClientCipher = clientCipher
@@ -792,6 +797,12 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
 	serverHello := hs.serverHello
+
+	// middlebox compatibility mode, send CCS before second flight.
+	if _, err := c.writeRecord(recordTypeChangeCipherSpec, []byte{1}); err != nil {
+		return err
+	}
+
 	// TODO check if keyshare is unacceptable, raise HRR.
 
 	clientKS := hs.hello.keyShares[0]
