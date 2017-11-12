@@ -17,6 +17,7 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS13:        "1.3",
 	tls.VersionTLS13Draft18: "1.3 (draft 18)",
 	tls.VersionTLS13Draft21: "1.3 (draft 21)",
+	tls.VersionTLS13Draft22: "1.3 (draft 22)",
 }
 
 var cipherSuiteIdToName = map[uint16]string{

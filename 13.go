@@ -132,7 +132,7 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	config := hs.c.config
 	c := hs.c
 
-	hs.c.cipherSuite, hs.hello13.cipherSuite = hs.suite.id, hs.suite.id
+	hs.c.cipherSuite, hs.hello.cipherSuite = hs.suite.id, hs.suite.id
 	hs.c.clientHello = hs.clientHello.marshal()
 
 	// When picking the group for the handshake, priority is given to groups
@@ -164,7 +164,7 @@ CurvePreferenceLoop:
 		c.sendAlert(alertInternalError)
 		return err
 	}
-	hs.hello13.keyShare = serverKS
+	hs.hello.keyShare = serverKS
 
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
@@ -193,8 +193,8 @@ CurvePreferenceLoop:
 		return errors.New("tls: bad ECDHE client share")
 	}
 
-	hs.keySchedule.write(hs.hello13.marshal())
-	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13.marshal()); err != nil {
+	hs.keySchedule.write(hs.hello.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, hs.hello.marshal()); err != nil {
 		return err
 	}
 
@@ -632,8 +632,8 @@ func (hs *serverHandshakeState) checkPSK() (isResumed bool, alert alert) {
 				hs.hello13Enc.earlyData = true
 			}
 		}
-		hs.hello13.psk = true
-		hs.hello13.pskIdentity = uint16(i)
+		hs.hello.psk = true
+		hs.hello.pskIdentity = uint16(i)
 		return true, alertSuccess
 	}
 
@@ -798,7 +798,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	c := hs.c
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
-	serverHello := hs.serverHello13
+	serverHello := hs.serverHello
 	// TODO check if keyshare is unacceptable, raise HRR.
 
 	clientKS := hs.hello.keyShares[0]

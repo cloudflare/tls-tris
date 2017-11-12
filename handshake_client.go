@@ -26,15 +26,14 @@ type clientHandshakeState struct {
 	suite        *cipherSuite
 	masterSecret []byte
 	session      *ClientSessionState
+	serverHello  *serverHelloMsg
 
 	// TLS 1.0-1.2 fields
-	serverHello  *serverHelloMsg
 	finishedHash finishedHash
 
 	// TLS 1.3 fields
-	serverHello13 *serverHelloMsg13
-	keySchedule   *keySchedule13
-	privateKey    []byte
+	keySchedule *keySchedule13
+	privateKey  []byte
 }
 
 // c.out.Mutex <= L; c.handshakeMutex <= L.
@@ -201,15 +200,10 @@ NextCipherSuite:
 	}
 
 	var serverHello *serverHelloMsg
-	var serverHello13 *serverHelloMsg13
 	var vers, cipherSuite uint16
 	switch m := msg.(type) {
 	case *serverHelloMsg:
 		serverHello = m
-		vers = m.vers
-		cipherSuite = m.cipherSuite
-	case *serverHelloMsg13:
-		serverHello13 = m
 		vers = m.vers
 		cipherSuite = m.cipherSuite
 	default:
@@ -239,20 +233,19 @@ NextCipherSuite:
 	}
 
 	hs := &clientHandshakeState{
-		c:             c,
-		serverHello:   serverHello,
-		serverHello13: serverHello13,
-		hello:         hello,
-		suite:         suite,
-		session:       session,
-		privateKey:    privateKey,
+		c:           c,
+		serverHello: serverHello,
+		hello:       hello,
+		suite:       suite,
+		session:     session,
+		privateKey:  privateKey,
 	}
 
 	var isResume bool
 	if c.vers >= VersionTLS13 {
 		hs.keySchedule = newKeySchedule13(hs.suite, c.config, hs.hello.random)
 		hs.keySchedule.write(hs.hello.marshal())
-		hs.keySchedule.write(hs.serverHello13.marshal())
+		hs.keySchedule.write(hs.serverHello.marshal())
 	} else {
 		hs.finishedHash = newFinishedHash(c.vers, suite)
 

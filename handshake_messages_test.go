@@ -26,7 +26,6 @@ var tests = []interface{}{
 	&nextProtoMsg{},
 	&newSessionTicketMsg{},
 	&sessionState{},
-	&serverHelloMsg13{},
 	&encryptedExtensionsMsg{},
 	&certificateMsg13{},
 	&newSessionTicketMsg13{},
@@ -209,16 +208,10 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		}
 	}
 
-	return reflect.ValueOf(m)
-}
-
-func (*serverHelloMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
-	m := &serverHelloMsg13{}
-	m.vers = uint16(rand.Intn(65536))
-	m.random = randomBytes(32, rand)
-	m.cipherSuite = uint16(rand.Int31())
-	m.keyShare.group = CurveID(rand.Intn(30000))
-	m.keyShare.data = randomBytes(rand.Intn(300), rand)
+	if rand.Intn(10) > 5 {
+		m.keyShare.group = CurveID(rand.Intn(30000))
+		m.keyShare.data = randomBytes(rand.Intn(300), rand)
+	}
 	if rand.Intn(10) > 5 {
 		m.psk = true
 		m.pskIdentity = uint16(rand.Int31())

@@ -30,9 +30,9 @@ type serverHandshakeState struct {
 	cachedClientHelloInfo *ClientHelloInfo
 	clientHello           *clientHelloMsg
 	cert                  *Certificate
+	hello                 *serverHelloMsg
 
 	// TLS 1.0-1.2 fields
-	hello           *serverHelloMsg
 	ellipticOk      bool
 	ecdsaOk         bool
 	rsaDecryptOk    bool
@@ -42,7 +42,6 @@ type serverHandshakeState struct {
 	certsFromClient [][]byte
 
 	// TLS 1.3 fields
-	hello13           *serverHelloMsg13
 	hello13Enc        *encryptedExtensionsMsg
 	keySchedule       *keySchedule13
 	clientFinishedKey []byte
@@ -70,7 +69,7 @@ func (c *Conn) serverHandshake() error {
 	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
 	// and https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2
 	c.buffering = true
-	if hs.hello13 != nil {
+	if c.vers >= VersionTLS13 {
 		if err := hs.doTLS13Handshake(); err != nil {
 			return err
 		}
@@ -260,11 +259,11 @@ Curves:
 		hs.hello.secureRenegotiationSupported = hs.clientHello.secureRenegotiationSupported
 		hs.hello.compressionMethod = compressionNone
 	} else {
-		hs.hello13 = new(serverHelloMsg13)
+		hs.hello = new(serverHelloMsg)
 		hs.hello13Enc = new(encryptedExtensionsMsg)
-		hs.hello13.vers = c.vers
-		hs.hello13.random = make([]byte, 32)
-		_, err = io.ReadFull(c.config.rand(), hs.hello13.random)
+		hs.hello.vers = c.vers
+		hs.hello.random = make([]byte, 32)
+		_, err = io.ReadFull(c.config.rand(), hs.hello.random)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return false, err
