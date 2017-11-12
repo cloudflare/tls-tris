@@ -814,12 +814,11 @@ func (c *Conn) readRecord(want recordType) error {
 		b = nil
 
 	case recordTypeHandshake:
-		// TODO(rsc): Should at least pick off connection close.
 		// If early data was being read, a Finished message is expected
-		// instead of (early) application data.
-		if typ != want && !(c.isClient && c.config.Renegotiation != RenegotiateNever) &&
-			!(want == recordTypeApplicationData && c.phase == waitingClientFinished) {
-			return c.in.setErrorLocked(c.sendAlert(alertNoRenegotiation))
+		// instead of (early) application data. Other post-handshake
+		// messages include HelloRequest and NewSessionTicket.
+		if typ != want && want != recordTypeApplicationData {
+			return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 		}
 		c.hand.Write(data)
 	}
@@ -1221,20 +1220,26 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return n + m, c.out.setErrorLocked(err)
 }
 
-// handleRenegotiation processes a HelloRequest handshake message.
+// Process Handshake messages after the handshake has completed.
 // c.in.Mutex <= L
-func (c *Conn) handleRenegotiation() error {
+func (c *Conn) handlePostHandshake() error {
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
 	}
 
-	_, ok := msg.(*helloRequestMsg)
-	if !ok {
+	switch hm := msg.(type) {
+	case *helloRequestMsg:
+		return c.handleRenegotiation(hm)
+	default:
 		c.sendAlert(alertUnexpectedMessage)
 		return alertUnexpectedMessage
 	}
+}
 
+// handleRenegotiation processes a HelloRequest handshake message.
+// c.in.Mutex <= L
+func (c *Conn) handleRenegotiation(*helloRequestMsg) error {
 	if !c.isClient {
 		return c.sendAlert(alertNoRenegotiation)
 	}
@@ -1428,9 +1433,7 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 					return 0, err
 				}
 			} else if c.hand.Len() > 0 {
-				// We received handshake bytes, indicating the
-				// start of a renegotiation.
-				if err := c.handleRenegotiation(); err != nil {
+				if err := c.handlePostHandshake(); err != nil {
 					return 0, err
 				}
 			}
