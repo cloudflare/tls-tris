@@ -649,6 +649,7 @@ func (c *Conn) readRecord(want recordType) error {
 		}
 	}
 
+Again:
 	if c.rawInput == nil {
 		c.rawInput = c.in.newBlock()
 	}
@@ -776,7 +777,7 @@ func (c *Conn) readRecord(want recordType) error {
 		case alertLevelWarning:
 			// drop on the floor
 			c.in.freeBlock(b)
-			return nil
+			goto Again
 		case alertLevelError:
 			c.in.setErrorLocked(&net.OpError{Op: "remote error", Err: alert(data[1])})
 		default:
