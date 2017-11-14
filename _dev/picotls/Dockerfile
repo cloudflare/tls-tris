@@ -10,7 +10,12 @@ RUN apk add --update \
 
 RUN git clone https://github.com/h2o/picotls
 
-ARG REVISION=a6c1c65
+# Draft -18
+#ARG REVISION=a6c1c65
+
+# Draft -22
+ARG REVISION=843ccdc
+
 RUN cd picotls && git fetch && git checkout $REVISION
 
 RUN cd picotls && git submodule update --init

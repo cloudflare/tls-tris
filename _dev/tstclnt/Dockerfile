@@ -18,7 +18,10 @@ ENV USE_64=1 NSS_ENABLE_TLS_1_3=1
 # ARG REVISION=b6dfef6d0ff0
 
 # Draft 18, NSS_3_34_1_RTM (with TLS 1.3 keylogging support)
-ARG REVISION=e61c0f657100
+# ARG REVISION=e61c0f657100
+
+# Draft 22
+ARG REVISION=88c3f3fa581b
 
 RUN cd nss && hg pull
 RUN cd nss && hg checkout -C $REVISION

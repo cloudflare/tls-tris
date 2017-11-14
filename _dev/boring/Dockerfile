@@ -38,6 +38,12 @@ RUN mkdir boringssl/build
 # Draft 18, but with "bssl server -loop -www" support and build fix
 ARG REVISION=40b24c8154
 
+# Draft 21
+#ARG REVISION=cd8470f
+
+# Draft 22
+ARG REVISION=1530ef3e
+
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
 RUN cd boringssl/build && cmake -GNinja ..
