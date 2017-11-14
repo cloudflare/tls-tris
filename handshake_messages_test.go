@@ -103,8 +103,8 @@ func TestFuzz(t *testing.T) {
 
 func randomBytes(n int, rand *rand.Rand) []byte {
 	r := make([]byte, n)
-	for i := 0; i < n; i++ {
-		r[i] = byte(rand.Int31())
+	if _, err := rand.Read(r); err != nil {
+		panic("rand.Read failed: " + err.Error())
 	}
 	return r
 }
@@ -150,7 +150,7 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 		}
 	}
 	if rand.Intn(10) > 5 {
-		m.signatureAndHashes = supportedSignatureAlgorithms
+		m.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 	}
 	m.alpnProtocols = make([]string, rand.Intn(5))
 	for i := range m.alpnProtocols {

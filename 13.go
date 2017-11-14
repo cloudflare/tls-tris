@@ -329,7 +329,7 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 
 	verifyMsg := &certificateVerifyMsg{
 		hasSignatureAndHash: true,
-		signatureAndHash:    sigSchemeToSigAndHash(sigScheme),
+		signatureAlgorithm:  sigScheme,
 		signature:           signature,
 	}
 	hs.keySchedule.write(verifyMsg.marshal())
@@ -387,24 +387,14 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (sigScheme Signatur
 	}
 
 	for _, ss := range supportedSchemes {
-		for _, cs := range hs.clientHello.signatureAndHashes {
-			if ss == sigAndHashToSigScheme(cs) {
+		for _, cs := range hs.clientHello.supportedSignatureAlgorithms {
+			if ss == cs {
 				return ss, nil
 			}
 		}
 	}
 
 	return sigScheme, nil
-}
-
-func sigSchemeToSigAndHash(s SignatureScheme) (sah signatureAndHash) {
-	sah.hash = byte(s >> 8)
-	sah.signature = byte(s)
-	return
-}
-
-func sigAndHashToSigScheme(sah signatureAndHash) SignatureScheme {
-	return SignatureScheme(sah.hash)<<8 | SignatureScheme(sah.signature)
 }
 
 func signatureSchemeIsPSS(s SignatureScheme) bool {
