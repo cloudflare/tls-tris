@@ -164,8 +164,9 @@ const (
 
 // Signature algorithms for TLS 1.2 (See RFC 5246, section A.4.1)
 const (
-	signatureRSA   uint8 = 1
-	signatureECDSA uint8 = 3
+	signaturePKCS1v15 uint8 = iota + 1
+	signatureECDSA
+	signatureRSAPSS
 )
 
 // supportedSignatureAlgorithms contains the signature and hash algorithms that
@@ -1156,7 +1157,9 @@ func isSupportedSignatureAlgorithm(sigAlg SignatureScheme, supportedSignatureAlg
 func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) uint8 {
 	switch signatureAlgorithm {
 	case PKCS1WithSHA1, PKCS1WithSHA256, PKCS1WithSHA384, PKCS1WithSHA512:
-		return signatureRSA
+		return signaturePKCS1v15
+	case PSSWithSHA256, PSSWithSHA384, PSSWithSHA512:
+		return signatureRSAPSS
 	case ECDSAWithSHA1, ECDSAWithP256AndSHA256, ECDSAWithP384AndSHA384, ECDSAWithP521AndSHA512:
 		return signatureECDSA
 	default:
