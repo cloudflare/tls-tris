@@ -28,6 +28,7 @@ const (
 	VersionTLS12        = 0x0303
 	VersionTLS13        = 0x0304
 	VersionTLS13Draft18 = 0x7f00 | 18
+	VersionTLS13Draft21 = 0x7f00 | 21
 )
 
 const (
