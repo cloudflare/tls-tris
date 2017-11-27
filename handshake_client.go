@@ -33,6 +33,7 @@ type clientHandshakeState struct {
 
 	// TLS 1.3 fields
 	keySchedule *keySchedule13
+	privateKey  []byte
 }
 
 func makeClientHello(config *Config) (*clientHelloMsg, error) {
@@ -97,6 +98,13 @@ NextCipherSuite:
 
 	if hello.vers >= VersionTLS12 {
 		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms
+	}
+
+	if hello.vers >= VersionTLS13 {
+		// Version preference is indicated via "supported_extensions",
+		// set legacy_version to TLS 1.2 for backwards compatibility.
+		hello.vers = VersionTLS12
+		hello.supportedVersions = config.getSupportedVersions()
 	}
 
 	return hello, nil
@@ -175,6 +183,19 @@ func (c *Conn) clientHandshake() error {
 		c:       c,
 		hello:   hello,
 		session: session,
+	}
+
+	var clientKS keyShare
+	if c.config.maxVersion() >= VersionTLS13 {
+		// Create one keyshare for the first default curve. If it is not
+		// appropriate, the server should raise a HRR.
+		defaultGroup := c.config.curvePreferences()[0]
+		hs.privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+		hello.keyShares = []keyShare{clientKS}
 	}
 
 	if err = hs.handshake(); err != nil {
