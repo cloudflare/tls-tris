@@ -105,6 +105,7 @@ NextCipherSuite:
 		// set legacy_version to TLS 1.2 for backwards compatibility.
 		hello.vers = VersionTLS12
 		hello.supportedVersions = config.getSupportedVersions()
+		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms13
 	}
 
 	return hello, nil

@@ -184,6 +184,22 @@ var supportedSignatureAlgorithms = []SignatureScheme{
 	ECDSAWithSHA1,
 }
 
+// supportedSignatureAlgorithms13 lists the advertised signature algorithms
+// allowed for digital signatures. It includes TLS 1.2 + PSS.
+var supportedSignatureAlgorithms13 = []SignatureScheme{
+	PSSWithSHA256,
+	PKCS1WithSHA256,
+	ECDSAWithP256AndSHA256,
+	PSSWithSHA384,
+	PKCS1WithSHA384,
+	ECDSAWithP384AndSHA384,
+	PSSWithSHA512,
+	PKCS1WithSHA512,
+	ECDSAWithP521AndSHA512,
+	PKCS1WithSHA1,
+	ECDSAWithSHA1,
+}
+
 // ConnectionState records basic TLS details about the connection.
 type ConnectionState struct {
 	ConnectionID                []byte                // Random unique connection id
