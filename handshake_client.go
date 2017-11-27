@@ -25,9 +25,14 @@ type clientHandshakeState struct {
 	serverHello  *serverHelloMsg
 	hello        *clientHelloMsg
 	suite        *cipherSuite
-	finishedHash finishedHash
 	masterSecret []byte
 	session      *ClientSessionState
+
+	// TLS 1.0-1.2 fields
+	finishedHash finishedHash
+
+	// TLS 1.3 fields
+	keySchedule *keySchedule13
 }
 
 func makeClientHello(config *Config) (*clientHelloMsg, error) {
@@ -214,26 +219,40 @@ func (hs *clientHandshakeState) handshake() error {
 		return err
 	}
 
-	isResume, err := hs.processServerHello()
-	if err != nil {
-		return err
+	var isResume bool
+	if c.vers >= VersionTLS13 {
+		hs.keySchedule = newKeySchedule13(hs.suite, c.config, hs.hello.random)
+		hs.keySchedule.write(hs.hello.marshal())
+		hs.keySchedule.write(hs.serverHello.marshal())
+	} else {
+		isResume, err = hs.processServerHello()
+		if err != nil {
+			return err
+		}
+
+		hs.finishedHash = newFinishedHash(c.vers, hs.suite)
+
+		// No signatures of the handshake are needed in a resumption.
+		// Otherwise, in a full handshake, if we don't have any certificates
+		// configured then we will never send a CertificateVerify message and
+		// thus no signatures are needed in that case either.
+		if isResume || (len(c.config.Certificates) == 0 && c.config.GetClientCertificate == nil) {
+			hs.finishedHash.discardHandshakeBuffer()
+		}
+
+		hs.finishedHash.Write(hs.hello.marshal())
+		hs.finishedHash.Write(hs.serverHello.marshal())
 	}
-
-	hs.finishedHash = newFinishedHash(c.vers, hs.suite)
-
-	// No signatures of the handshake are needed in a resumption.
-	// Otherwise, in a full handshake, if we don't have any certificates
-	// configured then we will never send a CertificateVerify message and
-	// thus no signatures are needed in that case either.
-	if isResume || (len(c.config.Certificates) == 0 && c.config.GetClientCertificate == nil) {
-		hs.finishedHash.discardHandshakeBuffer()
-	}
-
-	hs.finishedHash.Write(hs.hello.marshal())
-	hs.finishedHash.Write(hs.serverHello.marshal())
 
 	c.buffering = true
-	if isResume {
+	if c.vers >= VersionTLS13 {
+		if err := hs.doTLS13Handshake(); err != nil {
+			return err
+		}
+		if _, err := c.flush(); err != nil {
+			return err
+		}
+	} else if isResume {
 		if err := hs.establishKeys(); err != nil {
 			return err
 		}
