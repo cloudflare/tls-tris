@@ -92,6 +92,7 @@ const (
 	extensionEarlyData           uint16 = 42
 	extensionSupportedVersions   uint16 = 43
 	extensionPSKKeyExchangeModes uint16 = 45
+	extensionCAs                 uint16 = 47
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 )

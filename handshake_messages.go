@@ -2030,6 +2030,199 @@ func (m *certificateRequestMsg) unmarshal(data []byte) alert {
 	return alertSuccess
 }
 
+type certificateRequestMsg13 struct {
+	raw []byte
+
+	requestContext               []byte
+	supportedSignatureAlgorithms []SignatureScheme
+	certificateAuthorities       [][]byte
+}
+
+func (m *certificateRequestMsg13) equal(i interface{}) bool {
+	m1, ok := i.(*certificateRequestMsg13)
+	if !ok {
+		return false
+	}
+
+	return bytes.Equal(m.raw, m1.raw) &&
+		bytes.Equal(m.requestContext, m1.requestContext) &&
+		eqByteSlices(m.certificateAuthorities, m1.certificateAuthorities) &&
+		eqSignatureAlgorithms(m.supportedSignatureAlgorithms, m1.supportedSignatureAlgorithms)
+}
+
+func (m *certificateRequestMsg13) marshal() (x []byte) {
+	if m.raw != nil {
+		return m.raw
+	}
+
+	// See https://tools.ietf.org/html/draft-ietf-tls-tls13-21#section-4.3.2
+	length := 1 + len(m.requestContext)
+	numExtensions := 1
+	extensionsLength := 2 + 2*len(m.supportedSignatureAlgorithms)
+
+	casLength := 0
+	if len(m.certificateAuthorities) > 0 {
+		for _, ca := range m.certificateAuthorities {
+			casLength += 2 + len(ca)
+		}
+		extensionsLength += 2 + casLength
+		numExtensions++
+	}
+
+	extensionsLength += 4 * numExtensions
+	length += 2 + extensionsLength
+
+	x = make([]byte, 4+length)
+	x[0] = typeCertificateRequest
+	x[1] = uint8(length >> 16)
+	x[2] = uint8(length >> 8)
+	x[3] = uint8(length)
+
+	x[4] = uint8(len(m.requestContext))
+	copy(x[5:], m.requestContext)
+	z := x[5+len(m.requestContext):]
+
+	z[0] = byte(extensionsLength >> 8)
+	z[1] = byte(extensionsLength)
+	z = z[2:]
+
+	// mandatory signature_algorithms
+	// TODO DRY: share with CH
+	z[0] = byte(extensionSignatureAlgorithms >> 8)
+	z[1] = byte(extensionSignatureAlgorithms)
+	l := 2 + 2*len(m.supportedSignatureAlgorithms)
+	z[2] = byte(l >> 8)
+	z[3] = byte(l)
+	z = z[4:]
+
+	l -= 2
+	z[0] = byte(l >> 8)
+	z[1] = byte(l)
+	z = z[2:]
+	for _, sigAlgo := range m.supportedSignatureAlgorithms {
+		z[0] = uint8(sigAlgo >> 8)
+		z[1] = uint8(sigAlgo)
+		z = z[2:]
+	}
+
+	// certificate_authorities
+	if casLength > 0 {
+		z[0] = byte(extensionCAs >> 8)
+		z[1] = byte(extensionCAs)
+		l := 2 + casLength
+		z[2] = byte(l >> 8)
+		z[3] = byte(l)
+		z = z[4:]
+
+		z[0] = uint8(casLength >> 8)
+		z[1] = uint8(casLength)
+		z = z[2:]
+		for _, ca := range m.certificateAuthorities {
+			z[0] = uint8(len(ca) >> 8)
+			z[1] = uint8(len(ca))
+			z = z[2:]
+			copy(z, ca)
+			z = z[len(ca):]
+		}
+	}
+
+	m.raw = x
+	return
+}
+
+func (m *certificateRequestMsg13) unmarshal(data []byte) alert {
+	m.raw = data
+	m.supportedSignatureAlgorithms = nil
+	m.certificateAuthorities = nil
+
+	if len(data) < 5 {
+		return alertDecodeError
+	}
+
+	length := uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	if uint32(len(data))-4 != length {
+		return alertDecodeError
+	}
+
+	ctxLen := data[4]
+	if len(data) < 5+int(ctxLen)+2 {
+		return alertDecodeError
+	}
+	m.requestContext = data[5 : 5+ctxLen]
+	data = data[5+ctxLen:]
+
+	extensionsLength := int(data[0])<<8 | int(data[1])
+	data = data[2:]
+	if len(data) != extensionsLength {
+		return alertDecodeError
+	}
+
+	for len(data) != 0 {
+		if len(data) < 4 {
+			return alertDecodeError
+		}
+		extension := uint16(data[0])<<8 | uint16(data[1])
+		length := int(data[2])<<8 | int(data[3])
+		data = data[4:]
+		if len(data) < length {
+			return alertDecodeError
+		}
+
+		switch extension {
+		case extensionSignatureAlgorithms:
+			// TODO DRY: share code with CH and pre-1.3 CV
+			// https://tools.ietf.org/html/draft-ietf-tls-tls13-21#section-4.2.3
+			if length < 2 || length&1 != 0 {
+				return alertDecodeError
+			}
+			l := int(data[0])<<8 | int(data[1])
+			if l != length-2 {
+				return alertDecodeError
+			}
+			n := l / 2
+			d := data[2:]
+			m.supportedSignatureAlgorithms = make([]SignatureScheme, n)
+			for i := range m.supportedSignatureAlgorithms {
+				m.supportedSignatureAlgorithms[i] = SignatureScheme(d[0])<<8 | SignatureScheme(d[1])
+				d = d[2:]
+			}
+
+		case extensionCAs:
+			// TODO DRY: share code with CH
+			if length < 2 {
+				return alertDecodeError
+			}
+			l := int(data[0])<<8 | int(data[1])
+			if l != length-2 || l < 3 {
+				return alertDecodeError
+			}
+			cas := make([]byte, l)
+			copy(cas, data[2:])
+			m.certificateAuthorities = nil
+			for len(cas) > 0 {
+				if len(cas) < 2 {
+					return alertDecodeError
+				}
+				caLen := uint16(cas[0])<<8 | uint16(cas[1])
+				cas = cas[2:]
+
+				if len(cas) < int(caLen) {
+					return alertDecodeError
+				}
+
+				m.certificateAuthorities = append(m.certificateAuthorities, cas[:caLen])
+				cas = cas[caLen:]
+			}
+		}
+		data = data[length:]
+	}
+
+	if len(m.supportedSignatureAlgorithms) == 0 {
+		return alertDecodeError
+	}
+	return alertSuccess
+}
+
 type certificateVerifyMsg struct {
 	raw                 []byte
 	hasSignatureAndHash bool

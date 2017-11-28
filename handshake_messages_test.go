@@ -20,6 +20,7 @@ var tests = []interface{}{
 
 	&certificateMsg{},
 	&certificateRequestMsg{},
+	&certificateRequestMsg13{},
 	&certificateVerifyMsg{},
 	&certificateStatusMsg{},
 	&clientKeyExchangeMsg{},
@@ -264,6 +265,18 @@ func (*certificateMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
 func (*certificateRequestMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m := &certificateRequestMsg{}
 	m.certificateTypes = randomBytes(rand.Intn(5)+1, rand)
+	numCAs := rand.Intn(100)
+	m.certificateAuthorities = make([][]byte, numCAs)
+	for i := 0; i < numCAs; i++ {
+		m.certificateAuthorities[i] = randomBytes(rand.Intn(15)+1, rand)
+	}
+	return reflect.ValueOf(m)
+}
+
+func (*certificateRequestMsg13) Generate(rand *rand.Rand, size int) reflect.Value {
+	m := &certificateRequestMsg13{}
+	m.requestContext = randomBytes(rand.Intn(5), rand)
+	m.supportedSignatureAlgorithms = supportedSignatureAlgorithms
 	numCAs := rand.Intn(100)
 	m.certificateAuthorities = make([][]byte, numCAs)
 	for i := 0; i < numCAs; i++ {
