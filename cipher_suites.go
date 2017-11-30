@@ -81,8 +81,8 @@ type cipherSuite struct {
 var cipherSuites = []*cipherSuite{
 	// TLS 1.3 ciphersuites specify only the AEAD and the HKDF hash.
 	{TLS_CHACHA20_POLY1305_SHA256, 32, 0, 12, nil, suiteTLS13, nil, nil, aeadChaCha20Poly1305},
-	{TLS_AES_128_GCM_SHA256, 16, 0, 4, nil, suiteTLS13, nil, nil, aeadAESGCM13},
-	{TLS_AES_256_GCM_SHA384, 32, 0, 4, nil, suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCM13},
+	{TLS_AES_128_GCM_SHA256, 16, 0, 12, nil, suiteTLS13, nil, nil, aeadAESGCM13},
+	{TLS_AES_256_GCM_SHA384, 32, 0, 12, nil, suiteTLS13 | suiteSHA384, nil, nil, aeadAESGCM13},
 
 	// Ciphersuite order is chosen so that ECDHE comes before plain RSA and
 	// AEADs are the top preference.

@@ -119,7 +119,7 @@ func (ks *keySchedule13) prepareCipher(secretLabel secretLabel) (interface{}, []
 	trafficSecret := ks.deriveSecret(secretLabel)
 	hash := hashForSuite(ks.suite)
 	key := hkdfExpandLabel(hash, trafficSecret, nil, "key", ks.suite.keyLen)
-	iv := hkdfExpandLabel(hash, trafficSecret, nil, "iv", 12)
+	iv := hkdfExpandLabel(hash, trafficSecret, nil, "iv", ks.suite.ivLen)
 	return ks.suite.aead(key, iv), trafficSecret
 }
 
