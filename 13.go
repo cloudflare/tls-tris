@@ -371,17 +371,23 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	return nil
 }
 
-func (c *Conn) handleEndOfEarlyData() {
+func (c *Conn) handleEndOfEarlyData() error {
 	if c.phase != readingEarlyData || c.vers < VersionTLS13 {
-		c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-		return
+		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
+	msg, err := c.readHandshake()
+	if err != nil {
+		return err
+	}
+	endOfEarlyData, ok := msg.(*endOfEarlyDataMsg)
+	// No handshake messages are allowed after EOD.
+	if !ok || c.hand.Len() > 0 {
+		return c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
+	}
+	c.hs.keySchedule.write(endOfEarlyData.marshal())
 	c.phase = waitingClientFinished
-	if c.hand.Len() > 0 {
-		c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
-		return
-	}
 	c.in.setCipher(c.vers, c.hs.hsClientCipher)
+	return nil
 }
 
 // selectTLS13SignatureScheme chooses the SignatureScheme for the CertificateVerify

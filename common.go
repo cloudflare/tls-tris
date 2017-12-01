@@ -58,6 +58,7 @@ const (
 	typeClientHello         uint8 = 1
 	typeServerHello         uint8 = 2
 	typeNewSessionTicket    uint8 = 4
+	typeEndOfEarlyData      uint8 = 5
 	typeEncryptedExtensions uint8 = 8
 	typeCertificate         uint8 = 11
 	typeServerKeyExchange   uint8 = 12
@@ -90,7 +91,6 @@ const (
 	extensionEarlyData           uint16 = 42
 	extensionSupportedVersions   uint16 = 43
 	extensionPSKKeyExchangeModes uint16 = 45
-	extensionTicketEarlyDataInfo uint16 = 46
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
 )

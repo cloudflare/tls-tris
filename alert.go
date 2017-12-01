@@ -16,7 +16,6 @@ const (
 
 const (
 	alertCloseNotify            alert = 0
-	alertEndOfEarlyData         alert = 1
 	alertUnexpectedMessage      alert = 10
 	alertBadRecordMAC           alert = 20
 	alertDecryptionFailed       alert = 21

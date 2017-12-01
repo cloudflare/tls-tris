@@ -779,10 +779,6 @@ Again:
 			c.in.setErrorLocked(io.EOF)
 			break
 		}
-		if alert(data[1]) == alertEndOfEarlyData {
-			c.handleEndOfEarlyData()
-			break
-		}
 		switch data[0] {
 		case alertLevelWarning:
 			// drop on the floor
@@ -1136,6 +1132,8 @@ func (c *Conn) readHandshake() (interface{}, error) {
 		} else {
 			m = new(newSessionTicketMsg)
 		}
+	case typeEndOfEarlyData:
+		m = new(endOfEarlyDataMsg)
 	case typeCertificate:
 		if c.vers >= VersionTLS13 {
 			m = new(certificateMsg13)
@@ -1393,6 +1391,11 @@ func (r earlyDataReader) Read(b []byte) (n int, err error) {
 		if err := c.readRecord(recordTypeApplicationData); err != nil {
 			return 0, err
 		}
+		if c.hand.Len() > 0 {
+			if err := c.handleEndOfEarlyData(); err != nil {
+				return 0, err
+			}
+		}
 	}
 	if err := c.in.err; err != nil {
 		return 0, err
@@ -1452,7 +1455,12 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 				return 0, err
 			}
 			if c.hand.Len() > 0 {
-				if c.phase == waitingClientFinished {
+				if c.phase == readingEarlyData || c.phase == waitingClientFinished {
+					if c.phase == readingEarlyData {
+						if err := c.handleEndOfEarlyData(); err != nil {
+							return 0, err
+						}
+					}
 					// Server has received all early data, confirm
 					// by reading the Client Finished message.
 					if err := c.hs.readClientFinished13(true); err != nil {

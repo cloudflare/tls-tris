@@ -2282,6 +2282,20 @@ func (m *newSessionTicketMsg13) unmarshal(data []byte) alert {
 	return alertSuccess
 }
 
+type endOfEarlyDataMsg struct {
+}
+
+func (*endOfEarlyDataMsg) marshal() []byte {
+	return []byte{typeEndOfEarlyData, 0, 0, 0}
+}
+
+func (*endOfEarlyDataMsg) unmarshal(data []byte) alert {
+	if len(data) != 4 {
+		return alertDecodeError
+	}
+	return alertSuccess
+}
+
 type helloRequestMsg struct {
 }
 
