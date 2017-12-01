@@ -11,6 +11,7 @@ env:
   - MODE=interop CLIENT=boring SERVER=boring
   - MODE=interop CLIENT=tstclnt SERVER=tstclnt
   - MODE=interop CLIENT=picotls ZRTT=1
+  - MODE=interop CLIENT=hs-tls ZRTT=1
 # - MODE=interop CLIENT=mint    # does not support draft 22
   - MODE=bogo
   - MODE=gotest
