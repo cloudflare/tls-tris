@@ -17,8 +17,8 @@ ENV USE_64=1 NSS_ENABLE_TLS_1_3=1
 # Draft 18
 # ARG REVISION=b6dfef6d0ff0
 
-# tstclnt resumption
-ARG REVISION=2ed8aef0b360
+# Draft 18, NSS_3_34_1_RTM (with TLS 1.3 keylogging support)
+ARG REVISION=e61c0f657100
 
 RUN cd nss && hg pull
 RUN cd nss && hg checkout -C $REVISION
@@ -39,6 +39,14 @@ ENV LD_LIBRARY_PATH=/dist/OBJ-PATH/lib
 
 ENV SSLTRACE=100 SSLDEBUG=100
 
+# Init test key using an empty noise (seed) file (-z /dev/null).
+# Use different subjects, otherwise NSS seems to merge keys under the same nickname.
+RUN mkdir /certdb && \
+    /dist/OBJ-PATH/bin/certutil -d /certdb -N --empty-password && \
+    /dist/OBJ-PATH/bin/certutil -d /certdb -S -n rsa-server -t u -x -s CN=localhost -k rsa -z /dev/null && \
+    /dist/OBJ-PATH/bin/certutil -d /certdb -S -n ecdsa-server -t u -x -s CN=localhost,O=EC -k ec -z /dev/null -q nistp256
+
 ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
+ADD server.sh /server.sh
 ENTRYPOINT ["/run.sh"]

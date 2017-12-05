@@ -9,7 +9,7 @@ go:
 
 env:
   - MODE=interop CLIENT=boring SERVER=boring
-  - MODE=interop CLIENT=tstclnt
+  - MODE=interop CLIENT=tstclnt SERVER=tstclnt
   - MODE=interop CLIENT=picotls ZRTT=1
   - MODE=interop CLIENT=mint
   - MODE=bogo

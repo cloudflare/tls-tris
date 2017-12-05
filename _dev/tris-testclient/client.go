@@ -57,7 +57,9 @@ func (c *Client) run(addr string, version, cipherSuite uint16) {
 
 	buf := make([]byte, 1024)
 	n, err := con.Read(buf)
-	if err != nil {
+	// A non-zero read with EOF is acceptable and occurs when a close_notify
+	// is received right after reading data (observed with NSS selfserv).
+	if !(n > 0 && err == io.EOF) && err != nil {
 		fmt.Printf("Read failed: %v\n\n", err)
 		c.failed++
 		return
