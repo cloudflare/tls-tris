@@ -324,7 +324,7 @@ Curves:
 		}
 	}
 
-	if c.vers != VersionTLS13 && hs.checkForResumption() {
+	if c.vers < VersionTLS13 && hs.checkForResumption() {
 		return true, nil
 	}
 
