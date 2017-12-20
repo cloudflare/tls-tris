@@ -1,9 +1,10 @@
-FROM golang:1.7-alpine
+FROM golang:1.9-alpine
 
 RUN apk add --update \
     git \
     make \
     bash \
+    patch \
   && rm -rf /var/cache/apk/*
 
 ENV CGO_ENABLED=0

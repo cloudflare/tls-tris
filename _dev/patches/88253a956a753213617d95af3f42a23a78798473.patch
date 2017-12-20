@@ -1,0 +1,63 @@
+From 88253a956a753213617d95af3f42a23a78798473 Mon Sep 17 00:00:00 2001
+From: Filippo Valsorda <filippo@cloudflare.com>
+Date: Mon, 28 Nov 2016 05:24:21 +0000
+Subject: [PATCH] net/http: attach TLSConnContextKey to the request Context
+
+Change-Id: Ic59c84f992c829dc7da741b128dd6899366fa1d2
+---
+ src/net/http/request.go |  4 +++-
+ src/net/http/server.go  | 12 ++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/net/http/request.go b/src/net/http/request.go
+index 13f367c1a8..b2827ff123 100644
+--- a/src/net/http/request.go
++++ b/src/net/http/request.go
+@@ -275,7 +275,9 @@ type Request struct {
+ 	// was received. This field is not filled in by ReadRequest.
+ 	// The HTTP server in this package sets the field for
+ 	// TLS-enabled connections before invoking a handler;
+-	// otherwise it leaves the field nil.
++	// otherwise it leaves the field nil. The value is fixed
++	// at the state of the connection immediately after Handshake,
++	// for an immediate value use TLSConnContextKey.
+ 	// This field is ignored by the HTTP client.
+ 	TLS *tls.ConnectionState
+ 
+diff --git a/src/net/http/server.go b/src/net/http/server.go
+index 2fa8ab23d8..b0542cdbc3 100644
+--- a/src/net/http/server.go
++++ b/src/net/http/server.go
+@@ -223,6 +223,12 @@ var (
+ 	// the local address the connection arrived on.
+ 	// The associated value will be of type net.Addr.
+ 	LocalAddrContextKey = &contextKey{"local-addr"}
++
++	// TLSConnContextKey is a context key. It can be used in
++	// HTTP handlers with context.WithValue to access the
++	// underlying *tls.Conn being served. If the connection
++	// is not TLS, the key is not set.
++	TLSConnContextKey = &contextKey{"tls-conn"}
+ )
+ 
+ // A conn represents the server side of an HTTP connection.
+@@ -969,6 +975,9 @@ func (c *conn) readRequest(ctx context.Context) (w *response, err error) {
+ 	delete(req.Header, "Host")
+ 
+ 	ctx, cancelCtx := context.WithCancel(ctx)
++	if tlsConn, ok := c.rwc.(*tls.Conn); ok {
++		ctx = context.WithValue(ctx, TLSConnContextKey, tlsConn)
++	}
+ 	req.ctx = ctx
+ 	req.RemoteAddr = c.remoteAddr
+ 	req.TLS = c.tlsState
+@@ -3161,6 +3170,9 @@ func (h initNPNRequest) ServeHTTP(rw ResponseWriter, req *Request) {
+ 	if req.RemoteAddr == "" {
+ 		req.RemoteAddr = h.c.RemoteAddr().String()
+ 	}
++	if req.ctx != nil && req.ctx.Value(TLSConnContextKey) == nil {
++		req.ctx = context.WithValue(req.ctx, TLSConnContextKey, h.c)
++	}
+ 	h.h.ServeHTTP(rw, req)
+ }
+ 
