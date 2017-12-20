@@ -188,6 +188,8 @@ func lookupTLSHash(signatureAlgorithm SignatureScheme) (crypto.Hash, error) {
 		return crypto.SHA384, nil
 	case PKCS1WithSHA512, PSSWithSHA512, ECDSAWithP521AndSHA512:
 		return crypto.SHA512, nil
+	case Ed25519:
+		return 0, nil
 	default:
 		return 0, fmt.Errorf("tls: unsupported signature algorithm: %#04x", signatureAlgorithm)
 	}

@@ -11,6 +11,8 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+
+	"golang_org/x/crypto/ed25519"
 )
 
 // pickSignatureAlgorithm selects a signature algorithm that is compatible with
@@ -59,6 +61,10 @@ func pickSignatureAlgorithm(pubkey crypto.PublicKey, peerSigAlgs, ourSigAlgs []S
 			if sigType == signatureECDSA {
 				return sigAlg, sigType, hashAlg, nil
 			}
+		case ed25519.PublicKey:
+			if sigType == signatureEd25519 {
+				return sigAlg, sigType, hashAlg, nil
+			}
 		}
 	}
 	return 0, 0, 0, errors.New("tls: peer doesn't support any common signature algorithms")
@@ -99,6 +105,14 @@ func verifyHandshakeSignature(sigType uint8, pubkey crypto.PublicKey, hashFunc c
 		signOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}
 		if err := rsa.VerifyPSS(pubKey, hashFunc, digest, sig, signOpts); err != nil {
 			return err
+		}
+	case signatureEd25519:
+		pubKey, ok := pubkey.(ed25519.PublicKey)
+		if !ok {
+			return errors.New("tls: Ed25519 signing requires a Ed25519 public key")
+		}
+		if !ed25519.Verify(pubKey, digest, sig) {
+			return errors.New("tls: Ed25519 verification failure")
 		}
 	default:
 		return errors.New("tls: unknown signature algorithm")

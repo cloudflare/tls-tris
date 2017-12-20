@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"golang_org/x/crypto/curve25519"
+	"golang_org/x/crypto/ed25519"
 )
 
 // numSessionTickets is the number of different session tickets the
@@ -407,10 +408,11 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (sigScheme Signatur
 		return 0, errors.New("tls: certificate private key does not implement crypto.Signer")
 	}
 	pk := signer.Public()
-	if _, ok := pk.(*rsa.PublicKey); ok {
+	switch pk := pk.(type) {
+	case *rsa.PublicKey:
 		sigScheme = PSSWithSHA256
 		supportedSchemes = []SignatureScheme{PSSWithSHA256, PSSWithSHA384, PSSWithSHA512}
-	} else if pk, ok := pk.(*ecdsa.PublicKey); ok {
+	case *ecdsa.PublicKey:
 		switch pk.Curve {
 		case elliptic.P256():
 			sigScheme = ECDSAWithP256AndSHA256
@@ -424,7 +426,10 @@ func (hs *serverHandshakeState) selectTLS13SignatureScheme() (sigScheme Signatur
 		default:
 			return 0, errors.New("tls: unknown ECDSA certificate curve")
 		}
-	} else {
+	case ed25519.PublicKey:
+		sigScheme = Ed25519
+		supportedSchemes = []SignatureScheme{Ed25519}
+	default:
 		return 0, errors.New("tls: unknown certificate key type")
 	}
 
@@ -453,6 +458,8 @@ func hashForSignatureScheme(ss SignatureScheme) crypto.Hash {
 		return crypto.SHA384
 	case PSSWithSHA512, ECDSAWithP521AndSHA512:
 		return crypto.SHA512
+	case Ed25519:
+		return 0
 	default:
 		panic("unsupported SignatureScheme passed to hashForSignatureScheme")
 	}
@@ -470,6 +477,9 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	message = append(message, context...)
 	message = append(message, 0)
 	message = append(message, data...)
+	if hash == 0 {
+		return message
+	}
 	h := hash.New()
 	h.Write(message)
 	return h.Sum(nil)

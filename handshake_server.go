@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+
+	"golang_org/x/crypto/ed25519"
 )
 
 type Committer interface {
@@ -309,6 +311,11 @@ Curves:
 			hs.ecdsaOk = true
 		case *rsa.PublicKey:
 			hs.rsaSignOk = true
+		case ed25519.PublicKey:
+			if c.vers < VersionTLS13 {
+				c.sendAlert(alertInternalError)
+				return false, errors.New("tls: ed25519 only supported with version 1.3")
+			}
 		default:
 			c.sendAlert(alertInternalError)
 			return false, fmt.Errorf("tls: unsupported signing key type (%T)", priv.Public())
