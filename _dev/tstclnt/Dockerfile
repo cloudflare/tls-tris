@@ -52,4 +52,15 @@ RUN mkdir /certdb && \
 ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
 ADD server.sh /server.sh
+
+# Add client CA cert
+ADD client_ca.crt /client_ca.crt
+RUN /dist/OBJ-PATH/bin/certutil \
+    -A \
+    -d /certdb \
+    -n client_ca \
+    -t "TP" \
+    -i client_ca.crt
+
+RUN /dist/OBJ-PATH/bin/certutil -L -d /certdb
 ENTRYPOINT ["/run.sh"]

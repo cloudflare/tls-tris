@@ -110,6 +110,7 @@ func main() {
 		go startServer(os.Args[3], false, true, false)  // third port: offer and reject 0-RTT
 		go startServer(os.Args[4], false, true, true)   // fourth port: offer and accept 0-RTT
 		startServer(os.Args[5], false, true, true)      // fifth port: offer and accept 0-RTT but confirm
+		go startServer(os.Args[6], false, false, true)      // sixth port: requires client authentication (ECDSA)
 	}
 }
 
