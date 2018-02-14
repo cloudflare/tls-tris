@@ -22,6 +22,10 @@ elif [ "$1" = "RUN" ]; then
 		grep "Hello TLS 1.3" output.txt | grep -v "resumed" | grep -v "0-RTT"
 		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
 
+		docker run --rm tls-tris:$2 $IP:6443 | tee output.txt # Client auth (ECDSA)
+		grep "Hello TLS 1.3" output.txt | grep -v "resumed" | grep -v "0-RTT"
+		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
+
 elif [ "$1" = "0-RTT" ]; then
 		# 0-RTT <client>
 		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver)
@@ -44,9 +48,9 @@ elif [ "$1" = "RUN-CLIENT" ]; then
 		cd "$(dirname "$0")/tris-testclient"
 
 		servername="$2-localserver"
-		docker run --rm --detach --name "$servername" \
+		c"$servername" \
 			--entrypoint /server.sh \
-			--expose 1443 --expose 2443 \
+			--expose 1443 --expose 2443 --expose 6443 \
 			tls-tris:$2
 		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' "$servername")
 		# Obtain information and stop server on exit
@@ -54,5 +58,6 @@ elif [ "$1" = "RUN-CLIENT" ]; then
 
 		docker run --rm tris-testclient -ecdsa=false $IP:1443 # RSA
 		docker run --rm tris-testclient -rsa=false $IP:2443 # ECDSA
+		docker run --rm tris-testclient -rsa=false $IP:6443 # Client auth (ECDSA)
 		# TODO maybe check server logs for expected output?
 fi
