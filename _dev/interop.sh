@@ -22,7 +22,12 @@ elif [ "$1" = "RUN" ]; then
 		grep "Hello TLS 1.3" output.txt | grep -v "resumed" | grep -v "0-RTT"
 		grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
 
-
+		if [[ $3 =~ .*S.* ]]; then
+			# Client auth - tris is a server
+			docker run --rm tls-tris:$2 $IP:6443 -key client_rsa.key -cert client_rsa.crt -debug 2>&1 | tee output.txt
+			grep "send_client_certificate_verify" output.txt # Checks if client cert was requested and sent
+			grep "Hello TLS 1.3" output.txt | grep "resumed" | grep -v "0-RTT"
+		fi
 
 elif [ "$1" = "0-RTT" ]; then
 		# 0-RTT <client>
@@ -59,7 +64,7 @@ elif [ "$1" = "RUN-CLIENT" ]; then
 		# ECDSA
 		docker run --rm tris-testclient -rsa=false $IP:2443
 
-		# Test client authentication if requested
+		# Test client authentication if requested (tris  is a client)
 		[[ $3 =~ .*C.* ]] && docker run --rm tris-testclient -rsa=false -cliauth $IP:6443; true
 
 		# TODO maybe check server logs for expected output?

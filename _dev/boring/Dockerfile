@@ -52,4 +52,5 @@ RUN cd boringssl && ninja -C build
 ADD httpreq.txt /httpreq.txt
 ADD run.sh /run.sh
 ADD server.sh rsa.pem ecdsa.pem /
+ADD client_rsa.key client_rsa.crt client_ca.crt /
 ENTRYPOINT ["/run.sh"]
