@@ -9,6 +9,7 @@ EXPOSE 4443
 EXPOSE 5443
 
 # GOOS=linux ../go.sh build -v -i .
-ADD tris-localserver ./
+ADD tris-localserver /
+ADD runner.sh /
 
-CMD [ "./tris-localserver", "0.0.0.0:1443", "0.0.0.0:2443", "0.0.0.0:3443", "0.0.0.0:4443", "0.0.0.0:5443" ]
+CMD [ "./runner.sh" ]
