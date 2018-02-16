@@ -1,4 +1,4 @@
-FROM scratch
+FROM buildpack-deps
 
 ENV TLSDEBUG error
 
