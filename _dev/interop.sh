@@ -45,21 +45,22 @@ elif [ "$1" = "RUN-CLIENT" ]; then
 		# RUN-CLIENT <target-server>
 		cd "$(dirname "$0")/tris-testclient"
 
-		servername="$2-localserver"
-		docker run --rm --detach --name "$servername" \
+		SERVERNAME="$2-localserver"
+		docker run --rm --detach --name "$SERVERNAME" \
 			--entrypoint /server.sh \
 			--expose 1443 --expose 2443 --expose 6443 \
 			tls-tris:$2
-		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' "$servername")
+		IP=$(docker inspect -f '{{ .NetworkSettings.IPAddress }}' "$SERVERNAME")
 		# Obtain information and stop server on exit
-		trap 'docker ps -a; docker logs "$servername"; docker kill "$servername"' EXIT
+		trap 'docker ps -a; docker logs "$SERVERNAME"; docker kill "$SERVERNAME"' EXIT
 
 		# RSA
 		docker run --rm tris-testclient -ecdsa=false $IP:1443
 		# ECDSA
 		docker run --rm tris-testclient -rsa=false $IP:2443
+
 		# Test client authentication if requested
-		[[ $3 =~ .*C.* ]] && docker run --rm tris-testclient -rsa=false -cliauth $IP:6443
+		[[ $3 =~ .*C.* ]] && docker run --rm tris-testclient -rsa=false -cliauth $IP:6443; true
 
 		# TODO maybe check server logs for expected output?
 fi
