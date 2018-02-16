@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"crypto/x509"
 )
 
 type ZeroRTT_t int
@@ -73,6 +74,9 @@ func (s *server) start() {
 		log.Println("Enabled keylog")
 	}
 
+	clientCAs := x509.NewCertPool()
+	clientCAs.AppendCertsFromPEM([]byte(rsaCa_client))
+
 	httpServer := &http.Server{
 		Addr: s.Address,
 		TLSConfig: &tls.Config{
@@ -87,6 +91,7 @@ func (s *server) start() {
 			},
 			MaxVersion: tls.VersionTLS13,
 			ClientAuth: s.ClientAuthMethod,
+			ClientCAs: clientCAs,
 		},
 	}
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
@@ -100,7 +105,7 @@ func main() {
     arg_palg := flag.String("palg", "rsa", "Public algorithm to use: rsa or ecdsa")
     arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
     arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
-    //arg_clientauth := flag.String("cliauth", "", "")
+    arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
     flag.Parse()
 
     s.Address=*arg_addr
@@ -115,6 +120,10 @@ func main() {
         s.ZeroRTT = ZeroRTT_Offer
     } else if *arg_zerortt == "oa" {
         s.ZeroRTT = ZeroRTT_Offer | ZeroRTT_Accept
+    }
+
+    if *arg_clientauth {
+        s.ClientAuthMethod = tls.RequireAndVerifyClientCert
     }
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +211,37 @@ MceFUIkT0w+eIl+8DzauPy34o8rjcApglF165UG3iphlpI+jdPzv5TBarUAbwsFb
 ClMLEiNJQ0OMxAIaRtb2RehD4q3OWlpWf6joJ36PRBqL8T5+f2x6Tg3c64UR+QPX
 98UcCQHHdEhm7y2z5Z2Wt0B48tZ+UAxDEoEwMghNyw7wUD79IRlXGYypBnXaMuLX
 46aGxbsSQ7Rfg62Co3JG7vo+eJd0AoZHrtFUnfM8V70IFzMBZnSwRslHRJe56Q==
+-----END CERTIFICATE-----`
+    rsaCa_client = `-----BEGIN CERTIFICATE-----
+MIIFYDCCA0igAwIBAgIJAPpBgIvtQb1EMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV
+BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX
+aWRnaXRzIFB0eSBMdGQwHhcNMTgwMjEzMjAxNjA3WhcNMTkwMjEzMjAxNjA3WjBF
+MQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50
+ZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
+CgKCAgEAr4xgdmB4DaEh8zRFmg/1ZxYhQZMUP0iQX/Y8nDWxNlcd42p3TgpY1biz
+jrq58ln9Om4U/GAn2RmtBAynSBXIlR5oVa44JeMM8Ka8R/dMKyHpF0Nj2EJB9unb
+TC33PfzOlnKQxATwevnnhI6tGluWmwvxXUi7WnX0di+nQg9HrIVom3KrmRr2/41y
+g497ccYUuNnKE6sewGdGzw045oWZpMDA2Us+MFo1IywOurjaM9bueRhPTcIiQ8RE
+h7qb+FRwfxaj9ynZA2PCM7WMSSWCiZJV0uj/pshYF2lvtJcJef4dhwnsYBpc+mgx
+2q9qcUBeo3ZHbi1/PRqjwSmcW3yY5cQRbpYp6xFmgmX3oHQkVXS0UlpNVZ+morcS
+HEpaK8b76fCFcL5yFsAJkPPfny1IKU+CfaVq60dM/mxbEW6J4mZT/uAiqrCilMC+
+FyiATCZur8Ks7p47eZy700DllLod7gWTiuZTgHeQFVoX+jxbCZKlFn5Xspu8ALoK
+Mla/q83mICRVy3+eMUsD7DNvoWYpCAYy/oMk0VWfrQ48JkCGbBW2PW/dU2nmqVhY
+/11rurkr+1TUvYodnajANtXvUjW1DPOLb4dES4Qc4b7Fw8eFXrARhl5mXiL5HFKR
+/VnRshiJ+QwTVkxl+KkZHEm/WS8QD+Zd8leAxh9MCoaU/XrBUBkCAwEAAaNTMFEw
+HQYDVR0OBBYEFKUinuD1xRvcNd2Wti/PnBJp7On1MB8GA1UdIwQYMBaAFKUinuD1
+xRvcNd2Wti/PnBJp7On1MA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQAD
+ggIBAJdJrNBftqkTs2HyuJ3x5RIsTxYh85hJYwNOdFLyzVG6HER9jRCnvmNTjG0O
+I5wz5hQvDpwXs4BCCXHQZrTLAi3BEjq3AjrmR/XeGHulbWh3eh8LVu7MiLRgt+Ys
+GnL2IaERrbkje24nCCMNPbI3fGDQEhTIYmmX8RJp+5BOJgCycKk6pFgfrjJv2C+d
+78pcjlYII6M4vPnr/a08M49Bq6b5ADvIfe5G2KrUvD/+vwoAwv6d/daymHCQ2rY5
+kmdVk9VUp3Q4uKoeej4ENJSAUNTV7oTu346oc7q9sJffB5OltqbrE7ichak7lL+v
+EjArZHElAhKNFXRZViCMvGDs+7JztqbsfT8Xb6Z27e+WyudB2bOUGm3hKuTIl06D
+bA7yUskwEhmkd1CJqO5RLEJjKitOqe6Ye0/GsmPQNDK8GvyXTyGQK5OqBuzEexF0
+mlPoIhpSVH3K9SkRTTHvvcbdYlaQLi6gKq2uhbk4PnS2nfBtXqYIy9mxcgBJzLiB
+/ydfLcf3GClwgvO1JHp6qAl4CO7oe8jqHpoGuznwi1aqkTyNkQWh0OXq3MS+dyqB
+2yXFCFIeKCx18TE1OtuTD3ppBDjpyd0o/a6kYR3FDmdks/J33bGwLsLH3lbN6VjF
+PNfNkaE1tfkpSGYsuT1DPxX8aAT4JLUfZ1Si6iO+E0Sj9LXA
 -----END CERTIFICATE-----`
 	ecdsaCert = `-----BEGIN CERTIFICATE-----
 MIIBbTCCAROgAwIBAgIQZCsHZcs5ZkzV+zC2E6j5RzAKBggqhkjOPQQDAjASMRAw
