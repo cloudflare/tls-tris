@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,28 @@ import (
 	"os"
 	"time"
 )
+
+type ZeroRTT_t int
+type PubKeyAlgo_t int
+
+// Bitset
+const (
+	ZeroRTT_None  ZeroRTT_t	= 0
+	ZeroRTT_Offer           = 1 << 0
+	ZeroRTT_Accept          = 1 << 1
+)
+
+const (
+	PubKeyRSA	PubKeyAlgo_t = iota
+	PubKeyECDSA
+)
+
+type server struct {
+	Address             string
+	ZeroRTT             ZeroRTT_t
+	PubKey              PubKeyAlgo_t
+	ClientAuthMethod    tls.ClientAuthType
+}
 
 var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS10:        "1.0",
@@ -21,16 +44,24 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS13Draft22: "1.3 (draft 22)",
 }
 
-func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
+func NewServer() *server {
+    s := new(server)
+    s.ClientAuthMethod = tls.NoClientCert
+    s.ZeroRTT = ZeroRTT_None
+    s.Address = "0.0.0.1:443"
+    return s
+}
+
+func (s *server) start() {
 	cert, err := tls.X509KeyPair([]byte(ecdsaCert), []byte(ecdsaKey))
-	if rsa {
+	if s.PubKey == PubKeyRSA {
 		cert, err = tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
 	var Max0RTTDataSize uint32
-	if offer0RTT {
+	if ((s.ZeroRTT&ZeroRTT_Offer) == ZeroRTT_Offer) {
 		Max0RTTDataSize = 100 * 1024
 	}
 	var keyLogWriter io.Writer
@@ -41,12 +72,13 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 		}
 		log.Println("Enabled keylog")
 	}
-	s := &http.Server{
-		Addr: addr,
+
+	httpServer := &http.Server{
+		Addr: s.Address,
 		TLSConfig: &tls.Config{
 			Certificates:    []tls.Certificate{cert},
 			Max0RTTDataSize: Max0RTTDataSize,
-			Accept0RTTData:  accept0RTT,
+			Accept0RTTData:  (s.ZeroRTT&ZeroRTT_Accept) == ZeroRTT_Accept,
 			KeyLogWriter:    keyLogWriter,
 			GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 				// If we send the first flight too fast, NSS sends empty early data.
@@ -54,23 +86,45 @@ func startServer(addr string, rsa, offer0RTT, accept0RTT bool) {
 				return nil, nil
 			},
 			MaxVersion: tls.VersionTLS13,
+			ClientAuth: s.ClientAuthMethod,
 		},
 	}
-	log.Fatal(s.ListenAndServeTLS("", ""))
+	log.Fatal(httpServer.ListenAndServeTLS("", ""))
 }
 
-var confirmingAddr string
-
 func main() {
+
+    s := NewServer()
+
+    arg_addr := flag.String("b" , "0.0.0.0:443", "Address:port used for binding")
+    arg_palg := flag.String("palg", "rsa", "Public algorithm to use: rsa or ecdsa")
+    arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
+    arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
+    //arg_clientauth := flag.String("cliauth", "", "")
+    flag.Parse()
+
+    s.Address=*arg_addr
+
+    if *arg_palg == "ecdsa" {
+        s.PubKey = PubKeyECDSA
+    }
+
+    if *arg_zerortt == "a" {
+        s.ZeroRTT = ZeroRTT_Accept
+    } else if *arg_zerortt == "o" {
+        s.ZeroRTT = ZeroRTT_Offer
+    } else if *arg_zerortt == "oa" {
+        s.ZeroRTT = ZeroRTT_Offer | ZeroRTT_Accept
+    }
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		tlsConn := r.Context().Value(http.TLSConnContextKey).(*tls.Conn)
-		server := r.Context().Value(http.ServerContextKey).(*http.Server)
 
 		with0RTT := ""
 		if !tlsConn.ConnectionState().HandshakeConfirmed {
 			with0RTT = " [0-RTT]"
 		}
-		if server.Addr == confirmingAddr || r.URL.Path == "/confirm" {
+		if *arg_confirm || r.URL.Path == "/confirm" {
 			if err := tlsConn.ConfirmHandshake(); err != nil {
 				log.Fatal(err)
 			}
@@ -100,17 +154,7 @@ func main() {
 		fmt.Fprintf(w, "Client Hello packet (%d bytes):\n%s", len(r.TLS.ClientHello), hex.Dump(r.TLS.ClientHello))
 	})
 
-	switch len(os.Args) {
-	case 2:
-		startServer(os.Args[1], true, true, true)
-	case 6:
-		confirmingAddr = os.Args[5]
-		go startServer(os.Args[1], false, false, false) // first port: ECDSA (and no 0-RTT)
-		go startServer(os.Args[2], true, false, true)   // second port: RSA (and accept 0-RTT but not offer it)
-		go startServer(os.Args[3], false, true, false)  // third port: offer and reject 0-RTT
-		go startServer(os.Args[4], false, true, true)   // fourth port: offer and accept 0-RTT
-		startServer(os.Args[5], false, true, true)      // fifth port: offer and accept 0-RTT but confirm
-	}
+	s.start()
 }
 
 const (

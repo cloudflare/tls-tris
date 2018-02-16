@@ -27,7 +27,7 @@ The script also transparently fetches the custom Cloudflare Go 1.9 compiler with
 
 ```
 ./_dev/go.sh build ./_dev/tris-localserver
-TLSDEBUG=error ./tris-localserver 127.0.0.1:4443
+TLSDEBUG=error ./tris-localserver -b 127.0.0.1:4443
 ```
 
 ## Debugging
