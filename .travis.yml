@@ -12,8 +12,9 @@ env:
   # - "C" - tris client will be tested against $SERVER
   # - "S" - tris server will be tested against $CLIENT
   # - none of them, client authentication is not tested
-  - MODE=interop CLIENT=boring SERVER=boring CLIAUTH=C      # ClientAuth. CLIENT: tris, SERVER: boringssl
-  - MODE=interop CLIENT=tstclnt SERVER=tstclnt CLIAUTH=NONE
+  - MODE=interop CLIENT=boring SERVER=boring CLIAUTH=NONE   # Without client authentication
+  - MODE=interop CLIENT=boring SERVER=boring CLIAUTH=SC     # Client authentication
+  - MODE=interop CLIENT=tstclnt SERVER=tstclnt
   - MODE=interop CLIENT=picotls ZRTT=1
 # - MODE=interop CLIENT=mint    # does not support draft 22
   - MODE=bogo
@@ -35,7 +36,7 @@ install:
   - if [ -n "$SERVER" ]; then ./_dev/interop.sh INSTALL-CLIENT; fi
 
 script:
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT; fi
+  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT $CLIAUTH; fi
   - if [ "$MODE" = "interop" ] && [ "$ZRTT" = "1" ]; then ./_dev/interop.sh 0-RTT $CLIENT; fi
   - if [ -n "$SERVER" ]; then ./_dev/interop.sh RUN-CLIENT $SERVER $CLIAUTH; fi
   - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test -race crypto/tls; fi
