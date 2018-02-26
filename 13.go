@@ -936,10 +936,8 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 
 	var chainToSend *Certificate
-	var certRequested bool
-	certReq, ok := msg.(*certificateRequestMsg13)
-	if ok {
-		certRequested = true
+	certReq, isCertRequested := msg.(*certificateRequestMsg13)
+	if isCertRequested {
 		hs.keySchedule.write(certReq.marshal())
 
 		if chainToSend, err = hs.getCertificate13(certReq); err != nil {
@@ -997,12 +995,17 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	hs.keySchedule.write(serverFinished.marshal())
 
-	// Server has authenticated itself, change our cipher.
+	// Server has authenticated itself. Calculate application traffic secrets.
+	hs.keySchedule.setSecret(nil) // derive master secret
+	appServerCipher, _ := hs.keySchedule.prepareCipher(secretApplicationServer)
+	appClientCipher, _ := hs.keySchedule.prepareCipher(secretApplicationClient)
+
+	// Change outbound handshake cipher for final step
 	c.out.setCipher(c.vers, clientCipher)
 
 	// Client auth requires sending a (possibly empty) Certificate followed
 	// by a CertificateVerify message (if there was an actual certificate).
-	if certRequested {
+	if isCertRequested {
 		if err := hs.sendCertificate13(chainToSend, certReq); err != nil {
 			return err
 		}
@@ -1017,16 +1020,14 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	// Calculate application traffic secrets.
-	hs.keySchedule.setSecret(nil) // derive master secret
 	// TODO store initial traffic secret key for KeyUpdate
-	clientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
-	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
-	c.out.setCipher(c.vers, clientCipher)
+
+	// Handshake done, set application traffic secret
+	c.out.setCipher(c.vers, appClientCipher)
 	if c.hand.Len() > 0 {
 		c.sendAlert(alertUnexpectedMessage)
 		return errors.New("tls: unexpected data after handshake")
 	}
-	c.in.setCipher(c.vers, serverCipher)
+	c.in.setCipher(c.vers, appServerCipher)
 	return nil
 }

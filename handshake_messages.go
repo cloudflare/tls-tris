@@ -2040,11 +2040,8 @@ type certificateRequestMsg13 struct {
 
 func (m *certificateRequestMsg13) equal(i interface{}) bool {
 	m1, ok := i.(*certificateRequestMsg13)
-	if !ok {
-		return false
-	}
-
-	return bytes.Equal(m.raw, m1.raw) &&
+	return ok &&
+		bytes.Equal(m.raw, m1.raw) &&
 		bytes.Equal(m.requestContext, m1.requestContext) &&
 		eqByteSlices(m.certificateAuthorities, m1.certificateAuthorities) &&
 		eqSignatureAlgorithms(m.supportedSignatureAlgorithms, m1.supportedSignatureAlgorithms)
