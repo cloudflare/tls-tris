@@ -2033,7 +2033,7 @@ func (m *certificateRequestMsg) unmarshal(data []byte) alert {
 type certificateRequestMsg13 struct {
 	raw []byte
 
-	requestContext               []byte
+	requestContext               []byte 			// used only for post-handshake authentication
 	supportedSignatureAlgorithms []SignatureScheme
 	certificateAuthorities       [][]byte
 }
