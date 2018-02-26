@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -xeuo pipefail
+set -xeo pipefail
 
 if [ "$1" = "INSTALL" ]; then
 		# INSTALL <client> [<revision>]
