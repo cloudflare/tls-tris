@@ -36,6 +36,53 @@ type clientHelloMsg struct {
 	earlyData                    bool
 }
 
+// Helpers
+
+// Marshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
+// for more details. Extension is serialized in data buffer
+// Function advances data slice and returns it, so that it can be used for further processing
+func marshallExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureScheme) ([]byte) {
+    data[0] = byte(extensionSignatureAlgorithms >> 8)
+    data[1] = byte(extensionSignatureAlgorithms)
+    l := 2 + 2*len(sigSchemes)
+    data[2] = byte(l >> 8)
+    data[3] = byte(l)
+    data = data[4:]
+
+    l -= 2
+    data[0] = byte(l >> 8)
+    data[1] = byte(l)
+    data = data[2:]
+    for _, sigAlgo := range sigSchemes {
+        data[0] = byte(sigAlgo >> 8)
+        data[1] = byte(sigAlgo)
+        data = data[2:]
+    }
+    return data
+}
+
+// Unmrshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
+// for more details.
+// In case of error function returns alertDecoderError otherwise filled SignatureScheme slice and alertSuccess
+func unmarshallExtensionSignatureAlgorithms(data []byte, length int) ([]SignatureScheme, alert) {
+	if length < 2 || length&1 != 0 {
+		return nil, alertDecodeError
+	}
+
+	l := int(data[0])<<8 | int(data[1])
+	if l != length-2 {
+		return nil, alertDecodeError
+	}
+	n := l / 2
+	d := data[2:]
+	sigSchemes := make([]SignatureScheme, n)
+	for i := range sigSchemes {
+		sigSchemes[i] = SignatureScheme(d[0])<<8 | SignatureScheme(d[1])
+		d = d[2:]
+	}
+	return sigSchemes, alertSuccess
+}
+
 func (m *clientHelloMsg) equal(i interface{}) bool {
 	m1, ok := i.(*clientHelloMsg)
 	if !ok {
@@ -261,22 +308,7 @@ func (m *clientHelloMsg) marshal() []byte {
 	if len(m.supportedSignatureAlgorithms) > 0 {
 		// https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
 		// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.3
-		z[0] = byte(extensionSignatureAlgorithms >> 8)
-		z[1] = byte(extensionSignatureAlgorithms)
-		l := 2 + 2*len(m.supportedSignatureAlgorithms)
-		z[2] = byte(l >> 8)
-		z[3] = byte(l)
-		z = z[4:]
-
-		l -= 2
-		z[0] = byte(l >> 8)
-		z[1] = byte(l)
-		z = z[2:]
-		for _, sigAlgo := range m.supportedSignatureAlgorithms {
-			z[0] = byte(sigAlgo >> 8)
-			z[1] = byte(sigAlgo)
-			z = z[2:]
-		}
+		z = marshallExtensionSignatureAlgorithms(z, m.supportedSignatureAlgorithms)
 	}
 	if m.secureRenegotiationSupported {
 		z[0] = byte(extensionRenegotiationInfo >> 8)
@@ -526,21 +558,10 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			m.ticketSupported = true
 			m.sessionTicket = data[:length]
 		case extensionSignatureAlgorithms:
-			// https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
-			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.3
-			if length < 2 || length&1 != 0 {
-				return alertDecodeError
-			}
-			l := int(data[0])<<8 | int(data[1])
-			if l != length-2 {
-				return alertDecodeError
-			}
-			n := l / 2
-			d := data[2:]
-			m.supportedSignatureAlgorithms = make([]SignatureScheme, n)
-			for i := range m.supportedSignatureAlgorithms {
-				m.supportedSignatureAlgorithms[i] = SignatureScheme(d[0])<<8 | SignatureScheme(d[1])
-				d = d[2:]
+			var err alert
+			m.supportedSignatureAlgorithms, err = unmarshallExtensionSignatureAlgorithms(data, length)
+			if err != alertSuccess {
+				return err
 			}
 		case extensionRenegotiationInfo:
 			if length == 0 {
@@ -2083,24 +2104,7 @@ func (m *certificateRequestMsg13) marshal() (x []byte) {
 	z[1] = byte(extensionsLength)
 	z = z[2:]
 
-	// mandatory signature_algorithms
-	// TODO DRY: share with CH
-	z[0] = byte(extensionSignatureAlgorithms >> 8)
-	z[1] = byte(extensionSignatureAlgorithms)
-	l := 2 + 2*len(m.supportedSignatureAlgorithms)
-	z[2] = byte(l >> 8)
-	z[3] = byte(l)
-	z = z[4:]
-
-	l -= 2
-	z[0] = byte(l >> 8)
-	z[1] = byte(l)
-	z = z[2:]
-	for _, sigAlgo := range m.supportedSignatureAlgorithms {
-		z[0] = uint8(sigAlgo >> 8)
-		z[1] = uint8(sigAlgo)
-		z = z[2:]
-	}
+	z = marshallExtensionSignatureAlgorithms(z, m.supportedSignatureAlgorithms)
 
 	// certificate_authorities
 	if casLength > 0 {
@@ -2167,23 +2171,11 @@ func (m *certificateRequestMsg13) unmarshal(data []byte) alert {
 
 		switch extension {
 		case extensionSignatureAlgorithms:
-			// TODO DRY: share code with CH and pre-1.3 CV
-			// https://tools.ietf.org/html/draft-ietf-tls-tls13-21#section-4.2.3
-			if length < 2 || length&1 != 0 {
-				return alertDecodeError
+			var err alert
+			m.supportedSignatureAlgorithms, err = unmarshallExtensionSignatureAlgorithms(data, length)
+			if err != alertSuccess {
+				return err
 			}
-			l := int(data[0])<<8 | int(data[1])
-			if l != length-2 {
-				return alertDecodeError
-			}
-			n := l / 2
-			d := data[2:]
-			m.supportedSignatureAlgorithms = make([]SignatureScheme, n)
-			for i := range m.supportedSignatureAlgorithms {
-				m.supportedSignatureAlgorithms[i] = SignatureScheme(d[0])<<8 | SignatureScheme(d[1])
-				d = d[2:]
-			}
-
 		case extensionCAs:
 			// TODO DRY: share code with CH
 			if length < 2 {
