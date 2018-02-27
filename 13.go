@@ -310,7 +310,8 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 		}
 
 		hs.keySchedule.write(certMsg.marshal())
-		pubKey, err := hs.processCertsFromClient13(certMsg)
+		certs := getCertsFromEntries(certMsg.certificates)
+		pubKey, err := hs.processCertsFromClient(certs)
 		if err != nil {
 			return err
 		}
@@ -327,7 +328,14 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 			return unexpectedMessageError(certVerify, msg)
 		}
 
-		if err = hs.verifyPeerCertificate(certVerify, pubKey); err != nil {
+		err, alertCode := verifyPeerCertificate(
+							certVerify,
+							pubKey,
+							supportedSignatureAlgorithms13,
+							hs.keySchedule.transcriptHash.Sum(nil),
+							"TLS 1.3, client CertificateVerify");
+		if err != nil {
+			c.sendAlert(alertCode)
 			return err
 		}
 		hs.keySchedule.write(certVerify.marshal())
@@ -816,21 +824,12 @@ func (hs *serverHandshakeState) traceErr(err error) {
 	}
 }
 
-func (hs *clientHandshakeState) processCertsFromServer13(certMsg *certificateMsg13) error {
-	certs := make([][]byte, len(certMsg.certificates))
-	for i, cert := range certMsg.certificates {
+func getCertsFromEntries(certEntries []certificateEntry) ([][]byte) {
+	certs := make([][]byte, len(certEntries))
+	for i, cert := range certEntries {
 		certs[i] = cert.data
 	}
-	return hs.processCertsFromServer(certs)
-}
-
-// TODO: Merge with function above
-func (hs *serverHandshakeState) processCertsFromClient13(certMsg *certificateMsg13) (crypto.PublicKey, error) {
-	certs := make([][]byte, len(certMsg.certificates))
-	for i, cert := range certMsg.certificates {
-		certs[i] = cert.data
-	}
-	return hs.processCertsFromClient(certs)
+	return certs
 }
 
 func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensionsMsg) error {
@@ -842,36 +841,30 @@ func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensio
 	return nil
 }
 
-func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg) error {
-	pub := hs.c.peerCertificates[0].PublicKey
-	_, sigType, hashFunc, err := pickSignatureAlgorithm(pub, []SignatureScheme{certVerify.signatureAlgorithm}, hs.hello.supportedSignatureAlgorithms, hs.c.vers)
-	if err != nil {
-		hs.c.sendAlert(alertHandshakeFailure)
-		return err
-	}
-	digest := prepareDigitallySigned(hashFunc, "TLS 1.3, server CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
-	err = verifyHandshakeSignature(sigType, pub, hashFunc, digest, certVerify.signature)
-	if err != nil {
-		hs.c.sendAlert(alertDecryptError)
-		return err
-	}
-	return nil
-}
+func verifyPeerCertificate(
+		certVerify *certificateVerifyMsg,
+		pubKey crypto.PublicKey,
+		signAlgosKnown []SignatureScheme,
+		transHash []byte,
+		contextString string) (error, alert) {
 
-// TODO: Merge with function above
-func (hs *serverHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg, pub crypto.PublicKey) error {
-	_, sigType, hashFunc, err := pickSignatureAlgorithm(pub, []SignatureScheme{certVerify.signatureAlgorithm}, supportedSignatureAlgorithms13, hs.c.vers)
+	_, sigType, hashFunc, err := pickSignatureAlgorithm(
+									pubKey,
+									[]SignatureScheme{certVerify.signatureAlgorithm},
+									signAlgosKnown,
+									VersionTLS13)
 	if err != nil {
-		hs.c.sendAlert(alertHandshakeFailure)
-		return err
+		return err, alertHandshakeFailure
 	}
-	digest := prepareDigitallySigned(hashFunc, "TLS 1.3, client CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
-	err = verifyHandshakeSignature(sigType, pub, hashFunc, digest, certVerify.signature)
+
+	digest := prepareDigitallySigned(hashFunc, contextString, transHash)
+	err = verifyHandshakeSignature(sigType, pubKey, hashFunc, digest, certVerify.signature)
+
 	if err != nil {
-		hs.c.sendAlert(alertDecryptError)
-		return err
+		return err, alertDecryptError
 	}
-	return nil
+
+	return nil, alertSuccess
 }
 
 func (hs *clientHandshakeState) getCertificate13(certReq *certificateRequestMsg13) (*Certificate, error) {
@@ -1040,7 +1033,8 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	hs.keySchedule.write(certMsg.marshal())
 	// Validate certificates.
-	if err := hs.processCertsFromServer13(certMsg); err != nil {
+	certs := getCertsFromEntries(certMsg.certificates)
+	if err := hs.processCertsFromServer(certs); err != nil {
 		return err
 	}
 
@@ -1054,7 +1048,14 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(certVerifyMsg, msg)
 	}
-	if err = hs.verifyPeerCertificate(certVerifyMsg); err != nil {
+	err, alertCode := verifyPeerCertificate(
+						certVerifyMsg,
+						hs.c.peerCertificates[0].PublicKey,
+						hs.hello.supportedSignatureAlgorithms,
+						hs.keySchedule.transcriptHash.Sum(nil),
+						"TLS 1.3, server CertificateVerify");
+	if err != nil {
+		c.sendAlert(alertCode)
 		return err
 	}
 	hs.keySchedule.write(certVerifyMsg.marshal())
