@@ -5,6 +5,7 @@ RUN apk add --update \
     make \
     bash \
     patch \
+    rsync \
   && rm -rf /var/cache/apk/*
 
 ENV CGO_ENABLED=0
