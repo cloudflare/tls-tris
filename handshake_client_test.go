@@ -660,6 +660,8 @@ func TestHandshakeClientCertECDSA(t *testing.T) {
 	runClientTestTLS12(t, test)
 }
 
+// This test is specific to TLS versions which support session tickets (TLSv1.2 and below).
+// Session tickets are obsolete in TLSv1.3 (see 2.2 of TLS RFC)
 func TestClientResumption(t *testing.T) {
 	serverConfig := &Config{
 		CipherSuites: []uint16{TLS_RSA_WITH_RC4_128_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA},
@@ -679,6 +681,7 @@ func TestClientResumption(t *testing.T) {
 		ClientSessionCache: NewLRUClientSessionCache(32),
 		RootCAs:            rootCAs,
 		ServerName:         "example.golang",
+		MaxVersion:         VersionTLS12, 	// Enforce TLSv1.2
 	}
 
 	testResumeState := func(test string, didResume bool) {

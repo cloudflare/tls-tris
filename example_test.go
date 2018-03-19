@@ -71,7 +71,52 @@ yuGnBXj8ytqU0CwIPX4WecigUCAkVDNx
 	conn.Close()
 }
 
-func ExampleConfig_keyLogWriter() {
+func ExampleConfig_keyLogWriter_TLS12() {
+	// Debugging TLS applications by decrypting a network traffic capture.
+
+	// WARNING: Use of KeyLogWriter compromises security and should only be
+	// used for debugging.
+
+	// Dummy test HTTP server for the example with insecure random so output is
+	// reproducible.
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.TLS = &tls.Config{
+		Rand: zeroSource{}, // for example only; don't do this.
+		MaxVersion: tls.VersionTLS12,
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	// Typically the log would go to an open file:
+	// w, err := os.OpenFile("tls-secrets.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	w := os.Stdout
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				KeyLogWriter: w,
+
+				Rand:               zeroSource{}, // for reproducible output; don't do this.
+				InsecureSkipVerify: true,         // test server certificate is not trusted.
+			},
+		},
+	}
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		log.Fatalf("Failed to get URL: %v", err)
+	}
+	resp.Body.Close()
+
+	// The resulting file can be used with Wireshark to decrypt the TLS
+	// connection by setting (Pre)-Master-Secret log filename in SSL Protocol
+	// preferences.
+
+	// Output:
+	// CLIENT_RANDOM 0000000000000000000000000000000000000000000000000000000000000000 baca0df460a688e44ce018b025183cc2353ae01f89755ef766eedd3ecc302888ee3b3a22962e45f48c20df15a98c0e80
+}
+
+
+func ExampleConfig_keyLogWriter_TLS13() {
 	// Debugging TLS applications by decrypting a network traffic capture.
 
 	// WARNING: Use of KeyLogWriter compromises security and should only be
@@ -111,5 +156,8 @@ func ExampleConfig_keyLogWriter() {
 	// preferences.
 
 	// Output:
-	// CLIENT_RANDOM 0000000000000000000000000000000000000000000000000000000000000000 baca0df460a688e44ce018b025183cc2353ae01f89755ef766eedd3ecc302888ee3b3a22962e45f48c20df15a98c0e80
+	// CLIENT_HANDSHAKE_TRAFFIC_SECRET 0000000000000000000000000000000000000000000000000000000000000000 dd81138732f799edb6fbc3d99132544d7f9cfa324e06a870f54dcf7ae514f07a
+	// SERVER_HANDSHAKE_TRAFFIC_SECRET 0000000000000000000000000000000000000000000000000000000000000000 7ded606632ac89e595f01a52228afe8e8f8833396ececf4e6e2196acda4a4eec
+	// SERVER_TRAFFIC_SECRET_0 0000000000000000000000000000000000000000000000000000000000000000 53f0129133343e630d989c0c8a30ca217d754f33e85787f07c06ebcfd3d333cb
+	// CLIENT_TRAFFIC_SECRET_0 0000000000000000000000000000000000000000000000000000000000000000 c388383316a48082800ca08f8b8348fbb9039bda7569d51a93b397c83044344e
 }
