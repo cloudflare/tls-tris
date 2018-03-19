@@ -390,6 +390,8 @@ func TestSCTHandshake(t *testing.T) {
 			PrivateKey:                  testRSAPrivateKey,
 			SignedCertificateTimestamps: expected,
 		}},
+		// See GH#76
+		MaxVersion: VersionTLS12,
 	}
 	clientConfig := &Config{
 		InsecureSkipVerify: true,

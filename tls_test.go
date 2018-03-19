@@ -356,7 +356,11 @@ func TestVerifyHostname(t *testing.T) {
 func TestVerifyHostnameResumed(t *testing.T) {
 	config := &Config{
 		ClientSessionCache: NewLRUClientSessionCache(32),
+		// There is no "New ticket" sent in case TLS v1.3 is advertised.
+		// Hence forcing TLSv12
+		MaxVersion: VersionTLS12,
 	}
+
 	for i := 0; i < 2; i++ {
 		c, err := Dial("tcp", "www.google.com:https", config)
 		if err != nil {
