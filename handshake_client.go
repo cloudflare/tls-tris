@@ -444,34 +444,26 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 	}
 
-	msg, err = c.readHandshake()
-	if err != nil {
-		return err
-	}
-
-	cs, ok := msg.(*certificateStatusMsg)
-	if ok {
-		// RFC4366 on Certificate Status Request:
-		// The server MAY return a "certificate_status" message.
-
-		if !hs.serverHello.ocspStapling {
-			// If a server returns a "CertificateStatus" message, then the
-			// server MUST have included an extension of type "status_request"
-			// with empty "extension_data" in the extended server hello.
-
+	if hs.serverHello.ocspStapling {
+		msg, err = c.readHandshake()
+		if err != nil {
+			return err
+		}
+		cs, ok := msg.(*certificateStatusMsg)
+		if !ok {
 			c.sendAlert(alertUnexpectedMessage)
-			return errors.New("tls: received unexpected CertificateStatus message")
+			return unexpectedMessageError(cs, msg)
 		}
 		hs.finishedHash.Write(cs.marshal())
 
 		if cs.statusType == statusTypeOCSP {
 			c.ocspResponse = cs.response
 		}
+	}
 
-		msg, err = c.readHandshake()
-		if err != nil {
-			return err
-		}
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
 	}
 
 	keyAgreement := hs.suite.ka(c.vers)
