@@ -20,47 +20,77 @@ tls-tris shouldn't be used as an external package.  It is also impossible to ven
 as `crypto/tls` because stdlib packages would import the standard one and mismatch.
 
 So, to build with tls-tris, you need to use a custom GOROOT.
+
 A script is provided that will take care of it for you: `./_dev/go.sh`.
 Just use that instead of the `go` tool.
 
-The script also transparently fetches the custom Cloudflare Go 1.9 compiler with the required backports.
+The script also transparently fetches the custom Cloudflare Go 1.10 compiler with the required backports.
+
+## Development
+
+### Dependencies
+
+Copy paste line bellow to install all required dependencies:
+
+* ArchLinux:
+```
+pacman -S go docker gcc git make patch python2 python-docker rsync
+```
+
+* Debian:
+```
+apt-get install build-essential docker go patch python python-pip rsync
+pip install setuptools
+pip install docker
+```
+
+Similar dependencies can be found on any UNIX based system/distribution.
+
+### Building
+
+There are number of things that need to be setup before running tests. Most important step is to copy ``go env GOROOT`` directory to ``_dev`` and swap TLS implementation and recompile GO. Then for testing we use go implementation from ``_dev/GOROOT``.
 
 ```
-./_dev/go.sh build ./_dev/tris-localserver
-TLSDEBUG=error ./tris-localserver -b 127.0.0.1:4443
+make -f _dev/Makefile build-all
 ```
 
-## Debugging
+### Testing
+
+We run 3 kinds of test:.
+
+* Unit testing: <br/>``make -f _dev/Makefile test-unit``
+* Testing against BoringSSL test suite: <br/>``make -f _dev/Makefile test-bogo``
+* Compatibility testing (see below):<br/>``make -f _dev/Makefile test-compat``
+
+To run all the tests in one go use:
+```
+make -f _dev/Makefile test
+```
+
+### Testing interoperability with 3rd party libraries
+
+In order to ensure compatibility we are testing our implementation against BoringSSL, NSS and PicoTLS.
+
+Makefile has a specific target for testing interoperability with external libraries. Following command can be used in order to run such test:
+
+```
+make -f _dev/Makefile test-interop
+```
+
+The makefile target is just a wrapper and it executes ``_dev/interop_test_runner`` script written in python. The script implements interoperability tests using ``python unittest`` framework. 
+
+Script can be started from command line directly. For example:
+
+```
+> ./interop_test_runner -v InteropServer_NSS.test_zero_rtt
+test_zero_rtt (__main__.InteropServer_NSS) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 8.765s
+
+OK
+```
+
+### Debugging
 
 When the environment variable `TLSDEBUG` is set to `error`, Tris will print a hexdump of the Client Hello and a stack trace if an handshake error occurs. If the value is `short`, only the error and the first meaningful stack frame are printed.
-
-## Building Caddy
-
-```
-./_dev/go.sh build github.com/mholt/caddy
-```
-
-*Note: to get Caddy to use TLS 1.3 you'll have to apply the patch at `_dev/caddy/caddy.patch`.*
-
-## Testing with BoringSSL/NSS/Mint/...
-
-```
-./_dev/tris-localserver/start.sh --rm
-```
-
-```
-docker build -t tls-tris:boring _dev/boring
-docker run -i --rm tls-tris:boring $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
-```
-
-```
-docker build -t tls-tris:tstclnt _dev/tstclnt
-docker run -i --rm tls-tris:tstclnt $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
-```
-
-```
-docker build -t tls-tris:mint _dev/mint
-docker run -i --rm tls-tris:mint $(docker inspect -f '{{ .NetworkSettings.IPAddress }}' tris-localserver):443
-```
-
-To build a specific revision, use `--build-arg REVISION=abcdef1234`.

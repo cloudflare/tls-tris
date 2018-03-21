@@ -8,39 +8,15 @@ go:
   - 1.10.x
 
 env:
-  # CLIAUTH is used for client authentication testing. If string contains letter:
-  # - "C" - tris client will be tested against $SERVER
-  # - "S" - tris server will be tested against $CLIENT
-  # - none of them, client authentication is not tested
-  - MODE=interop CLIENT=boring SERVER=boring CLIAUTH=NONE   # Without client authentication
-  - MODE=interop CLIENT=boring SERVER=boring CLIAUTH=SC     # Client authentication
-  - MODE=interop CLIENT=tstclnt SERVER=tstclnt
-  - MODE=interop CLIENT=picotls ZRTT=1
-# - MODE=interop CLIENT=mint    # does not support draft 22
-  - MODE=bogo
-  - MODE=gotest
-  - MODE=interop CLIENT=tstclnt ZRTT=1
-  - MODE=interop CLIENT=boring REVISION=origin/master
-  - MODE=interop CLIENT=tstclnt REVISION=default ZRTT=1
+  - TEST_SUITE=test-unit
+  - TEST_SUITE=test-bogo
+  - TEST_SUITE=test-interop
 
 matrix:
   fast_finish: true
-  allow_failures:
-    - env: MODE=interop CLIENT=boring REVISION=origin/master
-    - env: MODE=interop CLIENT=tstclnt REVISION=default ZRTT=1
 
 install:
-  - if [ "$MODE" = "interop" ]; then ./_dev/tris-localserver/start.sh -d && docker ps -a; fi
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh INSTALL $CLIENT $REVISION; fi
-  - if [ -n "$SERVER" -a "$CLIENT" != "$SERVER" ]; then ./_dev/interop.sh INSTALL $SERVER $REVISION; fi
-  - if [ -n "$SERVER" ]; then ./_dev/interop.sh INSTALL-CLIENT; fi
+  - sudo pip install docker
 
 script:
-  - if [ "$MODE" = "interop" ]; then ./_dev/interop.sh RUN $CLIENT $CLIAUTH; fi
-  - if [ "$MODE" = "interop" ] && [ "$ZRTT" = "1" ]; then ./_dev/interop.sh 0-RTT $CLIENT; fi
-  - if [ -n "$SERVER" ]; then ./_dev/interop.sh RUN-CLIENT $SERVER $CLIAUTH; fi
-  - if [ "$MODE" = "gotest" ]; then ./_dev/go.sh test -race crypto/tls; fi
-  - if [ "$MODE" = "bogo" ]; then ./_dev/bogo.sh; fi
-
-after_script:
-  - if [ "$MODE" = "interop" ]; then docker ps -a; docker logs tris-localserver; fi
+  - make -f _dev/Makefile build-all && make -f _dev/Makefile "$TEST_SUITE"
