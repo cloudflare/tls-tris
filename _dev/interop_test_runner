@@ -1,0 +1,243 @@
+#!/usr/bin/env python2
+
+import docker
+import unittest
+import re
+import time
+
+# Regex patterns used for testing
+
+# Checks if TLS 1.3 was negotiated
+RE_PATTERN_HELLO_TLS_13_NORESUME = "^.*Hello TLS 1.3 \(draft .*\) _o/$|^.*Hello TLS 1.3 _o/$"
+# Checks if TLS 1.3 was resumed
+RE_PATTERN_HELLO_TLS_13_RESUME   = "Hello TLS 1.3 \(draft .*\) \[resumed\] _o/"
+# Checks if 0-RTT was used and NOT confirmed
+RE_PATTERN_HELLO_0RTT            = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o/$"
+# Checks if 0-RTT was used and confirmed
+RE_PATTERN_HELLO_0RTT_CONFIRMED  = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
+
+class Docker(object):
+    ''' Utility class used for starting/stoping servers and clients during tests'''
+    def __init__(self):
+        self.d = docker.from_env()
+
+    def get_ip(self, server):
+        tris_localserver_container = self.d.containers.get(server)
+        return tris_localserver_container.attrs['NetworkSettings']['IPAddress']
+
+    def run_client(self, image_name, cmd):
+        ''' Runs client and returns tuple (status_code, logs) '''
+        c = self.d.containers.create(image=image_name, command=cmd)
+        c.start()
+        res = c.wait()
+        ret = c.logs()
+        c.remove()
+        return (res['StatusCode'], ret)
+
+    def run_server(self, image_name, cmd=None, ports=None, entrypoint=None):
+        ''' Starts server and returns docker container '''
+        c = self.d.containers.create(image=image_name, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
+        c.start()
+        # TODO: maybe can be done better?
+        time.sleep(3)
+        return c
+
+class RegexSelfTest(unittest.TestCase):
+    ''' Ensures that those regexe's actually work '''
+
+    LINE_HELLO_TLS      ="\nsomestuff\nHello TLS 1.3 _o/\nsomestuff"
+    LINE_HELLO_DRAFT_TLS="\nsomestuff\nHello TLS 1.3 (draft 22) _o/\nsomestuff"
+
+    LINE_HELLO_RESUMED  ="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] _o/\nsomestuff"
+    LINE_HELLO_MIXED    ="\nsomestuff\nHello TLS 1.3 (draft 22) _o/\nHello TLS 1.3 (draft 22) [resumed] _o/\nsomestuff"
+    LINE_HELLO_TLS_12   ="\nsomestuff\nHello TLS 1.2 (draft 22) [resumed] _o/\nsomestuff"
+    LINE_HELLO_TLS_13_0RTT="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] [0-RTT] _o/\nsomestuff"
+    LINE_HELLO_TLS_13_0RTT_CONFIRMED="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] [0-RTT confirmed] _o/\nsomestuff"
+
+    def test_regexes(self):
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, RegexSelfTest.LINE_HELLO_TLS, re.MULTILINE))
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, RegexSelfTest.LINE_HELLO_DRAFT_TLS, re.MULTILINE))
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, RegexSelfTest.LINE_HELLO_RESUMED, re.MULTILINE))
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_0RTT, RegexSelfTest.LINE_HELLO_TLS_13_0RTT, re.MULTILINE))
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_0RTT_CONFIRMED, RegexSelfTest.LINE_HELLO_TLS_13_0RTT_CONFIRMED, re.MULTILINE))
+
+        # negative cases
+
+        # expects 1.3, but 1.2 received
+        self.assertIsNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, RegexSelfTest.LINE_HELLO_TLS_12, re.MULTILINE))
+        # expects 0-RTT
+        self.assertIsNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, RegexSelfTest.LINE_HELLO_TLS_13_0RTT, re.MULTILINE))
+        # expectes 0-RTT confirmed
+        self.assertIsNone(
+            re.search(RE_PATTERN_HELLO_0RTT, RegexSelfTest.LINE_HELLO_TLS_13_0RTT_CONFIRMED, re.MULTILINE))
+        # expects resume without 0-RTT
+        self.assertIsNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, RegexSelfTest.LINE_HELLO_TLS_13_0RTT, re.MULTILINE))
+
+
+class InteropServer(object):
+    ''' Instantiates TRIS as a server '''
+
+    TRIS_SERVER_NAME = "tris-localserver"
+
+    @classmethod
+    def setUpClass(self):
+        self.d = Docker()
+        self.server = self.d.run_server(self.TRIS_SERVER_NAME)
+
+    @classmethod
+    def tearDownClass(self):
+        self.server.kill()
+        self.server.remove()
+
+    @property
+    def server_ip(self):
+        return self.d.get_ip(self.server.name)
+
+# Mixins for testing server functionality
+
+class ServerNominalMixin(object):
+    ''' Nominal tests for TLS 1.3 - client tries to perform handshake with server '''
+    def test_rsa(self):
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":"+'1443')
+        self.assertTrue(res[0] == 0)
+        # Check there was TLS hello without resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
+        # Check there was TLS hello with resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
+
+    def test_ecdsa(self):
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":"+'2443')
+        self.assertTrue(res[0] == 0)
+        # Check there was TLS hello without resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
+        # Check there was TLS hello with resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
+
+class ServerClientAuthMixin(object):
+    ''' Client authentication testing '''
+    def test_client_auth(self):
+        args = ''.join([self.server_ip+':6443',' -key client_rsa.key -cert client_rsa.crt -debug'])
+        res = self.d.run_client(self.CLIENT_NAME, args)
+        self.assertEqual(res[0], 0)
+        # Check there was TLS hello without resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
+        # Check there was TLS hello with resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
+
+class ClientNominalMixin(object):
+
+    def test_rsa(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false '+self.server_ip+":2443")
+        self.assertEqual(res[0], 0)
+
+    def test_ecdsa(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-ecdsa=false '+self.server_ip+":1443")
+        self.assertEqual(res[0], 0)
+
+class ClientClientAuthMixin(object):
+    ''' Client authentication testing - tris on client side '''
+
+    def test_client_auth(self):
+        res = self.d.run_client('tris-testclient', '-rsa=false -cliauth '+self.server_ip+":6443")
+        self.assertTrue(res[0] == 0)
+
+class ServerZeroRttMixin(object):
+    ''' Zero RTT testing '''
+
+    def test_zero_rtt(self):
+        # rejecting 0-RTT
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":3443")
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
+        self.assertIsNone(
+            re.search(RE_PATTERN_HELLO_0RTT, res[1], re.MULTILINE))
+
+        # accepting 0-RTT
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":4443")
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_0RTT, res[1], re.MULTILINE))
+
+        # confirming 0-RTT
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":5443")
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_0RTT_CONFIRMED, res[1], re.MULTILINE))
+
+class InteropClient(object):
+    ''' Instantiates TRIS as a client '''
+
+    CLIENT_NAME = "tris-testclient"
+
+    @classmethod
+    def setUpClass(self):
+        self.d = Docker()
+        self.server = self.d.run_server(
+                            self.SERVER_NAME,
+                            ports={'1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443},
+                            entrypoint="/server.sh")
+
+    @classmethod
+    def tearDownClass(self):
+        self.server.kill()
+        self.server.remove()
+
+    @property
+    def server_ip(self):
+        return self.d.get_ip(self.server.name)
+
+# Actual test definition
+
+# TRIS as a server
+class InteropServer_BoringSSL(
+        InteropServer,
+        ServerNominalMixin,
+        ServerClientAuthMixin,
+        unittest.TestCase
+    ): CLIENT_NAME = "tls-tris:boring"
+
+class InteropServer_PicoTLS(
+        InteropServer,
+        ServerNominalMixin,
+        ServerZeroRttMixin,
+        unittest.TestCase
+    ): CLIENT_NAME = "tls-tris:picotls"
+
+class InteropServer_NSS(
+        InteropServer,
+        ServerNominalMixin,
+        ServerZeroRttMixin,
+        unittest.TestCase
+    ): CLIENT_NAME = "tls-tris:tstclnt"
+
+# TRIS as a client
+class InteropClient_BoringSSL(
+        InteropClient,
+        ClientNominalMixin,
+        ClientClientAuthMixin,
+        unittest.TestCase
+    ): SERVER_NAME = "boring-localserver"
+
+class InteropClient_NSS(
+        InteropClient,
+        ClientNominalMixin,
+        unittest.TestCase
+    ): SERVER_NAME = "tstclnt-localserver"
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 
+# THIS FILE IS ONLY USED BY _dev/bogo. It will be removed in future
 set -e
 
 BASEDIR=$(cd "$(dirname "$0")" && pwd)

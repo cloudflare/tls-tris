@@ -7,6 +7,7 @@ BUILD_DIR   ?= $(PRJ_DIR)/_dev/GOROOT
 
 # Compiler
 GO ?= go
+DOCKER ?= docker
 
 # Build environment
 OS          ?= $(shell $(GO) env GOHOSTOS)
@@ -18,12 +19,18 @@ GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
 # Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
 INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
 
-# TODO: I'm not sure why we would remove it at the end
-#       but I comment this code as tls.a is exactly what
-#       I try to build here
-#GOROOT: GOROOT/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
-#	rm -f GOROOT/$(OS_ARCH)/pkg/*/crypto/tls.a
+# Test targets used for compatibility testing
+TARGET_TEST_COMPAT=boring picotls tstclnt
 
+# Some target-specific constants
+BORINGSSL_REVISION=1530ef3e
+BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
+
+###############
+#
+# Build targets
+#
+##############################
 $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Create clean directory structure
@@ -36,7 +43,7 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Swap TLS implementation
 	rm -r $(GOROOT_LOCAL)/src/crypto/tls/*
-	rsync -a $(PRJ_DIR)/ $(GOROOT_LOCAL)/src/crypto/tls/ --exclude=$(lastword $(subst /, ,$(DEV_DIR)))
+	rsync -rltgoD $(PRJ_DIR)/ $(GOROOT_LOCAL)/src/crypto/tls/ --exclude=$(lastword $(subst /, ,$(DEV_DIR)))
 
 # Apply additional patches
 	for p in $(wildcard $(DEV_DIR)/patches/*); do patch -d "$(GOROOT_LOCAL)" -p1 < "$$p"; done
@@ -48,11 +55,62 @@ ifeq ($(INSTALL_RACE),1)
 endif
 	@touch "$@"
 
+build-test-%: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	$(DOCKER) build $(BUILDARG) -t tls-tris:$* $(DEV_DIR)/$*
+	$(DOCKER) build $(BUILDARG) -t $(*)-localserver $(DEV_DIR)/$*
+
+build-all: \
+	build-test-tris-client \
+	build-test-tris-server \
+	build-test-bogo \
+	$(addprefix build-test-,$(TARGET_TEST_COMPAT))
+
+# Builds TRIS client
+build-test-tris-client: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	cd $(DEV_DIR)/tris-testclient; CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build -v -i .
+	$(DOCKER) build -t tris-testclient $(DEV_DIR)/tris-testclient
+
+# Builds TRIS server
+build-test-tris-server: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	cd $(DEV_DIR)/tris-localserver; CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build -v -i .
+	$(DOCKER) build -t tris-localserver $(DEV_DIR)/tris-localserver
+
+# BoringSSL specific stuff
+build-test-boring: 	BUILDARG=--build-arg REVISION=$(BORINGSSL_REVISION)
+
+# TODO: This probably doesn't work
+build-caddy: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build github.com/mholt/caddy
+
+###############
+#
+# Test targets
+#
+##############################
+test: \
+	test-unit \
+	test-bogo \
+	test-interop
+
+test-unit: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	GOROOT="$(GOROOT_LOCAL)" $(GO) test -race crypto/tls
+
+test-bogo:
+	$(DOCKER) run --rm -v $(PRJ_DIR):$(BOGO_DOCKER_TRIS_LOCATION) tls-tris:bogo
+
+test-interop:
+	$(DEV_DIR)/interop_test_runner -v
+
+###############
+#
+# Utils
+#
+##############################
 clean:
 	rm -rf $(BUILD_DIR)/$(OS_ARCH)
 
-clean-all:
+clean-all: clean
 	rm -rf $(BUILD_DIR)
 
-# PHONY targets
-.PHONY: $(BUILD_DIR) clean
+
+.PHONY: $(BUILD_DIR) clean build build-test test test-unit test-bogo test-compat
