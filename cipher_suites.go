@@ -387,7 +387,7 @@ func mutualCipherSuite(have []uint16, want uint16) *cipherSuite {
 // A list of cipher suite IDs that are, or have been, implemented by this
 // package.
 //
-// Taken from https://www.iana.org/assignments/tls-parameters/tls-parameters.xml
+// Taken from http://www.iana.org/assignments/tls-parameters/tls-parameters.xml
 const (
 	// TLS 1.0 - 1.2 cipher suites.
 	TLS_RSA_WITH_RC4_128_SHA                uint16 = 0x0005

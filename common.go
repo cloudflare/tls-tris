@@ -108,7 +108,7 @@ const (
 )
 
 // CurveID is the type of a TLS identifier for an elliptic curve. See
-// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
+// http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-8
 //
 // TLS 1.3 refers to these as Groups, but this library implements only
 // curve-based ones anyway. See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.4.
@@ -138,7 +138,7 @@ type psk struct {
 }
 
 // TLS Elliptic Curve Point Formats
-// https://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
+// http://www.iana.org/assignments/tls-parameters/tls-parameters.xml#tls-parameters-9
 const (
 	pointFormatUncompressed uint8 = 0
 )
