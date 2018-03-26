@@ -1152,8 +1152,12 @@ func (c *Conn) readHandshake() (interface{}, error) {
 			m = new(certificateMsg)
 		}
 	case typeCertificateRequest:
-		m = &certificateRequestMsg{
-			hasSignatureAndHash: c.vers >= VersionTLS12,
+		if c.vers >= VersionTLS13 {
+			m = new(certificateRequestMsg13)
+		} else {
+			m = &certificateRequestMsg{
+				hasSignatureAndHash: c.vers >= VersionTLS12,
+			}
 		}
 	case typeCertificateStatus:
 		m = new(certificateStatusMsg)
