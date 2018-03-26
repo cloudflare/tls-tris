@@ -792,6 +792,87 @@ func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVer
 	return nil
 }
 
+func (hs *clientHandshakeState) getCertificate13(certReq *certificateRequestMsg13) (*Certificate, error) {
+	certReq12 := &certificateRequestMsg{
+		hasSignatureAndHash:          true,
+		supportedSignatureAlgorithms: certReq.supportedSignatureAlgorithms,
+		certificateAuthorities:       certReq.certificateAuthorities,
+	}
+
+	var rsaAvail, ecdsaAvail bool
+	for _, sigAlg := range certReq.supportedSignatureAlgorithms {
+		switch signatureFromSignatureScheme(sigAlg) {
+		case signaturePKCS1v15, signatureRSAPSS:
+			rsaAvail = true
+		case signatureECDSA:
+			ecdsaAvail = true
+		}
+	}
+	if rsaAvail {
+		certReq12.certificateTypes = append(certReq12.certificateTypes, certTypeRSASign)
+	}
+	if ecdsaAvail {
+		certReq12.certificateTypes = append(certReq12.certificateTypes, certTypeECDSASign)
+	}
+
+	return hs.getCertificate(certReq12)
+}
+
+func (hs *clientHandshakeState) sendCertificate13(chainToSend *Certificate, certReq *certificateRequestMsg13) error {
+	c := hs.c
+
+	certEntries := []certificateEntry{}
+	for _, cert := range chainToSend.Certificate {
+		certEntries = append(certEntries, certificateEntry{data: cert})
+	}
+	certMsg := &certificateMsg13{certificates: certEntries}
+
+	hs.keySchedule.write(certMsg.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, certMsg.marshal()); err != nil {
+		return err
+	}
+
+	if len(certEntries) == 0 {
+		// No client cert available, nothing to sign.
+		return nil
+	}
+
+	key, ok := chainToSend.PrivateKey.(crypto.Signer)
+	if !ok {
+		c.sendAlert(alertInternalError)
+		return fmt.Errorf("tls: client certificate private key of type %T does not implement crypto.Signer", chainToSend.PrivateKey)
+	}
+
+	signatureAlgorithm, sigType, hashFunc, err := pickSignatureAlgorithm(key.Public(), certReq.supportedSignatureAlgorithms, hs.hello.supportedSignatureAlgorithms, c.vers)
+	if err != nil {
+		hs.c.sendAlert(alertHandshakeFailure)
+		return err
+	}
+
+	digest := prepareDigitallySigned(hashFunc, "TLS 1.3, client CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
+	signOpts := crypto.SignerOpts(hashFunc)
+	if sigType == signatureRSAPSS {
+		signOpts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: hashFunc}
+	}
+	signature, err := key.Sign(c.config.rand(), digest, signOpts)
+	if err != nil {
+		c.sendAlert(alertInternalError)
+		return err
+	}
+
+	verifyMsg := &certificateVerifyMsg{
+		hasSignatureAndHash: true,
+		signatureAlgorithm:  signatureAlgorithm,
+		signature:           signature,
+	}
+	hs.keySchedule.write(verifyMsg.marshal())
+	if _, err := c.writeRecord(recordTypeHandshake, verifyMsg.marshal()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (hs *clientHandshakeState) doTLS13Handshake() error {
 	c := hs.c
 	hash := hashForSuite(hs.suite)
@@ -853,7 +934,23 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	if err != nil {
 		return err
 	}
-	// TODO handle optional CertificateRequest
+
+	var chainToSend *Certificate
+	certReq, isCertRequested := msg.(*certificateRequestMsg13)
+	if isCertRequested {
+		hs.keySchedule.write(certReq.marshal())
+
+		if chainToSend, err = hs.getCertificate13(certReq); err != nil {
+			c.sendAlert(alertInternalError)
+			return err
+		}
+
+		msg, err = c.readHandshake()
+		if err != nil {
+			return err
+		}
+	}
+
 	certMsg, ok := msg.(*certificateMsg13)
 	if !ok {
 		c.sendAlert(alertUnexpectedMessage)
@@ -898,10 +995,21 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	hs.keySchedule.write(serverFinished.marshal())
 
-	// Server has authenticated itself, change our cipher.
+	// Server has authenticated itself. Calculate application traffic secrets.
+	hs.keySchedule.setSecret(nil) // derive master secret
+	appServerCipher, _ := hs.keySchedule.prepareCipher(secretApplicationServer)
+	appClientCipher, _ := hs.keySchedule.prepareCipher(secretApplicationClient)
+
+	// Change outbound handshake cipher for final step
 	c.out.setCipher(c.vers, clientCipher)
 
-	// TODO optionally send a client cert
+	// Client auth requires sending a (possibly empty) Certificate followed
+	// by a CertificateVerify message (if there was an actual certificate).
+	if isCertRequested {
+		if err := hs.sendCertificate13(chainToSend, certReq); err != nil {
+			return err
+		}
+	}
 
 	// Send Finished
 	verifyData := hmacOfSum(hash, hs.keySchedule.transcriptHash, clientFinishedKey)
@@ -912,16 +1020,14 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
-	// Calculate application traffic secrets.
-	hs.keySchedule.setSecret(nil) // derive master secret
 	// TODO store initial traffic secret key for KeyUpdate
-	clientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
-	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
-	c.out.setCipher(c.vers, clientCipher)
+
+	// Handshake done, set application traffic secret
+	c.out.setCipher(c.vers, appClientCipher)
 	if c.hand.Len() > 0 {
 		c.sendAlert(alertUnexpectedMessage)
 		return errors.New("tls: unexpected data after handshake")
 	}
-	c.in.setCipher(c.vers, serverCipher)
+	c.in.setCipher(c.vers, appServerCipher)
 	return nil
 }
