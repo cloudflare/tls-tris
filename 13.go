@@ -220,7 +220,7 @@ CurvePreferenceLoop:
 	// TODO: we should have 2 separated methods - one for full-handshake and the other for PSK-handshake
 	if !c.didResume {
 		// Server MUST NOT send CertificateRequest if authenticating with PSK
-		if (c.config.ClientAuth >= RequestClientCert) {
+		if c.config.ClientAuth >= RequestClientCert {
 
 			certReq := new(certificateRequestMsg13)
 			// extension 'signature_algorithms' MUST be specified
@@ -302,6 +302,12 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 
 	// client authentication
 	if certMsg, ok := msg.(*certificateMsg13); ok {
+
+		// (4.4.2) Client MUST send certificate msg if requested by server
+		if c.config.ClientAuth < RequestClientCert {
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(certMsg, msg)
+		}
 
 		hs.keySchedule.write(certMsg.marshal())
 		pubKey, err := hs.processCertsFromClient13(certMsg)
@@ -1075,6 +1081,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	hs.keySchedule.setSecret(nil) // derive master secret
 	appServerCipher, _ := hs.keySchedule.prepareCipher(secretApplicationServer)
 	appClientCipher, _ := hs.keySchedule.prepareCipher(secretApplicationClient)
+	// TODO store initial traffic secret key for KeyUpdate GH #85
 
 	// Change outbound handshake cipher for final step
 	c.out.setCipher(c.vers, clientCipher)
@@ -1095,8 +1102,6 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	if _, err := c.writeRecord(recordTypeHandshake, clientFinished.marshal()); err != nil {
 		return err
 	}
-
-	// TODO store initial traffic secret key for KeyUpdate
 
 	// Handshake done, set application traffic secret
 	c.out.setCipher(c.vers, appClientCipher)
