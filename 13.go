@@ -211,12 +211,26 @@ CurvePreferenceLoop:
 	serverFinishedKey := hkdfExpandLabel(hash, sTrafficSecret, nil, "finished", hashSize)
 	hs.clientFinishedKey = hkdfExpandLabel(hash, cTrafficSecret, nil, "finished", hashSize)
 
+	// EncryptedExtensions
 	hs.keySchedule.write(hs.hello13Enc.marshal())
 	if _, err := c.writeRecord(recordTypeHandshake, hs.hello13Enc.marshal()); err != nil {
 		return err
 	}
 
+	// TODO: we should have 2 separated methods - one for full-handshake and the other for PSK-handshake
 	if !c.didResume {
+		// Server MUST NOT send CertificateRequest if authenticating with PSK
+		if (c.config.ClientAuth >= RequestClientCert) {
+
+			certReq := new(certificateRequestMsg13)
+			// extension 'signature_algorithms' MUST be specified
+			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms13
+			hs.keySchedule.write(certReq.marshal())
+			if _, err := hs.c.writeRecord(recordTypeHandshake, certReq.marshal()); err != nil {
+				return err
+			}
+		}
+
 		if err := hs.sendCertificate13(); err != nil {
 			return err
 		}
@@ -284,6 +298,43 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 	msg, err := c.readHandshake()
 	if err != nil {
 		return err
+	}
+
+	// client authentication
+	if certMsg, ok := msg.(*certificateMsg13); ok {
+
+		hs.keySchedule.write(certMsg.marshal())
+		pubKey, err := hs.processCertsFromClient13(certMsg)
+		if err != nil {
+			return err
+		}
+
+		// 4.4.3: CertificateVerify MUST appear immediately after Certificate msg
+		msg, err = c.readHandshake()
+		if err != nil {
+			return err
+		}
+
+		certVerify, ok := msg.(*certificateVerifyMsg);
+		if !ok {
+			c.sendAlert(alertUnexpectedMessage)
+			return unexpectedMessageError(certVerify, msg)
+		}
+
+		if err = hs.verifyPeerCertificate(certVerify, pubKey); err != nil {
+			return err
+		}
+		hs.keySchedule.write(certVerify.marshal())
+
+		// Read next chunk
+		msg, err = c.readHandshake()
+		if err != nil {
+			return err
+		}
+
+	} else if (c.config.ClientAuth >= RequestClientCert) && !c.didResume {
+		c.sendAlert(alertCertificateRequired)
+		return unexpectedMessageError(certMsg, msg)
 	}
 
 	clientFinished, ok := msg.(*finishedMsg)
@@ -767,6 +818,15 @@ func (hs *clientHandshakeState) processCertsFromServer13(certMsg *certificateMsg
 	return hs.processCertsFromServer(certs)
 }
 
+// TODO: Merge with function above
+func (hs *serverHandshakeState) processCertsFromClient13(certMsg *certificateMsg13) (crypto.PublicKey, error) {
+	certs := make([][]byte, len(certMsg.certificates))
+	for i, cert := range certMsg.certificates {
+		certs[i] = cert.data
+	}
+	return hs.processCertsFromClient(certs)
+}
+
 func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensionsMsg) error {
 	c := hs.c
 	if ee.alpnProtocol != "" {
@@ -784,6 +844,22 @@ func (hs *clientHandshakeState) verifyPeerCertificate(certVerify *certificateVer
 		return err
 	}
 	digest := prepareDigitallySigned(hashFunc, "TLS 1.3, server CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
+	err = verifyHandshakeSignature(sigType, pub, hashFunc, digest, certVerify.signature)
+	if err != nil {
+		hs.c.sendAlert(alertDecryptError)
+		return err
+	}
+	return nil
+}
+
+// TODO: Merge with function above
+func (hs *serverHandshakeState) verifyPeerCertificate(certVerify *certificateVerifyMsg, pub crypto.PublicKey) error {
+	_, sigType, hashFunc, err := pickSignatureAlgorithm(pub, []SignatureScheme{certVerify.signatureAlgorithm}, supportedSignatureAlgorithms13, hs.c.vers)
+	if err != nil {
+		hs.c.sendAlert(alertHandshakeFailure)
+		return err
+	}
+	digest := prepareDigitallySigned(hashFunc, "TLS 1.3, client CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
 	err = verifyHandshakeSignature(sigType, pub, hashFunc, digest, certVerify.signature)
 	if err != nil {
 		hs.c.sendAlert(alertDecryptError)
