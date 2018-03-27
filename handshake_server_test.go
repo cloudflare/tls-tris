@@ -340,9 +340,11 @@ func TestVersion(t *testing.T) {
 	serverConfig := &Config{
 		Certificates: testConfig.Certificates,
 		MaxVersion:   VersionTLS11,
+		MinVersion:   VersionTLS10,
 	}
 	clientConfig := &Config{
 		InsecureSkipVerify: true,
+		MinVersion:   VersionTLS10,
 	}
 	state, _, err := testHandshake(clientConfig, serverConfig)
 	if err != nil {
@@ -358,10 +360,12 @@ func TestCipherSuitePreference(t *testing.T) {
 		CipherSuites: []uint16{TLS_RSA_WITH_RC4_128_SHA, TLS_RSA_WITH_AES_128_CBC_SHA, TLS_ECDHE_RSA_WITH_RC4_128_SHA},
 		Certificates: testConfig.Certificates,
 		MaxVersion:   VersionTLS11,
+		MinVersion:   VersionTLS10,
 	}
 	clientConfig := &Config{
 		CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_CBC_SHA, TLS_RSA_WITH_RC4_128_SHA},
 		InsecureSkipVerify: true,
+		MinVersion:   VersionTLS10,
 	}
 	state, _, err := testHandshake(clientConfig, serverConfig)
 	if err != nil {
@@ -415,12 +419,14 @@ func TestCrossVersionResume(t *testing.T) {
 	serverConfig := &Config{
 		CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 		Certificates: testConfig.Certificates,
+		MinVersion:   VersionTLS10,
 	}
 	clientConfig := &Config{
 		CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 		InsecureSkipVerify: true,
 		ClientSessionCache: NewLRUClientSessionCache(1),
 		ServerName:         "servername",
+		MinVersion:   VersionTLS10,
 	}
 
 	// Establish a session at TLS 1.1.
@@ -992,6 +998,7 @@ func TestResumptionDisabled(t *testing.T) {
 func TestFallbackSCSV(t *testing.T) {
 	serverConfig := Config{
 		Certificates: testConfig.Certificates,
+		MinVersion: VersionTLS10,
 	}
 	test := &serverTest{
 		name:   "FallbackSCSV",
