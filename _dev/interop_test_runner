@@ -141,12 +141,13 @@ class ServerClientAuthMixin(object):
 class ClientNominalMixin(object):
 
     def test_rsa(self):
-        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false '+self.server_ip+":2443")
+        res = self.d.run_client(self.CLIENT_NAME, '-ecdsa=false '+self.server_ip+":1443")
         self.assertEqual(res[0], 0)
 
     def test_ecdsa(self):
-        res = self.d.run_client(self.CLIENT_NAME, '-ecdsa=false '+self.server_ip+":1443")
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false '+self.server_ip+":2443")
         self.assertEqual(res[0], 0)
+
 
 class ClientClientAuthMixin(object):
     ''' Client authentication testing - tris on client side '''
@@ -189,7 +190,7 @@ class InteropClient(object):
         self.d = Docker()
         self.server = self.d.run_server(
                             self.SERVER_NAME,
-                            ports={'1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443},
+                            ports={ '1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443},
                             entrypoint="/server.sh")
 
     @classmethod
@@ -238,6 +239,16 @@ class InteropClient_NSS(
         ClientNominalMixin,
         unittest.TestCase
     ): SERVER_NAME = "tstclnt-localserver"
+
+# TRIS as a client
+class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
+
+    CLIENT_NAME = 'tris-testclient'
+
+    def test_client_auth(self):
+        # I need to block TLS v1.2 as test server needs some rework
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=false -cliauth '+self.server_ip+":6443")
+        self.assertEqual(res[0], 0)
 
 if __name__ == '__main__':
     unittest.main()
