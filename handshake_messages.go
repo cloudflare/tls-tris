@@ -365,8 +365,8 @@ func (m *clientHelloMsg) marshal() []byte {
 	}
 	if len(m.keyShares) > 0 {
 		// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.5
-		z[0] = byte(extensionKeyShare >> 8)
-		z[1] = byte(extensionKeyShare)
+		z[0] = byte(extensionKeyShareDraft23 >> 8)
+		z[1] = byte(extensionKeyShareDraft23)
 		lengths := z[2:]
 		z = z[6:]
 
@@ -625,7 +625,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			if length != 0 {
 				return alertDecodeError
 			}
-		case extensionKeyShare:
+		case extensionKeyShareDraft23:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.5
 			if length < 2 {
 				return alertDecodeError
@@ -978,8 +978,8 @@ func (m *serverHelloMsg) marshal() []byte {
 	}
 
 	if m.keyShare.group != 0 {
-		z[0] = uint8(extensionKeyShare >> 8)
-		z[1] = uint8(extensionKeyShare)
+		z[0] = uint8(extensionKeyShareDraft23 >> 8)
+		z[1] = uint8(extensionKeyShareDraft23)
 		l := 4 + len(m.keyShare.data)
 		z[2] = uint8(l >> 8)
 		z[3] = uint8(l)
@@ -1164,7 +1164,7 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 				m.scts = append(m.scts, d[:sctLen])
 				d = d[sctLen:]
 			}
-		case extensionKeyShare:
+		case extensionKeyShareDraft23:
 			d := data[:length]
 
 			if len(d) < 4 {
