@@ -44,6 +44,13 @@ pip install setuptools
 pip install docker
 ```
 
+* In Ubuntu (>=18.04), you'll also need to `apt install docker.io`. If docker
+  tells you don't have permission to access the daemon, try adding yourself to
+  the `docker` group via:
+  ```
+    sudo usermod -a -G docker $USER
+  ```
+
 Similar dependencies can be found on any UNIX based system/distribution.
 
 ### Building
