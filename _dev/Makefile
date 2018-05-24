@@ -37,9 +37,9 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 	mkdir -p "$(GOROOT_LOCAL)/pkg"
 
 # Copy src/tools from system GOROOT
-	cp -r $(GOROOT_ENV)/src $(GOROOT_LOCAL)/src
-	cp -r $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/include
-	cp -r $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/tool
+	cp -Hr $(GOROOT_ENV)/src $(GOROOT_LOCAL)/src
+	cp -Hr $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/include
+	cp -Hr $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/tool
 
 # Swap TLS implementation
 	rm -r $(GOROOT_LOCAL)/src/crypto/tls/*
