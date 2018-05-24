@@ -44,12 +44,14 @@ pip install setuptools
 pip install docker
 ```
 
-* In Ubuntu (>=18.04), you'll also need to `apt install docker.io`. If docker
-  tells you don't have permission to access the daemon, try adding yourself to
-  the `docker` group via:
-  ```
-    sudo usermod -a -G docker $USER
-  ```
+* Ubuntu (18.04) :
+```
+apt-get update
+apt-get install build-essential docker docker.io golang patch python python-pip rsync sudo
+pip install setuptools
+pip install docker
+sudo usermod -a -G docker $USER
+```
 
 Similar dependencies can be found on any UNIX based system/distribution.
 
@@ -58,7 +60,8 @@ Similar dependencies can be found on any UNIX based system/distribution.
 There are number of things that need to be setup before running tests. Most important step is to copy ``go env GOROOT`` directory to ``_dev`` and swap TLS implementation and recompile GO. Then for testing we use go implementation from ``_dev/GOROOT``.
 
 ```
-make -f _dev/Makefile build-all
+git clone https://github.com/cloudflare/tls-tris.git
+cd tls-tris; make -f _dev/Makefile build-all
 ```
 
 ### Testing
