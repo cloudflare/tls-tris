@@ -322,18 +322,18 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 			return err
 		}
 
-		certVerify, ok := msg.(*certificateVerifyMsg);
+		certVerify, ok := msg.(*certificateVerifyMsg)
 		if !ok {
 			c.sendAlert(alertUnexpectedMessage)
 			return unexpectedMessageError(certVerify, msg)
 		}
 
 		err, alertCode := verifyPeerCertificate(
-							certVerify,
-							pubKey,
-							supportedSignatureAlgorithms13,
-							hs.keySchedule.transcriptHash.Sum(nil),
-							"TLS 1.3, client CertificateVerify");
+			certVerify,
+			pubKey,
+			supportedSignatureAlgorithms13,
+			hs.keySchedule.transcriptHash.Sum(nil),
+			"TLS 1.3, client CertificateVerify")
 		if err != nil {
 			c.sendAlert(alertCode)
 			return err
@@ -824,7 +824,7 @@ func (hs *serverHandshakeState) traceErr(err error) {
 	}
 }
 
-func getCertsFromEntries(certEntries []certificateEntry) ([][]byte) {
+func getCertsFromEntries(certEntries []certificateEntry) [][]byte {
 	certs := make([][]byte, len(certEntries))
 	for i, cert := range certEntries {
 		certs[i] = cert.data
@@ -842,17 +842,17 @@ func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensio
 }
 
 func verifyPeerCertificate(
-		certVerify *certificateVerifyMsg,
-		pubKey crypto.PublicKey,
-		signAlgosKnown []SignatureScheme,
-		transHash []byte,
-		contextString string) (error, alert) {
+	certVerify *certificateVerifyMsg,
+	pubKey crypto.PublicKey,
+	signAlgosKnown []SignatureScheme,
+	transHash []byte,
+	contextString string) (error, alert) {
 
 	_, sigType, hashFunc, err := pickSignatureAlgorithm(
-									pubKey,
-									[]SignatureScheme{certVerify.signatureAlgorithm},
-									signAlgosKnown,
-									VersionTLS13)
+		pubKey,
+		[]SignatureScheme{certVerify.signatureAlgorithm},
+		signAlgosKnown,
+		VersionTLS13)
 	if err != nil {
 		return err, alertHandshakeFailure
 	}
@@ -1049,11 +1049,11 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return unexpectedMessageError(certVerifyMsg, msg)
 	}
 	err, alertCode := verifyPeerCertificate(
-						certVerifyMsg,
-						hs.c.peerCertificates[0].PublicKey,
-						hs.hello.supportedSignatureAlgorithms,
-						hs.keySchedule.transcriptHash.Sum(nil),
-						"TLS 1.3, server CertificateVerify");
+		certVerifyMsg,
+		hs.c.peerCertificates[0].PublicKey,
+		hs.hello.supportedSignatureAlgorithms,
+		hs.keySchedule.transcriptHash.Sum(nil),
+		"TLS 1.3, server CertificateVerify")
 	if err != nil {
 		c.sendAlert(alertCode)
 		return err
