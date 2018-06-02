@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// ProtocolVersion identifies which protocol to use.
+type Version uint16
+
 const (
 	VersionSSL30        = 0x0300
 	VersionTLS10        = 0x0301
@@ -95,6 +98,7 @@ const (
 	extensionCAs                 uint16 = 47
 	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo   uint16 = 0xff01
+	extensionDelegatedCredential uint16 = 0xff90 // not IANA assigned
 )
 
 // TLS signaling cipher suite values
