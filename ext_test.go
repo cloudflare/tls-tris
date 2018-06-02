@@ -10,11 +10,11 @@ import (
 )
 
 // Test that the values computed in a handshake using a delegated credential
-// match the vauless in a handshake in which the corresponding signing key is
+// match the values in a handshake in which the corresponding signing key is
 // used as the server's signing key.
 //
 // TODO(cjpatton)
 func TestHandshakeWithDelegatedCredentials(t *testing.T) {
 	_ = &delegated.DelegatedCredential{}
-	t.Skip("delegated_credentials is not implemented")
+	t.Skip("delegated_credential is not implemented")
 }
