@@ -2,13 +2,23 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package dc
+package delegated_credentials
 
 import (
 	"crypto"
-	"crypto/tls"
 	"crypto/x509"
 )
+
+// SignatureScheme identifies a signing algorithm as specified in the TLS 1.3
+// standard.
+//
+// Note that this must have the same type as SignatureScheme in the crypto/tls
+// package.
+type SignatureScheme uint16
+
+// Version identifies the protocol version as specified in the the TLS
+// standards.
+type Version uint16
 
 const MaximumTTL = 604800 // Seconds (7 days)
 
@@ -48,7 +58,7 @@ type Delegator struct {
 	privateKey crypto.PrivateKey
 
 	// The signing algorithm corresponding to privateKey.
-	Scheme tls.SignatureScheme
+	Scheme SignatureScheme
 
 	// The certificate chain of the delegator.
 	//
@@ -62,15 +72,15 @@ type Delegator struct {
 // TODO(cjpatton)
 func (del *Delegator) Delegate(
 	cred *Credential,
-	version tls.Version) (*DelegatedCredential, error) {
+	version Version) (*DelegatedCredential, error) {
 	return nil, nil
 }
 
 // DelegatedCredential is a Credential structure signed in a given context.
 type DelegatedCredential struct {
-	Cred      Credential          // The credential
-	Scheme    tls.SignatureScheme // The algorithm used to sign the credential
-	Signature []byte              // The signature
+	Cred      Credential      // The credential
+	Scheme    SignatureScheme // The algorithm used to sign the credential
+	Signature []byte          // The signature
 }
 
 // Verify checks that that the signature was signed by the delegator in
@@ -81,7 +91,7 @@ type DelegatedCredential struct {
 func (dc *DelegatedCredential) Verify(
 	delegatorCert *x509.Certificate,
 	currentTime uint64,
-	version tls.Version) bool {
+	version Version) bool {
 	return false
 }
 

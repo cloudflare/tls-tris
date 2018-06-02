@@ -21,9 +21,6 @@ import (
 	"time"
 )
 
-// ProtocolVersion identifies which protocol to use.
-type Version uint16
-
 const (
 	VersionSSL30        = 0x0300
 	VersionTLS10        = 0x0301
