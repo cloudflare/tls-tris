@@ -5,7 +5,7 @@
 package tls
 
 import (
-	delegated "crypto/tls/ext/delegated_credentials"
+	delegated "crypto/tls/ext/delegated_credential"
 	"testing"
 )
 
