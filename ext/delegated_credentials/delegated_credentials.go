@@ -84,12 +84,12 @@ type DelegatedCredential struct {
 }
 
 // Verify checks that that the signature was signed by the delegator in
-// possession of the secret key asoociated with delegatorCert. It also checks
+// possession of the secret key asoociated with cert. It also checks
 // that the credential hasn't expired, and that it's TTL is less than 7 days.
 //
 // TODO(cjpatton)
 func (dc *DelegatedCredential) Verify(
-	delegatorCert *x509.Certificate,
+	cert *x509.Certificate,
 	currentTime uint64,
 	version Version) bool {
 	return false
