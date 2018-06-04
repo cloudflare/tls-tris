@@ -10,6 +10,7 @@ import (
 	"crypto/internal/cipherhw"
 	"crypto/rand"
 	"crypto/sha512"
+	"crypto/tls/constants"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -22,14 +23,14 @@ import (
 )
 
 const (
-	VersionSSL30        = 0x0300
-	VersionTLS10        = 0x0301
-	VersionTLS11        = 0x0302
-	VersionTLS12        = 0x0303
-	VersionTLS13        = 0x0304
-	VersionTLS13Draft18 = 0x7f00 | 18
-	VersionTLS13Draft21 = 0x7f00 | 21
-	VersionTLS13Draft22 = 0x7f00 | 22
+	VersionSSL30        = constants.VersionSSL30
+	VersionTLS10        = constants.VersionTLS10
+	VersionTLS11        = constants.VersionTLS11
+	VersionTLS12        = constants.VersionTLS12
+	VersionTLS13        = constants.VersionTLS13
+	VersionTLS13Draft18 = constants.VersionTLS13Draft18
+	VersionTLS13Draft21 = constants.VersionTLS13Draft21
+	VersionTLS13Draft22 = constants.VersionTLS13Draft22
 )
 
 const (
@@ -280,21 +281,21 @@ type ClientSessionCache interface {
 type SignatureScheme uint16
 
 const (
-	PKCS1WithSHA1   SignatureScheme = 0x0201
-	PKCS1WithSHA256 SignatureScheme = 0x0401
-	PKCS1WithSHA384 SignatureScheme = 0x0501
-	PKCS1WithSHA512 SignatureScheme = 0x0601
+	PKCS1WithSHA1   SignatureScheme = constants.PKCS1WithSHA1
+	PKCS1WithSHA256 SignatureScheme = constants.PKCS1WithSHA256
+	PKCS1WithSHA384 SignatureScheme = constants.PKCS1WithSHA384
+	PKCS1WithSHA512 SignatureScheme = constants.PKCS1WithSHA512
 
-	PSSWithSHA256 SignatureScheme = 0x0804
-	PSSWithSHA384 SignatureScheme = 0x0805
-	PSSWithSHA512 SignatureScheme = 0x0806
+	PSSWithSHA256 SignatureScheme = constants.PSSWithSHA256
+	PSSWithSHA384 SignatureScheme = constants.PSSWithSHA384
+	PSSWithSHA512 SignatureScheme = constants.PSSWithSHA512
 
-	ECDSAWithP256AndSHA256 SignatureScheme = 0x0403
-	ECDSAWithP384AndSHA384 SignatureScheme = 0x0503
-	ECDSAWithP521AndSHA512 SignatureScheme = 0x0603
+	ECDSAWithP256AndSHA256 SignatureScheme = constants.ECDSAWithP256AndSHA256
+	ECDSAWithP384AndSHA384 SignatureScheme = constants.ECDSAWithP384AndSHA384
+	ECDSAWithP521AndSHA512 SignatureScheme = constants.ECDSAWithP521AndSHA512
 
 	// Legacy signature and hash algorithms for TLS 1.2.
-	ECDSAWithSHA1 SignatureScheme = 0x0203
+	ECDSAWithSHA1 SignatureScheme = constants.ECDSAWithSHA1
 )
 
 // ClientHelloInfo contains information from a ClientHello message in order to
