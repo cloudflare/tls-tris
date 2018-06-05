@@ -5,6 +5,7 @@
 package tls
 
 import (
+	//_ "crypto/tls/delegated_credential" // This causes a circular import!
 	"crypto/tls/ext"
 
 	"testing"
