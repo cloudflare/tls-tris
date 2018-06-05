@@ -94,6 +94,7 @@ test: \
 
 test-unit: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
 	GOROOT="$(GOROOT_LOCAL)" $(GO) test -race crypto/tls
+	GOROOT="$(GOROOT_LOCAL)" $(GO) test crypto/tls/delegated_credential
 
 test-bogo:
 	$(DOCKER) run --rm -v $(PRJ_DIR):$(BOGO_DOCKER_TRIS_LOCATION) tls-tris:bogo
