@@ -10,6 +10,7 @@ import (
 	"crypto/internal/cipherhw"
 	"crypto/rand"
 	"crypto/sha512"
+	reg "crypto/tls/registry"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -296,6 +297,22 @@ const (
 	ECDSAWithSHA1 SignatureScheme = 0x0203
 )
 
+// Register the codes for signature schemes; these will be needed by extensions.
+func init() {
+	reg.RegisterSignatureScheme("ECDSAWithP256AndSHA256", uint16(ECDSAWithP256AndSHA256))
+	reg.RegisterSignatureScheme("PKCS1WithSHA1", uint16(PKCS1WithSHA1))
+	reg.RegisterSignatureScheme("PKCS1WithSHA256", uint16(PKCS1WithSHA256))
+	reg.RegisterSignatureScheme("PKCS1WithSHA384", uint16(PKCS1WithSHA384))
+	reg.RegisterSignatureScheme("PKCS1WithSHA512", uint16(PKCS1WithSHA512))
+	reg.RegisterSignatureScheme("PSSWithSHA256", uint16(PSSWithSHA256))
+	reg.RegisterSignatureScheme("PSSWithSHA384", uint16(PSSWithSHA384))
+	reg.RegisterSignatureScheme("PSSWithSHA512", uint16(PSSWithSHA512))
+	reg.RegisterSignatureScheme("ECDSAWithP256AndSHA256", uint16(ECDSAWithP256AndSHA256))
+	reg.RegisterSignatureScheme("ECDSAWithP384AndSHA384", uint16(ECDSAWithP384AndSHA384))
+	reg.RegisterSignatureScheme("ECDSAWithP521AndSHA512", uint16(ECDSAWithP521AndSHA512))
+	reg.RegisterSignatureScheme("ECDSAWithSHA1", uint16(ECDSAWithSHA1))
+}
+
 // ClientHelloInfo contains information from a ClientHello message in order to
 // guide certificate selection in the GetCertificate callback.
 type ClientHelloInfo struct {
@@ -407,10 +424,11 @@ const (
 // modified. A Config may be reused; the tls package will also not
 // modify it.
 type Config struct {
-	// Rand provides the source of entropy for nonces and RSA blinding.
-	// If Rand is nil, TLS uses the cryptographic random reader in package
-	// crypto/rand.
-	// The Reader must be safe for use by multiple goroutines.
+	// Rand provides the source of entropy for cryptographic operations,
+	// including ranodm nonce generation, key (share) generation, and public-key
+	// encryption. If Rand is nil, TLS uses the cryptographic random reader in
+	// package crypto/rand. The Reader must be safe for use by multiple
+	// goroutines.
 	Rand io.Reader
 
 	// Time returns the current time as the number of seconds since the epoch.
