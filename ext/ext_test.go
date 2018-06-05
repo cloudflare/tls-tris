@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package tls
+package ext_test
 
 import (
-	//_ "crypto/tls/delegated_credential" // This causes a circular import!
+	_ "crypto/tls/delegated_credential"
 	"crypto/tls/ext"
 
 	"testing"
