@@ -7,44 +7,69 @@ package delegated_credential
 import (
 	"crypto"
 	"crypto/x509"
+	"time"
 )
 
-// SignatureScheme identifies a signing algorithm as specified in the TLS 1.3
-// standard.
-//
-// Note that this must have the same type as SignatureScheme in the crypto/tls
-// package.
-type SignatureScheme uint16
+type SignatureScheme uint16 // As defined in crypto/tls
+type ProtocolVersion uint16
 
-// Version identifies the protocol version as specified in the the TLS
-// standards.
-type Version uint16
+const (
+	MaxTTLSeconds   = 60 * 60 * 24 * 7 // Seconds
+	MaxTTL          = time.Duration(MaxTTLSeconds) * time.Nanosecond
+	MaxPublicKeyLen = 1 << 16 // Bytes
+)
 
-const MaximumTTL = 604800 // Seconds (7 days)
-
-// Credential stores the public componentys of the credential.
+// Credential stores the public components of the credential.
 //
 // TODO(cjpatton) Rename DelegatedCredentialParams in the draft.
 type Credential struct {
 
-	// Time in seconds for which the credential is valid. The TTL of the
-	// credential is notBefore + validTime - currentTime, where notBefore is
-	// time stamp of the delegator's certificate and currentTime is the client's
-	// current time.
-	validTime uint32
+	// Time in nonsecnds for which the credential is valid. When this data
+	// structure is serialized, this value is converted to a uint32 representing
+	// the duration in seconds.
+	ValidTime time.Duration
 
 	// The public key of the credential.
-	publicKey crypto.PublicKey
+	PublicKey crypto.PublicKey
+
+	// The signature scheme corresponding to PublicKey.
+	scheme SignatureScheme
 }
 
-// TODO(cjpatton)
-func (cred *Credential) Marshal() []byte {
-	return nil
+// NewECDSACredential generates an ECDSA key pair for the specified group and
+// returns the secret key and a credential with the public key and validity
+// time.
+func NewCredential(
+	scheme SignatureScheme,
+	validTime time.Duration) (crypto.PrivateKey, *Credential, error) {
+	// TODO(cjpatton)
+	return nil, nil, nil
 }
 
-// TODO(cjpatton)
-func UnmarshalCredential(serializedCred []byte) *Credential {
-	return nil
+// IsExpired returns true if and only if the credential has not expired.  The
+// end of the validity interval is defined as the deleagtor certificate's
+// notBefore field plus validTime seconds. This function simply checks that the
+// current time is before the end of the valdity interval.
+func (cred *Credential) IsExpired(start, now time.Time) bool {
+	// TODO(cjpatton)
+	return false
+}
+
+func (cred *Credential) HasValidTTL(start, now time.Time) bool {
+	// TODO(cjpatton)
+	return false
+}
+
+// Marshal encodes a credential as per the spec.
+func (cred *Credential) Marshal() ([]byte, error) {
+	// TODO(cjpatton)
+	return nil, nil
+}
+
+// UnmarshalCredential decodes a credential.
+func UnmarshalCredential(serialized []byte) (*Credential, error) {
+	// TODO(cjpatton)
+	return nil, nil
 }
 
 // Delegator stores the secret key of the delegator.
@@ -54,25 +79,36 @@ func UnmarshalCredential(serializedCred []byte) *Credential {
 // which has a different interface.
 type Delegator struct {
 
-	// The secret key of the delegator. This is used to sign credentials.
-	privateKey crypto.PrivateKey
+	// the delegation key, i.e., the signing key of the delegator.
+	delegationKey crypto.PrivateKey
 
-	// The signing algorithm corresponding to privateKey.
-	Scheme SignatureScheme
-
-	// The certificate chain of the delegator.
+	// The certificate of the delegator.
 	//
 	// TODO(cjpatton) Determine if the delegator is meant to sign the whole
 	// chain, or just the leaf. (The spec is a bit ambiguous about this.)
-	Cert *x509.Certificate
+	cert *x509.Certificate
+
+	// The signing algorithm of the delegation key. This must be a uint16 as per
+	// the TLS 1.3 spec.
+	scheme SignatureScheme
 }
 
-// Delegate signs a credential, binding it to the provided TLS version.
+// NewDelegator initializes the delegator state using the delagation key and the
+// corresponding certificate cert. It ensures that the public key corresponding
+// to delegationKey is the same public key as in cert. It also ensures that
+// certificate can be used for delegation, as per the spec.
+func NewDelegator(
+	delegationKey crypto.PrivateKey, cert *x509.Certificate) (*Delegator, error) {
+	// TODO(cjpatton)
+	return nil, nil
+}
+
+// Delegate signs a credential, binding it to the provided version
 //
-// TODO(cjpatton)
+// TODO(cjpatton) Formalize the searizlizing of the input in the spec.
 func (del *Delegator) Delegate(
-	cred *Credential,
-	version Version) (*DelegatedCredential, error) {
+	cred *Credential, ver ProtocolVersion) (*DelegatedCredential, error) {
+	// TODO(cjpatton)
 	return nil, nil
 }
 
@@ -83,25 +119,21 @@ type DelegatedCredential struct {
 	Signature []byte          // The signature
 }
 
-// Verify checks that that the signature was signed by the delegator in
-// possession of the secret key asoociated with cert. It also checks
-// that the credential hasn't expired, and that it's TTL is less than 7 days.
-//
-// TODO(cjpatton)
-func (dc *DelegatedCredential) Verify(
-	cert *x509.Certificate,
-	currentTime uint64,
-	version Version) bool {
-	return false
+// Validate checks that that the signature is valid, that the credential hasn't
+// expired, and that it's TTL is less than 7 days. It also checks that
+// certificate can be used for delegation, per the spec.
+func (dc *DelegatedCredential) Validate(
+	cert *x509.Certificate, ver ProtocolVersion, now time.Time) (bool, error) {
+	// TODO(cjpatton)
+	return false, nil
 }
 
-// TODO(cjpatton)
 func (dc *DelegatedCredential) Marshal() []byte {
+	// TODO(cjpatton)
 	return nil
 }
 
-// TODO(cjpatton)
-func UnMarshalDelegatedCredential(
-	serializedDelCred []byte) *DelegatedCredential {
+func UnmarshalDelegatedCredential(serialized []byte) *DelegatedCredential {
+	// TODO(cjpatton)
 	return nil
 }
