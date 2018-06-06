@@ -13,9 +13,9 @@ import (
 	"time"
 )
 
-// TODO
 const (
-	DelegatedCredential uint16 = 0xff90 // NOTE(all) not IANA registered
+	// TODO(amu) Replace with not IANA registered value
+	DelegatedCredential uint16 = 0xff90
 )
 
 // TODO

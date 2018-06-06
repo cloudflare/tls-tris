@@ -6,6 +6,8 @@ package ext_test
 
 import (
 	_ "crypto/tls/delegated_credential"
+
+	"crypto/tls"
 	"crypto/tls/ext"
 
 	"testing"
@@ -19,4 +21,5 @@ import (
 func TestHandshakeWithDelegatedCredentials(t *testing.T) {
 	dc := ext.Get(ext.DelegatedCredential)
 	t.Log(dc.GetId())
+	t.Log(tls.VersionTLS12)
 }
