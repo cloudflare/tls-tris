@@ -12,8 +12,6 @@ import (
 )
 
 // Test the DCExtension interface.
-//
-// TODO TestGetPublicKey
 func TestDCExtension(t *testing.T) {
 	ver := uint16(tls.VersionTLS12)
 
