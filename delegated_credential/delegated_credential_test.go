@@ -6,6 +6,7 @@ package delegated_credential
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/tls"
@@ -78,6 +79,19 @@ func newDelegatorFromTestKeys() (*Delegator, *x509.Certificate, error) {
 	return del, cert, nil
 }
 
+func testECDSAPublicKeysEqual(t *testing.T,
+	publicKey, publicKey2 crypto.PublicKey, scheme tls.SignatureScheme) {
+
+	curve := getCurve(scheme)
+	pk := publicKey.(*ecdsa.PublicKey)
+	pk2 := publicKey2.(*ecdsa.PublicKey)
+	serializedPublicKey := elliptic.Marshal(curve, pk.X, pk.Y)
+	serializedPublicKey2 := elliptic.Marshal(curve, pk2.X, pk2.Y)
+	if !bytes.Equal(serializedPublicKey2, serializedPublicKey) {
+		t.Error("PublicKey mismatch")
+	}
+}
+
 // Test that cred and cred2 are equal.
 func testCredentialsEqual(t *testing.T, cred, cred2 *Credential) {
 	if cred2.ValidTime != cred.ValidTime {
@@ -88,14 +102,7 @@ func testCredentialsEqual(t *testing.T, cred, cred2 *Credential) {
 		t.Errorf("scheme mismatch: got %04x, expected %04x", cred2.scheme, cred.scheme)
 	}
 
-	curve := getCurve(cred.scheme)
-	pk := cred.PublicKey.(*ecdsa.PublicKey)
-	pk2 := cred2.PublicKey.(*ecdsa.PublicKey)
-	serializedPublicKey := elliptic.Marshal(curve, pk.X, pk.Y)
-	serializedPublicKey2 := elliptic.Marshal(curve, pk2.X, pk2.Y)
-	if !bytes.Equal(serializedPublicKey2, serializedPublicKey) {
-		t.Error("PublicKey mismatch")
-	}
+	testECDSAPublicKeysEqual(t, cred.PublicKey, cred2.PublicKey, cred.scheme)
 }
 
 // Test the cosntructors for Delegator and Credential.
@@ -228,7 +235,8 @@ func TestDelegateValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, err := delegatedCred.Validate(cert2, ver, time.Now()); err != errNoDelegationUsage {
+	if v, err := delegatedCred.Validate(
+		cert2, ver, time.Now()); err != errNoDelegationUsage {
 		t.Error("DC validation with non-delegation cert succeeded, expected failure")
 	} else if v {
 		t.Error("DC with non-delegation cert is valid, expected invalid")

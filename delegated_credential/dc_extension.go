@@ -7,29 +7,44 @@ import (
 	"time"
 )
 
+// Register the DCExtension in crypto/tls/ext.
 func init() {
-	ext.Register(newTLSExtension(ext.DelegatedCredential))
+	ext.Register(newDCExtension(ext.DelegatedCredential))
 }
 
-type tlsExtension struct {
+type dcExtension struct {
 	id uint16
 }
 
-func newTLSExtension(id uint16) *tlsExtension {
-	return &tlsExtension{id}
+func newDCExtension(id uint16) ext.DCExtension {
+	return &dcExtension{id}
 }
 
-func (ext tlsExtension) GetId() uint16 {
+// GetId() returns the extension ID as defined in crypto/tls/ext.
+func (ext dcExtension) GetId() uint16 {
 	return ext.id
 }
 
-func (ext tlsExtension) GetPublicKey(dc []byte) crypto.PublicKey {
-	// TODO(cjpatton)
-	return nil
+// GetPublicKey parses the serialized DC (`dc`) and returns
+// the credential public key.
+func (ext dcExtension) GetPublicKey(dc []byte) crypto.PublicKey {
+	delegatedCred, err := UnmarshalDelegatedCredential(dc)
+	if err != nil {
+		panic(err)
+	}
+
+	return delegatedCred.Cred.PublicKey
 }
 
-func (ext tlsExtension) Validate(
+// Validate parses the serialzied DC (`dc`) and checks its validity using the
+// provided certificate (`cert`), protocol version (`ver`), and the current time
+// (`now`).
+func (ext dcExtension) Validate(
 	dc []byte, cert *x509.Certificate, ver uint16, now time.Time) (bool, error) {
-	// TODO(cjpatton)
-	return false, nil
+	delegatedCred, err := UnmarshalDelegatedCredential(dc)
+	if err != nil {
+		return false, err
+	}
+
+	return delegatedCred.Validate(cert, ver, now)
 }
