@@ -2,6 +2,18 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Delegated credentials for TLS
+// (https://tools.ietf.org/html/draft-ietf-tls-subcerts) is an IETF Internet
+// draft and proposed TLS extension. If the client supports this extension, then
+// the servery may use a "delegated credential" as the signing key in the
+// handshake. A delegated credential is a short lived public/secret key pair
+// delegated to the server by an entity trusted by the client. This allows a
+// middlebox to terminate a TLS connection on behalf of the entity; for example,
+// this can be used to delegate TLS termination to a reverse proxy. Credentials
+// can't be revoked; in order to mitigate risk in case the middlebox is
+// compromised, the credential is only valid for a short time (days, hours, or
+// even minutes).
+//
 // This package implements the functionalities needed for the
 // delegated_credential extension for TLS, as well as provisioning delegated
 // credentials for use in the protocol. It implements the DCExtension interface
@@ -19,8 +31,9 @@
 //
 // 		dc := ext.Extension(ext.DelegatedCredential)
 //
-// TODO(cjpatton) Implement PKCS1, PSS, and EdDSA. Currently delegated
-// credentials only support ECDSA. The delegator must also use an ECDSA key.
+// BUG(cjpatton) Need to add support for PKCS1, PSS, and EdDSA. Currently
+// delegated credentials only support ECDSA. The delegator must also use an
+// ECDSA key.
 package delegated_credential
 
 import (
@@ -99,7 +112,7 @@ type Credential struct {
 	scheme tls.SignatureScheme
 }
 
-// NewNredential generates a public/secret key pair for the given singature scheme, creates a
+// NewCredential generates a public/secret key pair for the given singature scheme, creates a
 // credential with the public key and given validity period, and returns the
 // secret key and the credential.
 func NewCredential(
