@@ -13,21 +13,21 @@ func init() {
 }
 
 type dcExtension struct {
-	id uint16
+	id ext.Id
 }
 
-func newDCExtension(id uint16) ext.DCExtension {
+func newDCExtension(id ext.Id) ext.DCExtension {
 	return &dcExtension{id}
 }
 
 // GetId() returns the extension ID as defined in crypto/tls/ext.
-func (ext dcExtension) GetId() uint16 {
-	return ext.id
+func (e dcExtension) GetId() ext.Id {
+	return e.id
 }
 
 // GetPublicKey parses the serialized DC (`dc`) and returns
 // the credential public key.
-func (ext dcExtension) GetPublicKey(dc []byte) crypto.PublicKey {
+func (e dcExtension) GetPublicKey(dc []byte) crypto.PublicKey {
 	delegatedCred, err := UnmarshalDelegatedCredential(dc)
 	if err != nil {
 		panic(err)
@@ -39,7 +39,7 @@ func (ext dcExtension) GetPublicKey(dc []byte) crypto.PublicKey {
 // Validate parses the serialzied DC (`dc`) and checks its validity using the
 // provided certificate (`cert`), protocol version (`ver`), and the current time
 // (`now`).
-func (ext dcExtension) Validate(
+func (e dcExtension) Validate(
 	dc []byte, cert *x509.Certificate, ver uint16, now time.Time) (bool, error) {
 	delegatedCred, err := UnmarshalDelegatedCredential(dc)
 	if err != nil {
