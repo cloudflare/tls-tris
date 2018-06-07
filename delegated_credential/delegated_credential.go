@@ -120,8 +120,8 @@ func NewCredential(
 		pk = sk.Public()
 
 	default:
-		return nil, nil, errors.New(fmt.Sprintf(
-			"unsupported signature scheme: 0x%04x", scheme))
+		return nil, nil, fmt.Errorf(
+			"unsupported signature scheme: 0x%04x", scheme)
 	}
 
 	return sk, &Credential{validTime, pk, scheme}, nil
@@ -160,8 +160,8 @@ func (cred *Credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
 		return serializedPublicKey, nil
 
 	default:
-		return nil, errors.New(fmt.Sprintf(
-			"unsupported signature scheme: 0x%04x", cred.scheme))
+		return nil, fmt.Errorf(
+			"unsupported signature scheme: 0x%04x", cred.scheme)
 	}
 }
 
@@ -186,13 +186,12 @@ func unmarshalSubjectPublicKeyInfo(
 		} else if curveName == "P-521" {
 			return pk, tls.ECDSAWithP521AndSHA512, nil
 		} else {
-			return nil, 0, errors.New(fmt.Sprintf(
-				"curve %s s not supported", curveName))
+			return nil, 0, fmt.Errorf("curve %s s not supported", curveName)
 		}
 
 	default:
-		return nil, 0, errors.New(fmt.Sprintf(
-			"unsupported delgation key type: %s", reflect.TypeOf(pk)))
+		return nil, 0, fmt.Errorf(
+			"unsupported delgation key type: %s", reflect.TypeOf(pk))
 	}
 }
 
@@ -329,14 +328,14 @@ func NewDelegator(
 		} else if certAlg == x509.ECDSAWithSHA512 && curveName == "P-521" {
 			scheme = tls.ECDSAWithP521AndSHA512
 		} else {
-			return nil, errors.New(fmt.Sprintf(
+			return nil, fmt.Errorf(
 				"using curve %s for %s is not supported",
-				curveName, cert.SignatureAlgorithm))
+				curveName, cert.SignatureAlgorithm)
 		}
 
 	default:
-		return nil, errors.New(fmt.Sprintf(
-			"unsupported delgation key type: %s", reflect.TypeOf(sk)))
+		return nil, fmt.Errorf(
+			"unsupported delgation key type: %s", reflect.TypeOf(sk))
 	}
 
 	return &Delegator{delegationKey, cert, scheme}, nil
@@ -364,8 +363,8 @@ func (del *Delegator) Delegate(
 			return nil, err
 		}
 	default:
-		return nil, errors.New(fmt.Sprintf(
-			"unsupported delgation key type: %s", reflect.TypeOf(sk)))
+		return nil, fmt.Errorf(
+			"unsupported delgation key type: %s", reflect.TypeOf(sk))
 	}
 
 	return &DelegatedCredential{*cred, del.scheme, sig}, nil
@@ -427,8 +426,8 @@ func (dc *DelegatedCredential) Validate(
 		return true, nil
 
 	default:
-		return false, errors.New(fmt.Sprintf(
-			"unsupported signature scheme: 0x%04x", dc.Scheme))
+		return false, fmt.Errorf(
+			"unsupported signature scheme: 0x%04x", dc.Scheme)
 	}
 
 	return false, nil

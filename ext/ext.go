@@ -51,7 +51,7 @@ func Register(e Extension) {
 	id := e.GetId()
 	_, registered := extensions[id]
 	if registered {
-		panic(fmt.Sprintf("%s extension is already registered", GetName(id)))
+		panic(fmt.Errorf("%s extension is already registered", GetName(id)))
 	}
 	extensions[id] = e
 }
@@ -59,7 +59,7 @@ func Register(e Extension) {
 func Get(id uint16) Extension {
 	e, registered := extensions[id]
 	if !registered {
-		panic(fmt.Sprintf("no %s extension registered", GetName(id)))
+		panic(fmt.Errorf("no %s extension registered", GetName(id)))
 	}
 	return e
 }
