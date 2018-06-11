@@ -5,7 +5,7 @@
 package ext_test
 
 import (
-	_ "crypto/tls/delegated_credential"
+	_ "crypto/tls/subcerts"
 
 	"crypto/tls"
 	"crypto/tls/ext"

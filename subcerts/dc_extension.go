@@ -1,4 +1,4 @@
-package delegated_credential
+package subcerts
 
 import (
 	"crypto"

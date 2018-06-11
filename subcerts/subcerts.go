@@ -34,7 +34,7 @@
 // BUG(cjpatton) Need to add support for PKCS1, PSS, and EdDSA. Currently
 // delegated credentials only support ECDSA. The delegator must also use an
 // ECDSA key.
-package delegated_credential
+package subcerts
 
 import (
 	"bytes"
