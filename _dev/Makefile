@@ -93,6 +93,8 @@ test: \
 	test-interop
 
 test-unit: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	GOROOT="$(GOROOT_LOCAL)" $(GO) test -race crypto/tls/subcerts
+	GOROOT="$(GOROOT_LOCAL)" $(GO) test -race crypto/tls/ext
 	GOROOT="$(GOROOT_LOCAL)" $(GO) test -race crypto/tls
 
 test-bogo:
