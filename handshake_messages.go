@@ -41,7 +41,7 @@ type clientHelloMsg struct {
 // Marshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
 // for more details. Extension is serialized in data buffer
 // Function advances data slice and returns it, so that it can be used for further processing
-func marshallExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureScheme) []byte {
+func marshalExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureScheme) []byte {
 	data[0] = byte(extensionSignatureAlgorithms >> 8)
 	data[1] = byte(extensionSignatureAlgorithms)
 	l := 2 + 2*len(sigSchemes)
@@ -64,7 +64,7 @@ func marshallExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureSch
 // Unmrshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
 // for more details.
 // In case of error function returns alertDecoderError otherwise filled SignatureScheme slice and alertSuccess
-func unmarshallExtensionSignatureAlgorithms(data []byte, length int) ([]SignatureScheme, alert) {
+func unmarshalExtensionSignatureAlgorithms(data []byte, length int) ([]SignatureScheme, alert) {
 	if length < 2 || length&1 != 0 {
 		return nil, alertDecodeError
 	}
@@ -2131,7 +2131,7 @@ func (m *certificateRequestMsg13) marshal() (x []byte) {
 	z = z[2:]
 
 	// TODO: this function should be reused by CH
-	z = marshallExtensionSignatureAlgorithms(z, m.supportedSignatureAlgorithms)
+	z = marshalExtensionSignatureAlgorithms(z, m.supportedSignatureAlgorithms)
 	// certificate_authorities
 	if casLength > 0 {
 		z[0] = byte(extensionCAs >> 8)
@@ -2197,10 +2197,10 @@ func (m *certificateRequestMsg13) unmarshal(data []byte) alert {
 
 		switch extension {
 		case extensionSignatureAlgorithms:
-			// TODO: unmarshallExtensionSignatureAlgorithms should be shared with CH and pre-1.3 CV
+			// TODO: unmarshalExtensionSignatureAlgorithms should be shared with CH and pre-1.3 CV
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-21#section-4.2.3
 			var err alert
-			m.supportedSignatureAlgorithms, err = unmarshallExtensionSignatureAlgorithms(data, length)
+			m.supportedSignatureAlgorithms, err = unmarshalExtensionSignatureAlgorithms(data, length)
 			if err != alertSuccess {
 				return err
 			}
