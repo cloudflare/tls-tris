@@ -681,7 +681,7 @@ func TestClientResumption(t *testing.T) {
 		ClientSessionCache: NewLRUClientSessionCache(32),
 		RootCAs:            rootCAs,
 		ServerName:         "example.golang",
-		MaxVersion:         VersionTLS12, 	// Enforce TLSv1.2
+		MaxVersion:         VersionTLS12, // Enforce TLSv1.2
 	}
 
 	testResumeState := func(test string, didResume bool) {

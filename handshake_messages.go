@@ -41,24 +41,24 @@ type clientHelloMsg struct {
 // Marshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1
 // for more details. Extension is serialized in data buffer
 // Function advances data slice and returns it, so that it can be used for further processing
-func marshallExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureScheme) ([]byte) {
-    data[0] = byte(extensionSignatureAlgorithms >> 8)
-    data[1] = byte(extensionSignatureAlgorithms)
-    l := 2 + 2*len(sigSchemes)
-    data[2] = byte(l >> 8)
-    data[3] = byte(l)
-    data = data[4:]
+func marshallExtensionSignatureAlgorithms(data []byte, sigSchemes []SignatureScheme) []byte {
+	data[0] = byte(extensionSignatureAlgorithms >> 8)
+	data[1] = byte(extensionSignatureAlgorithms)
+	l := 2 + 2*len(sigSchemes)
+	data[2] = byte(l >> 8)
+	data[3] = byte(l)
+	data = data[4:]
 
-    l -= 2
-    data[0] = byte(l >> 8)
-    data[1] = byte(l)
-    data = data[2:]
-    for _, sigAlgo := range sigSchemes {
-        data[0] = byte(sigAlgo >> 8)
-        data[1] = byte(sigAlgo)
-        data = data[2:]
-    }
-    return data
+	l -= 2
+	data[0] = byte(l >> 8)
+	data[1] = byte(l)
+	data = data[2:]
+	for _, sigAlgo := range sigSchemes {
+		data[0] = byte(sigAlgo >> 8)
+		data[1] = byte(sigAlgo)
+		data = data[2:]
+	}
+	return data
 }
 
 // Unmrshalling of signature_algorithms extension see https://tools.ietf.org/html/rfc5246#section-7.4.1.4.1

@@ -197,9 +197,9 @@ func TestDontSelectRSAWithECDSAKey(t *testing.T) {
 
 func TestRenegotiationExtension(t *testing.T) {
 	clientHello := &clientHelloMsg{
-		vers:               VersionTLS12,
-		compressionMethods: []uint8{compressionNone},
-		random:             make([]byte, 32),
+		vers:                         VersionTLS12,
+		compressionMethods:           []uint8{compressionNone},
+		random:                       make([]byte, 32),
 		secureRenegotiationSupported: true,
 		cipherSuites:                 []uint16{TLS_RSA_WITH_RC4_128_SHA},
 	}
@@ -344,7 +344,7 @@ func TestVersion(t *testing.T) {
 	}
 	clientConfig := &Config{
 		InsecureSkipVerify: true,
-		MinVersion:   VersionTLS10,
+		MinVersion:         VersionTLS10,
 	}
 	state, _, err := testHandshake(clientConfig, serverConfig)
 	if err != nil {
@@ -365,7 +365,7 @@ func TestCipherSuitePreference(t *testing.T) {
 	clientConfig := &Config{
 		CipherSuites:       []uint16{TLS_RSA_WITH_AES_128_CBC_SHA, TLS_RSA_WITH_RC4_128_SHA},
 		InsecureSkipVerify: true,
-		MinVersion:   VersionTLS10,
+		MinVersion:         VersionTLS10,
 	}
 	state, _, err := testHandshake(clientConfig, serverConfig)
 	if err != nil {
@@ -426,7 +426,7 @@ func TestCrossVersionResume(t *testing.T) {
 		InsecureSkipVerify: true,
 		ClientSessionCache: NewLRUClientSessionCache(1),
 		ServerName:         "servername",
-		MinVersion:   VersionTLS10,
+		MinVersion:         VersionTLS10,
 	}
 
 	// Establish a session at TLS 1.1.
@@ -998,13 +998,13 @@ func TestResumptionDisabled(t *testing.T) {
 func TestFallbackSCSV(t *testing.T) {
 	serverConfig := Config{
 		Certificates: testConfig.Certificates,
-		MinVersion: VersionTLS10,
+		MinVersion:   VersionTLS10,
 	}
 	test := &serverTest{
 		name:   "FallbackSCSV",
 		config: &serverConfig,
 		// OpenSSL 1.0.1j is needed for the -fallback_scsv option.
-		command: []string{"openssl", "s_client", "-fallback_scsv"},
+		command:                       []string{"openssl", "s_client", "-fallback_scsv"},
 		expectHandshakeErrorIncluding: "inappropriate protocol fallback",
 	}
 	runServerTestTLS11(t, test)
