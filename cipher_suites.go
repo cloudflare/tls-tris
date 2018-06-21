@@ -5,6 +5,7 @@
 package tls
 
 import (
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/des"
@@ -12,7 +13,6 @@ import (
 	"crypto/rc4"
 	"crypto/sha1"
 	"crypto/sha256"
-	"crypto/x509"
 	"hash"
 
 	"golang_org/x/crypto/chacha20poly1305"
@@ -26,15 +26,15 @@ type keyAgreement interface {
 	// In the case that the key agreement protocol doesn't use a
 	// ServerKeyExchange message, generateServerKeyExchange can return nil,
 	// nil.
-	generateServerKeyExchange(*Config, *Certificate, *clientHelloMsg, *serverHelloMsg) (*serverKeyExchangeMsg, error)
-	processClientKeyExchange(*Config, *Certificate, *clientKeyExchangeMsg, uint16) ([]byte, error)
+	generateServerKeyExchange(*Config, crypto.PrivateKey, *clientHelloMsg, *serverHelloMsg) (*serverKeyExchangeMsg, error)
+	processClientKeyExchange(*Config, crypto.PrivateKey, *clientKeyExchangeMsg, uint16) ([]byte, error)
 
 	// On the client side, the next two methods are called in order.
 
 	// This method may not be called if the server doesn't send a
 	// ServerKeyExchange message.
-	processServerKeyExchange(*Config, *clientHelloMsg, *serverHelloMsg, *x509.Certificate, *serverKeyExchangeMsg) error
-	generateClientKeyExchange(*Config, *clientHelloMsg, *x509.Certificate) ([]byte, *clientKeyExchangeMsg, error)
+	processServerKeyExchange(*Config, *clientHelloMsg, *serverHelloMsg, crypto.PublicKey, *serverKeyExchangeMsg) error
+	generateClientKeyExchange(*Config, *clientHelloMsg, crypto.PublicKey) ([]byte, *clientKeyExchangeMsg, error)
 }
 
 const (
