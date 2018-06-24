@@ -953,6 +953,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
 	serverHello := hs.serverHello
+	c.scts = serverHello.scts
 
 	// middlebox compatibility mode, send CCS before second flight.
 	if _, err := c.writeRecord(recordTypeChangeCipherSpec, []byte{1}); err != nil {
