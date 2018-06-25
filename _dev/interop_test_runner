@@ -46,13 +46,13 @@ class RegexSelfTest(unittest.TestCase):
     ''' Ensures that those regexe's actually work '''
 
     LINE_HELLO_TLS      ="\nsomestuff\nHello TLS 1.3 _o/\nsomestuff"
-    LINE_HELLO_DRAFT_TLS="\nsomestuff\nHello TLS 1.3 (draft 22) _o/\nsomestuff"
+    LINE_HELLO_DRAFT_TLS="\nsomestuff\nHello TLS 1.3 (draft 23) _o/\nsomestuff"
 
-    LINE_HELLO_RESUMED  ="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] _o/\nsomestuff"
-    LINE_HELLO_MIXED    ="\nsomestuff\nHello TLS 1.3 (draft 22) _o/\nHello TLS 1.3 (draft 22) [resumed] _o/\nsomestuff"
-    LINE_HELLO_TLS_12   ="\nsomestuff\nHello TLS 1.2 (draft 22) [resumed] _o/\nsomestuff"
-    LINE_HELLO_TLS_13_0RTT="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] [0-RTT] _o/\nsomestuff"
-    LINE_HELLO_TLS_13_0RTT_CONFIRMED="\nsomestuff\nHello TLS 1.3 (draft 22) [resumed] [0-RTT confirmed] _o/\nsomestuff"
+    LINE_HELLO_RESUMED  ="\nsomestuff\nHello TLS 1.3 (draft 23) [resumed] _o/\nsomestuff"
+    LINE_HELLO_MIXED    ="\nsomestuff\nHello TLS 1.3 (draft 23) _o/\nHello TLS 1.3 (draft 23) [resumed] _o/\nsomestuff"
+    LINE_HELLO_TLS_12   ="\nsomestuff\nHello TLS 1.2 (draft 23) [resumed] _o/\nsomestuff"
+    LINE_HELLO_TLS_13_0RTT="\nsomestuff\nHello TLS 1.3 (draft 23) [resumed] [0-RTT] _o/\nsomestuff"
+    LINE_HELLO_TLS_13_0RTT_CONFIRMED="\nsomestuff\nHello TLS 1.3 (draft 23) [resumed] [0-RTT confirmed] _o/\nsomestuff"
 
     def test_regexes(self):
         self.assertIsNotNone(
@@ -212,12 +212,14 @@ class InteropServer_BoringSSL(
         unittest.TestCase
     ): CLIENT_NAME = "tls-tris:boring"
 
-class InteropServer_PicoTLS(
-        InteropServer,
-        ServerNominalMixin,
-        ServerZeroRttMixin,
-        unittest.TestCase
-    ): CLIENT_NAME = "tls-tris:picotls"
+# PicoTLS doesn't seem to implement draft-23 correctly. It will
+# be enabled when draft-28 is implemented.
+# class InteropServer_PicoTLS(
+#         InteropServer,
+#         ServerNominalMixin,
+#         ServerZeroRttMixin,
+#         unittest.TestCase
+#     ): CLIENT_NAME = "tls-tris:picotls"
 
 class InteropServer_NSS(
         InteropServer,

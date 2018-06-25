@@ -34,15 +34,24 @@ RUN mkdir boringssl/build
 # ARG REVISION=89917a5
 
 # Draft 18
-#ARG REVISION=9b885c5
+# ARG REVISION=9b885c5
 # Draft 18, but with "bssl server -loop -www" support and build fix
-ARG REVISION=40b24c8154
+# ARG REVISION=40b24c8154
 
 # Draft 21
-#ARG REVISION=cd8470f
+# ARG REVISION=cd8470f
 
 # Draft 22
-ARG REVISION=1530ef3e
+# ARG REVISION=1530ef3e
+
+# Draft 23
+# ARG REVISION=cb15cfda29c0c60d8d74145b17c93b43a7667837
+
+# Draft 28
+# ARG REVISION=861f384d7bc59241a9df1634ae938d8e75be2d30
+
+# Latest
+ARG REVISION=03de6813d8992a649092b4874ef0ebc022e2f58a
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
