@@ -43,6 +43,7 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS13Draft18: "1.3 (draft 18)",
 	tls.VersionTLS13Draft21: "1.3 (draft 21)",
 	tls.VersionTLS13Draft22: "1.3 (draft 22)",
+	tls.VersionTLS13Draft23: "1.3 (draft 23)",
 }
 
 func NewServer() *server {
