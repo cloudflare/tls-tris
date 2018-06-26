@@ -61,7 +61,8 @@ There are number of things that need to be setup before running tests. Most impo
 
 ```
 git clone https://github.com/cloudflare/tls-tris.git
-cd tls-tris; make -f _dev/Makefile build-all
+cd tls-tris; cp _dev/utils/pre-commit .git/hooks/ 
+make -f _dev/Makefile build-all
 ```
 
 ### Testing
