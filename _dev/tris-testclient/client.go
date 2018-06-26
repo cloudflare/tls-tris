@@ -28,8 +28,8 @@ var cipherSuiteIdToName = map[uint16]string{
 }
 
 type Client struct {
-	KeyLogWriter 	io.Writer
-	failed       	uint
+	KeyLogWriter    io.Writer
+	failed          uint
 	client_cert     tls.Certificate
 	client_certpool *x509.CertPool
 }
@@ -126,7 +126,6 @@ func main() {
 		// Sane cipher suite for TLS 1.2 with an ECDSA cert (as used by boringssl)
 		client.run(addr, tls.VersionTLS12, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
 	}
-
 
 	client.run(addr, tls.VersionTLS13, tls.TLS_CHACHA20_POLY1305_SHA256)
 	client.run(addr, tls.VersionTLS13, tls.TLS_AES_128_GCM_SHA256)
@@ -226,4 +225,3 @@ LAoibwDU1NC8/3MfOBYMe6Qklu3kjexOJrfdo0Z7Khgd9F8A4tKwslUndSSlAfKF
 2rjfqabVMZMLZ2XEbA4W5JTfaZS4YYGcrjY7+i7OsnSxoYG2sb+xlQ==
 -----END RSA PRIVATE KEY-----`
 )
-
