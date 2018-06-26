@@ -80,22 +80,23 @@ const (
 
 // TLS extension numbers
 const (
-	extensionServerName          uint16 = 0
-	extensionStatusRequest       uint16 = 5
-	extensionSupportedCurves     uint16 = 10 // Supported Groups in 1.3 nomenclature
-	extensionSupportedPoints     uint16 = 11
-	extensionSignatureAlgorithms uint16 = 13
-	extensionALPN                uint16 = 16
-	extensionSCT                 uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
-	extensionSessionTicket       uint16 = 35
-	extensionPreSharedKey        uint16 = 41
-	extensionEarlyData           uint16 = 42
-	extensionSupportedVersions   uint16 = 43
-	extensionPSKKeyExchangeModes uint16 = 45
-	extensionCAs                 uint16 = 47
-	extensionKeyShare            uint16 = 51
-	extensionNextProtoNeg        uint16 = 13172 // not IANA assigned
-	extensionRenegotiationInfo   uint16 = 0xff01
+	extensionServerName              uint16 = 0
+	extensionStatusRequest           uint16 = 5
+	extensionSupportedCurves         uint16 = 10 // Supported Groups in 1.3 nomenclature
+	extensionSupportedPoints         uint16 = 11
+	extensionSignatureAlgorithms     uint16 = 13
+	extensionALPN                    uint16 = 16
+	extensionSCT                     uint16 = 18 // https://tools.ietf.org/html/rfc6962#section-6
+	extensionSessionTicket           uint16 = 35
+	extensionPreSharedKey            uint16 = 41
+	extensionEarlyData               uint16 = 42
+	extensionSupportedVersions       uint16 = 43
+	extensionPSKKeyExchangeModes     uint16 = 45
+	extensionCAs                     uint16 = 47
+	extensionSignatureAlgorithmsCert uint16 = 50
+	extensionKeyShare                uint16 = 51
+	extensionNextProtoNeg            uint16 = 13172 // not IANA assigned
+	extensionRenegotiationInfo       uint16 = 0xff01
 )
 
 // TLS signaling cipher suite values

@@ -106,6 +106,7 @@ NextCipherSuite:
 		hello.vers = VersionTLS12
 		hello.supportedVersions = config.getSupportedVersions()
 		hello.supportedSignatureAlgorithms = supportedSignatureAlgorithms13
+		hello.supportedSignatureAlgorithmsCert = supportedSigAlgorithmsCert(supportedSignatureAlgorithms13)
 	}
 
 	return hello, nil
