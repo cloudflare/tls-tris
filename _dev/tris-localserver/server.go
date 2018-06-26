@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-	"crypto/x509"
 )
 
 type ZeroRTT_t int
@@ -18,21 +18,21 @@ type PubKeyAlgo_t int
 
 // Bitset
 const (
-	ZeroRTT_None  ZeroRTT_t	= 0
-	ZeroRTT_Offer           = 1 << 0
-	ZeroRTT_Accept          = 1 << 1
+	ZeroRTT_None   ZeroRTT_t = 0
+	ZeroRTT_Offer            = 1 << 0
+	ZeroRTT_Accept           = 1 << 1
 )
 
 const (
-	PubKeyRSA	PubKeyAlgo_t = iota
+	PubKeyRSA PubKeyAlgo_t = iota
 	PubKeyECDSA
 )
 
 type server struct {
-	Address             string
-	ZeroRTT             ZeroRTT_t
-	PubKey              PubKeyAlgo_t
-	ClientAuthMethod    tls.ClientAuthType
+	Address          string
+	ZeroRTT          ZeroRTT_t
+	PubKey           PubKeyAlgo_t
+	ClientAuthMethod tls.ClientAuthType
 }
 
 var tlsVersionToName = map[uint16]string{
@@ -46,11 +46,11 @@ var tlsVersionToName = map[uint16]string{
 }
 
 func NewServer() *server {
-    s := new(server)
-    s.ClientAuthMethod = tls.NoClientCert
-    s.ZeroRTT = ZeroRTT_None
-    s.Address = "0.0.0.1:443"
-    return s
+	s := new(server)
+	s.ClientAuthMethod = tls.NoClientCert
+	s.ZeroRTT = ZeroRTT_None
+	s.Address = "0.0.0.1:443"
+	return s
 }
 
 func (s *server) start() {
@@ -62,7 +62,7 @@ func (s *server) start() {
 		log.Fatal(err)
 	}
 	var Max0RTTDataSize uint32
-	if ((s.ZeroRTT&ZeroRTT_Offer) == ZeroRTT_Offer) {
+	if (s.ZeroRTT & ZeroRTT_Offer) == ZeroRTT_Offer {
 		Max0RTTDataSize = 100 * 1024
 	}
 	var keyLogWriter io.Writer
@@ -82,7 +82,7 @@ func (s *server) start() {
 		TLSConfig: &tls.Config{
 			Certificates:    []tls.Certificate{cert},
 			Max0RTTDataSize: Max0RTTDataSize,
-			Accept0RTTData:  (s.ZeroRTT&ZeroRTT_Accept) == ZeroRTT_Accept,
+			Accept0RTTData:  (s.ZeroRTT & ZeroRTT_Accept) == ZeroRTT_Accept,
 			KeyLogWriter:    keyLogWriter,
 			GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 				// If we send the first flight too fast, NSS sends empty early data.
@@ -91,7 +91,7 @@ func (s *server) start() {
 			},
 			MaxVersion: tls.VersionTLS13,
 			ClientAuth: s.ClientAuthMethod,
-			ClientCAs: clientCAs,
+			ClientCAs:  clientCAs,
 		},
 	}
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
@@ -99,32 +99,32 @@ func (s *server) start() {
 
 func main() {
 
-    s := NewServer()
+	s := NewServer()
 
-    arg_addr := flag.String("b" , "0.0.0.0:443", "Address:port used for binding")
-    arg_palg := flag.String("palg", "rsa", "Public algorithm to use: rsa or ecdsa")
-    arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
-    arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
-    arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
-    flag.Parse()
+	arg_addr := flag.String("b", "0.0.0.0:443", "Address:port used for binding")
+	arg_palg := flag.String("palg", "rsa", "Public algorithm to use: rsa or ecdsa")
+	arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
+	arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
+	arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
+	flag.Parse()
 
-    s.Address=*arg_addr
+	s.Address = *arg_addr
 
-    if *arg_palg == "ecdsa" {
-        s.PubKey = PubKeyECDSA
-    }
+	if *arg_palg == "ecdsa" {
+		s.PubKey = PubKeyECDSA
+	}
 
-    if *arg_zerortt == "a" {
-        s.ZeroRTT = ZeroRTT_Accept
-    } else if *arg_zerortt == "o" {
-        s.ZeroRTT = ZeroRTT_Offer
-    } else if *arg_zerortt == "oa" {
-        s.ZeroRTT = ZeroRTT_Offer | ZeroRTT_Accept
-    }
+	if *arg_zerortt == "a" {
+		s.ZeroRTT = ZeroRTT_Accept
+	} else if *arg_zerortt == "o" {
+		s.ZeroRTT = ZeroRTT_Offer
+	} else if *arg_zerortt == "oa" {
+		s.ZeroRTT = ZeroRTT_Offer | ZeroRTT_Accept
+	}
 
-    if *arg_clientauth {
-        s.ClientAuthMethod = tls.RequireAndVerifyClientCert
-    }
+	if *arg_clientauth {
+		s.ClientAuthMethod = tls.RequireAndVerifyClientCert
+	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		tlsConn := r.Context().Value(http.TLSConnContextKey).(*tls.Conn)
@@ -212,7 +212,7 @@ ClMLEiNJQ0OMxAIaRtb2RehD4q3OWlpWf6joJ36PRBqL8T5+f2x6Tg3c64UR+QPX
 98UcCQHHdEhm7y2z5Z2Wt0B48tZ+UAxDEoEwMghNyw7wUD79IRlXGYypBnXaMuLX
 46aGxbsSQ7Rfg62Co3JG7vo+eJd0AoZHrtFUnfM8V70IFzMBZnSwRslHRJe56Q==
 -----END CERTIFICATE-----`
-    rsaCa_client = `-----BEGIN CERTIFICATE-----
+	rsaCa_client = `-----BEGIN CERTIFICATE-----
 MIIFYDCCA0igAwIBAgIJAPpBgIvtQb1EMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV
 BAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX
 aWRnaXRzIFB0eSBMdGQwHhcNMTgwMjEzMjAxNjA3WhcNMTkwMjEzMjAxNjA3WjBF
