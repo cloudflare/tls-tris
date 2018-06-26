@@ -225,6 +225,7 @@ CurvePreferenceLoop:
 			certReq := new(certificateRequestMsg13)
 			// extension 'signature_algorithms' MUST be specified
 			certReq.supportedSignatureAlgorithms = supportedSignatureAlgorithms13
+			certReq.supportedSignatureAlgorithmsCert = supportedSigAlgorithmsCert(supportedSignatureAlgorithms13)
 			hs.keySchedule.write(certReq.marshal())
 			if _, err := hs.c.writeRecord(recordTypeHandshake, certReq.marshal()); err != nil {
 				return err
@@ -1113,4 +1114,16 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	c.in.setCipher(c.vers, appServerCipher)
 	return nil
+}
+
+// supportedSigAlgorithmsCert iterates over schemes and filters out those algorithms
+// which are not supported for certificate verification.
+func supportedSigAlgorithmsCert(schemes []SignatureScheme) (ret []SignatureScheme) {
+	for _, sig := range schemes {
+		// X509 doesn't support PSS signatures
+		if !signatureSchemeIsPSS(sig) {
+			ret = append(ret, sig)
+		}
+	}
+	return
 }
