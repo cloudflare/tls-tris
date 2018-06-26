@@ -15,6 +15,9 @@ env:
 matrix:
   fast_finish: true
 
+before_install:
+  - make -f _dev/Makefile fmtcheck
+
 install:
   - sudo pip install docker
 

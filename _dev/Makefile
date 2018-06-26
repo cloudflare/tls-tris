@@ -112,5 +112,7 @@ clean:
 clean-all: clean
 	rm -rf $(BUILD_DIR)
 
+fmtcheck:
+	$(DEV_DIR)/utils/fmtcheck.sh
 
 .PHONY: $(BUILD_DIR) clean build build-test test test-unit test-bogo test-compat
