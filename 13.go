@@ -328,7 +328,7 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 			return unexpectedMessageError(certVerify, msg)
 		}
 
-		err, alertCode := verifyPeerCertificate(
+		err, alertCode := verifyPeerHandshakeSignature(
 			certVerify,
 			pubKey,
 			supportedSignatureAlgorithms13,
@@ -841,7 +841,7 @@ func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensio
 	return nil
 }
 
-func verifyPeerCertificate(
+func verifyPeerHandshakeSignature(
 	certVerify *certificateVerifyMsg,
 	pubKey crypto.PublicKey,
 	signAlgosKnown []SignatureScheme,
@@ -1048,7 +1048,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		c.sendAlert(alertUnexpectedMessage)
 		return unexpectedMessageError(certVerifyMsg, msg)
 	}
-	err, alertCode := verifyPeerCertificate(
+	err, alertCode := verifyPeerHandshakeSignature(
 		certVerifyMsg,
 		hs.c.peerCertificates[0].PublicKey,
 		hs.hello.supportedSignatureAlgorithms,
