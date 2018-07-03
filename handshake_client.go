@@ -65,6 +65,7 @@ func makeClientHello(config *Config) (*clientHelloMsg, error) {
 		supportedPoints:              []uint8{pointFormatUncompressed},
 		nextProtoNeg:                 len(config.NextProtos) > 0,
 		secureRenegotiationSupported: true,
+		delegatedCredential:          config.AcceptDelegatedCredential,
 		alpnProtocols:                config.NextProtos,
 	}
 	possibleCipherSuites := config.cipherSuites()
@@ -412,6 +413,50 @@ func (hs *clientHandshakeState) processCertsFromServer(certificates [][]byte) er
 	return nil
 }
 
+// processDelegatedCredentialFromServer unmarshals the DelegatedCredential
+// offered by the server (if present) and validates it using the peer
+// certificate.
+func (hs *clientHandshakeState) processDelegatedCredentialFromServer(dc []byte) error {
+	c := hs.c
+
+	var cred *DelegatedCredential
+	var err error
+	if dc != nil {
+
+		// Assert that the DC extension was indicated by the client.
+		if !hs.hello.delegatedCredential {
+			c.sendAlert(alertUnexpectedMessage)
+			return errors.New("tls: got delegated credential extension without indication")
+		}
+
+		// Assert that the DC was sent in the ServerHello in (and only in)
+		// version 1.2.
+		if hs.serverHello.delegatedCredential != nil && hs.serverHello.vers != VersionTLS12 {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("tls: ServerHello with delegated credential extension in TLS != 1.2")
+		}
+
+		cred, err = UnmarshalDelegatedCredential(dc)
+		if err != nil {
+			c.sendAlert(alertDecodeError)
+			return fmt.Errorf("tls: delegated credential: %s", err)
+		}
+	}
+
+	if cred != nil && !c.config.InsecureSkipVerify {
+		if v, err := cred.Validate(c.peerCertificates[0], hs.c.vers, c.config.time()); err != nil {
+			c.sendAlert(alertIllegalParameter)
+			return fmt.Errorf("delegated credential: %s", err)
+		} else if !v {
+			c.sendAlert(alertIllegalParameter)
+			return errors.New("delegated credential: signature invalid")
+		}
+	}
+
+	c.verifiedDc = cred
+	return nil
+}
+
 func (hs *clientHandshakeState) doFullHandshake() error {
 	c := hs.c
 
@@ -430,6 +475,13 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		// If this is the first handshake on a connection, process and
 		// (optionally) verify the server's certificates.
 		if err := hs.processCertsFromServer(certMsg.certificates); err != nil {
+			return err
+		}
+		// Validate the DC if present. The DC is only processed if the
+		// extension was indicated by the ClientHello; otherwise this call will
+		// result in an "illegal_parameter" alert. It also asserts that the DC
+		// was sent in the ServerHello if and only if TLS 1.2 is in use.
+		if err := hs.processDelegatedCredentialFromServer(hs.serverHello.delegatedCredential); err != nil {
 			return err
 		}
 	} else {
@@ -477,10 +529,20 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 
 	keyAgreement := hs.suite.ka(c.vers)
 
+	// Set the public key used to verify the handshake.
+	pk := c.peerCertificates[0].PublicKey
+
+	// If the delegated credential extension has successfully been negotiated,
+	// then the ServerKeyExchange DelegatedCredential's private key.
+	if c.verifiedDc != nil {
+		pk = c.verifiedDc.PublicKey
+	}
+
 	skx, ok := msg.(*serverKeyExchangeMsg)
 	if ok {
 		hs.finishedHash.Write(skx.marshal())
-		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, c.peerCertificates[0].PublicKey, skx)
+
+		err = keyAgreement.processServerKeyExchange(c.config, hs.hello, hs.serverHello, pk, skx)
 		if err != nil {
 			c.sendAlert(alertUnexpectedMessage)
 			return err
@@ -529,7 +591,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 		}
 	}
 
-	preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, c.peerCertificates[0].PublicKey)
+	preMasterSecret, ckx, err := keyAgreement.generateClientKeyExchange(c.config, hs.hello, pk)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err

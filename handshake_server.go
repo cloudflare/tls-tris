@@ -30,6 +30,11 @@ type serverHandshakeState struct {
 	clientHello           *clientHelloMsg
 	hello                 *serverHelloMsg
 	cert                  *Certificate
+	privateKey            crypto.PrivateKey
+
+	// A marshalled DelegatedCredential to be sent to the client in the
+	// handshake.
+	delegatedCredential []byte
 
 	// TLS 1.0-1.2 fields
 	ellipticOk      bool
@@ -299,11 +304,48 @@ Curves:
 		c.sendAlert(alertInternalError)
 		return false, err
 	}
-	if hs.clientHello.scts && hs.hello != nil {
+
+	// Set the private key for this handshake to the certificate's secret key.
+	hs.privateKey = hs.cert.PrivateKey
+
+	if hs.clientHello.scts {
 		hs.hello.scts = hs.cert.SignedCertificateTimestamps
 	}
 
-	if priv, ok := hs.cert.PrivateKey.(crypto.Signer); ok {
+	// Set the private key to the DC private key if the client and server are
+	// willing to negotiate the delegated credential extension.
+	//
+	// Check to see if a DelegatedCredential is available and should be used.
+	// If one is available, the session is using TLS >= 1.2, and the client
+	// accepts the delegated credential extension, then set the handshake
+	// private key to the DC private key.
+	if c.config.GetDelegatedCredential != nil && hs.clientHello.delegatedCredential && c.vers >= VersionTLS12 {
+		dc, sk, err := c.config.GetDelegatedCredential(hs.clientHelloInfo(), c.vers)
+		if err != nil {
+			c.sendAlert(alertInternalError)
+			return false, err
+		}
+
+		// Set the handshake private key.
+		if dc != nil {
+			hs.privateKey = sk
+			if dc.Raw == nil {
+				dc.Raw, err = dc.Marshal()
+				if err != nil {
+					c.sendAlert(alertInternalError)
+					return false, err
+				}
+			}
+			hs.delegatedCredential = dc.Raw
+
+			// For TLS 1.2, the DC is an extension to the ServerHello.
+			if c.vers == VersionTLS12 {
+				hs.hello.delegatedCredential = hs.delegatedCredential
+			}
+		}
+	}
+
+	if priv, ok := hs.privateKey.(crypto.Signer); ok {
 		switch priv.Public().(type) {
 		case *ecdsa.PublicKey:
 			hs.ecdsaOk = true
@@ -314,7 +356,7 @@ Curves:
 			return false, fmt.Errorf("tls: unsupported signing key type (%T)", priv.Public())
 		}
 	}
-	if priv, ok := hs.cert.PrivateKey.(crypto.Decrypter); ok {
+	if priv, ok := hs.privateKey.(crypto.Decrypter); ok {
 		switch priv.Public().(type) {
 		case *rsa.PublicKey:
 			hs.rsaDecryptOk = true
@@ -479,7 +521,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 	}
 
 	keyAgreement := hs.suite.ka(c.vers)
-	skx, err := keyAgreement.generateServerKeyExchange(c.config, hs.cert.PrivateKey, hs.clientHello, hs.hello)
+	skx, err := keyAgreement.generateServerKeyExchange(c.config, hs.privateKey, hs.clientHello, hs.hello)
 	if err != nil {
 		c.sendAlert(alertHandshakeFailure)
 		return err
@@ -572,7 +614,7 @@ func (hs *serverHandshakeState) doFullHandshake() error {
 	}
 	hs.finishedHash.Write(ckx.marshal())
 
-	preMasterSecret, err := keyAgreement.processClientKeyExchange(c.config, hs.cert.PrivateKey, ckx, c.vers)
+	preMasterSecret, err := keyAgreement.processClientKeyExchange(c.config, hs.privateKey, ckx, c.vers)
 	if err != nil {
 		if err == errClientKeyExchange {
 			c.sendAlert(alertDecodeError)
@@ -880,16 +922,17 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 	}
 
 	hs.cachedClientHelloInfo = &ClientHelloInfo{
-		CipherSuites:      hs.clientHello.cipherSuites,
-		ServerName:        hs.clientHello.serverName,
-		SupportedCurves:   hs.clientHello.supportedCurves,
-		SupportedPoints:   hs.clientHello.supportedPoints,
-		SignatureSchemes:  hs.clientHello.supportedSignatureAlgorithms,
-		SupportedProtos:   hs.clientHello.alpnProtocols,
-		SupportedVersions: supportedVersions,
-		Conn:              hs.c.conn,
-		Offered0RTTData:   hs.clientHello.earlyData,
-		Fingerprint:       pskBinder,
+		CipherSuites:               hs.clientHello.cipherSuites,
+		ServerName:                 hs.clientHello.serverName,
+		SupportedCurves:            hs.clientHello.supportedCurves,
+		SupportedPoints:            hs.clientHello.supportedPoints,
+		SignatureSchemes:           hs.clientHello.supportedSignatureAlgorithms,
+		SupportedProtos:            hs.clientHello.alpnProtocols,
+		SupportedVersions:          supportedVersions,
+		Conn:                       hs.c.conn,
+		Offered0RTTData:            hs.clientHello.earlyData,
+		AcceptsDelegatedCredential: hs.clientHello.delegatedCredential,
+		Fingerprint:                pskBinder,
 	}
 
 	return hs.cachedClientHelloInfo

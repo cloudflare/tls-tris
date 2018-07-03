@@ -49,12 +49,14 @@ type clientHelloMsg struct {
 	psks                             []psk
 	pskKeyExchangeModes              []uint8
 	earlyData                        bool
+	delegatedCredential              bool
 }
 
-// Helpers
-// Function used for signature_algorithms and signature_algorithrms_cert extensions only
-// (for more details, see TLS 1.3 draft 28, 4.2.3)
-// Function advances data slice and returns it, so that it can be used for further processing
+// Function used for signature_algorithms and signature_algorithrms_cert
+// extensions only (for more details, see TLS 1.3 draft 28, 4.2.3).
+//
+// It advances data slice and returns it, so that it can be used for further
+// processing
 func marshalExtensionSignatureAlgorithms(extension uint16, data []byte, schemes []SignatureScheme) []byte {
 	algNum := uint16(len(schemes))
 	if algNum == 0 {
@@ -126,7 +128,8 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		eqStrings(m.alpnProtocols, m1.alpnProtocols) &&
 		eqKeyShares(m.keyShares, m1.keyShares) &&
 		eqUint16s(m.supportedVersions, m1.supportedVersions) &&
-		m.earlyData == m1.earlyData
+		m.earlyData == m1.earlyData &&
+		m.delegatedCredential == m1.delegatedCredential
 }
 
 func (m *clientHelloMsg) marshal() []byte {
@@ -200,6 +203,9 @@ func (m *clientHelloMsg) marshal() []byte {
 		numExtensions++
 	}
 	if m.earlyData {
+		numExtensions++
+	}
+	if m.delegatedCredential {
 		numExtensions++
 	}
 	if numExtensions > 0 {
@@ -419,6 +425,10 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[1] = byte(extensionEarlyData)
 		z = z[4:]
 	}
+	if m.delegatedCredential {
+		binary.BigEndian.PutUint16(z, extensionDelegatedCredential)
+		z = z[4:]
+	}
 
 	m.raw = x
 
@@ -483,6 +493,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 	m.psks = nil
 	m.pskKeyExchangeModes = nil
 	m.earlyData = false
+	m.delegatedCredential = false
 
 	if len(data) == 0 {
 		// ClientHello is optionally followed by extension data
@@ -747,6 +758,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 		case extensionEarlyData:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
+		case extensionDelegatedCredential:
+			// https://tools.ietf.org/html/draft-ietf-tls-subcerts
+			m.delegatedCredential = true
 		}
 		data = data[length:]
 		bindersOffset += length
@@ -774,6 +788,10 @@ type serverHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocol                 string
+
+	// TLS 1.2. In TLS 1.3, the DC extension is included in of the end-entity
+	// certificate in the Certificate message.
+	delegatedCredential []byte
 
 	// TLS 1.3
 	keyShare    keyShare
@@ -810,6 +828,7 @@ func (m *serverHelloMsg) equal(i interface{}) bool {
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
 		m.alpnProtocol == m1.alpnProtocol &&
 		m.keyShare.group == m1.keyShare.group &&
+		bytes.Equal(m.delegatedCredential, m1.delegatedCredential) &&
 		bytes.Equal(m.keyShare.data, m1.keyShare.data) &&
 		m.psk == m1.psk &&
 		m.pskIdentity == m1.pskIdentity
@@ -861,6 +880,10 @@ func (m *serverHelloMsg) marshal() []byte {
 			sctLen += len(sct) + 2
 		}
 		extensionsLength += 2 + sctLen
+		numExtensions++
+	}
+	if dcLen := len(m.delegatedCredential); dcLen > 0 && m.vers == VersionTLS12 {
+		extensionsLength += 4 + dcLen
 		numExtensions++
 	}
 	if m.keyShare.group != 0 {
@@ -992,7 +1015,13 @@ func (m *serverHelloMsg) marshal() []byte {
 			z = z[len(sct)+2:]
 		}
 	}
-
+	if dcLen := len(m.delegatedCredential); dcLen > 0 && m.vers == VersionTLS12 {
+		binary.BigEndian.PutUint16(z, extensionDelegatedCredential)
+		binary.BigEndian.PutUint16(z[2:], uint16(dcLen))
+		z = z[4:]
+		copy(z, m.delegatedCredential)
+		z = z[dcLen:]
+	}
 	if m.keyShare.group != 0 {
 		z[0] = uint8(extensionKeyShare >> 8)
 		z[1] = uint8(extensionKeyShare)
@@ -1180,6 +1209,11 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 				m.scts = append(m.scts, d[:sctLen])
 				d = d[sctLen:]
 			}
+		case extensionDelegatedCredential:
+			if m.vers != VersionTLS12 {
+				return alertUnexpectedMessage
+			}
+			m.delegatedCredential = data[:length]
 		case extensionKeyShare:
 			d := data[:length]
 
@@ -1422,9 +1456,10 @@ func (m *certificateMsg) unmarshal(data []byte) alert {
 }
 
 type certificateEntry struct {
-	data       []byte
-	ocspStaple []byte
-	sctList    [][]byte
+	data                []byte
+	ocspStaple          []byte
+	sctList             [][]byte
+	delegatedCredential []byte
 }
 
 type certificateMsg13 struct {
@@ -1446,6 +1481,7 @@ func (m *certificateMsg13) equal(i interface{}) bool {
 		ok := bytes.Equal(m.certificates[i].data, m1.certificates[i].data)
 		ok = ok && bytes.Equal(m.certificates[i].ocspStaple, m1.certificates[i].ocspStaple)
 		ok = ok && eqByteSlices(m.certificates[i].sctList, m1.certificates[i].sctList)
+		ok = ok && bytes.Equal(m.certificates[i].delegatedCredential, m1.certificates[i].delegatedCredential)
 		if !ok {
 			return false
 		}
@@ -1471,6 +1507,9 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			for _, sct := range cert.sctList {
 				i += 2 + len(sct)
 			}
+		}
+		if len(cert.delegatedCredential) != 0 {
+			i += 4 + len(cert.delegatedCredential)
 		}
 	}
 
@@ -1546,6 +1585,15 @@ func (m *certificateMsg13) marshal() (x []byte) {
 			sctLenPos[2] = uint8(sctLen >> 8)
 			sctLenPos[3] = uint8(sctLen)
 		}
+		if len(cert.delegatedCredential) != 0 {
+			binary.BigEndian.PutUint16(z, extensionDelegatedCredential)
+			binary.BigEndian.PutUint16(z[2:], uint16(len(cert.delegatedCredential)))
+			z = z[4:]
+			copy(z, cert.delegatedCredential)
+			z = z[len(cert.delegatedCredential):]
+			extensionLen += 4 + len(cert.delegatedCredential)
+		}
+
 		extLenPos[0] = uint8(extensionLen >> 8)
 		extLenPos[1] = uint8(extensionLen)
 	}
@@ -1651,6 +1699,8 @@ func (m *certificateMsg13) unmarshal(data []byte) alert {
 					m.certificates[i].sctList = append(m.certificates[i].sctList, body[2:2+sctLen])
 					body = body[2+sctLen:]
 				}
+			case extensionDelegatedCredential:
+				m.certificates[i].delegatedCredential = body
 			}
 		}
 	}

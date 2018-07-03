@@ -14,6 +14,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -34,6 +35,7 @@ var (
 	isCA       = flag.Bool("ca", false, "whether this cert should be its own Certificate Authority")
 	rsaBits    = flag.Int("rsa-bits", 2048, "Size of RSA key to generate. Ignored if --ecdsa-curve is set")
 	ecdsaCurve = flag.String("ecdsa-curve", "", "ECDSA curve to use to generate a key. Valid values are P224, P256 (recommended), P384, P521")
+	isDC       = flag.Bool("dc", false, "whether this cert can be used with delegated credentials")
 )
 
 func publicKey(priv interface{}) interface{} {
@@ -135,6 +137,11 @@ func main() {
 	if *isCA {
 		template.IsCA = true
 		template.KeyUsage |= x509.KeyUsageCertSign
+	}
+
+	if *isDC {
+		template.ExtraExtensions = append(
+			template.ExtraExtensions, *tls.CreateDelegationUsagePKIXExtension())
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, publicKey(priv), priv)
