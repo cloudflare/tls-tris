@@ -97,6 +97,7 @@ const (
 	extensionKeyShare                uint16 = 51
 	extensionNextProtoNeg            uint16 = 13172 // not IANA assigned
 	extensionRenegotiationInfo       uint16 = 0xff01
+	extensionDelegatedCredential     uint16 = 0xff02 // TODO(any) Get IANA assignment
 )
 
 // TLS signaling cipher suite values
@@ -356,6 +357,10 @@ type ClientHelloInfo struct {
 	// immediately available for Read.
 	Offered0RTTData bool
 
+	// AcceptsDelegatedCredential is true if the client indicated willingness
+	// to negotiate the delegated credential extension.
+	AcceptsDelegatedCredential bool
+
 	// The Fingerprint is an sequence of bytes unique to this Client Hello.
 	// It can be used to prevent or mitigate 0-RTT data replays as it's
 	// guaranteed that a replayed connection will have the same Fingerprint.
@@ -609,6 +614,22 @@ type Config struct {
 	// session tickets, instead of SessionTicketKey.
 	SessionTicketSealer SessionTicketSealer
 
+	// AcceptDelegatedCredential is true if the client is willing to negotiate
+	// the delegated credential extension.
+	//
+	// This value has no meaning for the server.
+	//
+	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts.
+	AcceptDelegatedCredential bool
+
+	// GetDelegatedCredential returns a DelegatedCredential for use with the
+	// delegated credential extension based on the ClientHello and TLS version
+	// selected for the session. If this is nil, then the server will not offer
+	// a DelegatedCredential.
+	//
+	// This value has no meaning for the client.
+	GetDelegatedCredential func(*ClientHelloInfo, uint16) (*DelegatedCredential, crypto.PrivateKey, error)
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys.
@@ -685,6 +706,8 @@ func (c *Config) Clone() *Config {
 		Accept0RTTData:              c.Accept0RTTData,
 		Max0RTTDataSize:             c.Max0RTTDataSize,
 		SessionTicketSealer:         c.SessionTicketSealer,
+		AcceptDelegatedCredential:   c.AcceptDelegatedCredential,
+		GetDelegatedCredential:      c.GetDelegatedCredential,
 		sessionTicketKeys:           sessionTicketKeys,
 	}
 }

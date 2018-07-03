@@ -403,6 +403,16 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	if len(certEntries) > 0 && hs.clientHello.scts {
 		certEntries[0].sctList = hs.cert.SignedCertificateTimestamps
 	}
+
+	// If hs.delegatedCredential is set (see hs.readClientHello()) then the
+	// server is using the delegated credential extension. In TLS 1.3, the DC is
+	// added as an extension to the end-entity certificate, i.e., the last
+	// CertificateEntry of Certificate.certficate_list (see
+	// https://tools.ietf.org/html/draft-ietf-tls-subcerts).
+	if len(certEntries) > 0 && hs.clientHello.delegatedCredential && hs.delegatedCredential != nil {
+		certEntries[0].delegatedCredential = hs.delegatedCredential
+	}
+
 	certMsg := &certificateMsg13{certificates: certEntries}
 
 	hs.keySchedule.write(certMsg.marshal())
@@ -423,7 +433,7 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	}
 
 	toSign := prepareDigitallySigned(sigHash, "TLS 1.3, server CertificateVerify", hs.keySchedule.transcriptHash.Sum(nil))
-	signature, err := hs.cert.PrivateKey.(crypto.Signer).Sign(c.config.rand(), toSign[:], opts)
+	signature, err := hs.privateKey.(crypto.Signer).Sign(c.config.rand(), toSign[:], opts)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -468,9 +478,9 @@ func (c *Conn) handleEndOfEarlyData() error {
 // See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.4.1.2
 func (hs *serverHandshakeState) selectTLS13SignatureScheme() (sigScheme SignatureScheme, err error) {
 	var supportedSchemes []SignatureScheme
-	signer, ok := hs.cert.PrivateKey.(crypto.Signer)
+	signer, ok := hs.privateKey.(crypto.Signer)
 	if !ok {
-		return 0, errors.New("tls: certificate private key does not implement crypto.Signer")
+		return 0, errors.New("tls: private key does not implement crypto.Signer")
 	}
 	pk := signer.Public()
 	if _, ok := pk.(*rsa.PublicKey); ok {
@@ -1034,10 +1044,32 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return unexpectedMessageError(certMsg, msg)
 	}
 	hs.keySchedule.write(certMsg.marshal())
+
 	// Validate certificates.
 	certs := getCertsFromEntries(certMsg.certificates)
 	if err := hs.processCertsFromServer(certs); err != nil {
 		return err
+	}
+
+	// Validate the DC if present. The DC is only processed if the extension was
+	// indicated by the ClientHello; otherwise this call will result in an
+	// "illegal_parameter" alert. The call also asserts that the DC extension
+	// did not appear in the ServerHello.
+	if len(certMsg.certificates) > 0 {
+		if err := hs.processDelegatedCredentialFromServer(
+			certMsg.certificates[0].delegatedCredential); err != nil {
+			return err
+		}
+	}
+
+	// Set the public key used to verify the handshake.
+	pk := hs.c.peerCertificates[0].PublicKey
+
+	// If the delegated credential extension has successfully been negotiated,
+	// then the  CertificateVerify signature will have been produced with the
+	// DelegatedCredential's private key.
+	if hs.c.verifiedDc != nil {
+		pk = hs.c.verifiedDc.PublicKey
 	}
 
 	// Receive CertificateVerify message.
@@ -1052,7 +1084,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	}
 	err, alertCode := verifyPeerHandshakeSignature(
 		certVerifyMsg,
-		hs.c.peerCertificates[0].PublicKey,
+		pk,
 		hs.hello.supportedSignatureAlgorithms,
 		hs.keySchedule.transcriptHash.Sum(nil),
 		"TLS 1.3, server CertificateVerify")
