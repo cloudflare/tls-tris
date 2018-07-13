@@ -107,6 +107,9 @@ type Credential struct {
 // NewCredential generates a key pair for signature algorithm `scheme` and
 // returns a credential with the public key and provided validity time.
 func NewCredential(scheme SignatureScheme, validTime time.Duration) (*Credential, crypto.PrivateKey, error) {
+	// The granularity of DC validity is seconds.
+	validTime = validTime.Round(time.Second)
+
 	// Generate a new key pair.
 	var err error
 	var sk crypto.PrivateKey
@@ -326,9 +329,6 @@ func Delegate(cert *Certificate, cred *Credential, vers uint16) (*DelegatedCrede
 // algorithm (`scheme`), validity interval (defined by `cert.Leaf.notBefore` and
 // `nalidTime`), and TLS version (`vers`), and signs it using `cert.PrivateKey`.
 func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime time.Duration, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
-	// The granularity of DC validity is seconds.
-	validTime = validTime.Round(time.Second)
-
 	cred, sk, err := NewCredential(scheme, validTime)
 	if err != nil {
 		return nil, nil, err
