@@ -1069,7 +1069,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	// then the  CertificateVerify signature will have been produced with the
 	// DelegatedCredential's private key.
 	if hs.c.verifiedDc != nil {
-		pk = hs.c.verifiedDc.PublicKey
+		pk = hs.c.verifiedDc.Cred.PublicKey
 	}
 
 	// Receive CertificateVerify message.

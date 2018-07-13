@@ -189,14 +189,14 @@ func checkECDSAPublicKeysEqual(
 
 // Test that cred and cred2 are equal.
 func checkCredentialsEqual(dc, dc2 *DelegatedCredential) error {
-	if dc2.ValidTime != dc.ValidTime {
-		return fmt.Errorf("ValidTime mismatch: got %d; want %d", dc2.ValidTime, dc.ValidTime)
+	if dc2.Cred.ValidTime != dc.Cred.ValidTime {
+		return fmt.Errorf("ValidTime mismatch: got %d; want %d", dc2.Cred.ValidTime, dc.Cred.ValidTime)
 	}
-	if dc2.publicKeyScheme != dc.publicKeyScheme {
-		return fmt.Errorf("scheme mismatch: got %04x; want %04x", dc2.publicKeyScheme, dc.publicKeyScheme)
+	if dc2.Cred.scheme != dc.Cred.scheme {
+		return fmt.Errorf("scheme mismatch: got %04x; want %04x", dc2.Cred.scheme, dc.Cred.scheme)
 	}
 
-	return checkECDSAPublicKeysEqual(dc.PublicKey, dc2.PublicKey, dc.publicKeyScheme)
+	return checkECDSAPublicKeysEqual(dc.Cred.PublicKey, dc2.Cred.PublicKey, dc.Cred.scheme)
 }
 
 // Test delegation and validation of credentials.
