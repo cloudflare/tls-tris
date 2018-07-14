@@ -104,6 +104,22 @@ type Credential struct {
 	scheme SignatureScheme
 }
 
+// IsExpired returns true if the credential has expired. The end of the validity
+// interval is defined as the delegator certificate's notBefore field (`start`)
+// plus ValidTime seconds. This function simply checks that the current time
+// (`now`) is before the end of the valdity interval.
+func (cred *Credential) IsExpired(start, now time.Time) bool {
+	end := start.Add(cred.ValidTime)
+	return !now.Before(end)
+}
+
+// InvalidTTL returns true if the credential's validity period is longer than the
+// maximum permitted. This is defined by the certificate's notBefore field
+// (`start`) plus the ValidTime, minus the current time (`now`).
+func (cred *Credential) InvalidTTL(start, now time.Time) bool {
+	return cred.ValidTime > (now.Sub(start) + dcMaxTTL).Round(time.Second)
+}
+
 // NewCredential generates a key pair for signature algorithm `scheme` and
 // returns a credential with the public key and provided validity time.
 func NewCredential(scheme SignatureScheme, validTime time.Duration) (*Credential, crypto.PrivateKey, error) {
@@ -341,22 +357,6 @@ func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime
 	return dc, sk, nil
 }
 
-// IsExpired returns true if the credential has expired. The end of the validity
-// interval is defined as the delegator certificate's notBefore field (`start`)
-// plus ValidTime seconds. This function simply checks that the current time
-// (`now`) is before the end of the valdity interval.
-func (dc *DelegatedCredential) IsExpired(start, now time.Time) bool {
-	end := start.Add(dc.Cred.ValidTime)
-	return !now.Before(end)
-}
-
-// InvalidTTL returns true if the credential's validity period is longer than the
-// maximum permitted. This is defined by the certificate's notBefore field
-// (`start`) plus the ValidTime, minus the current time (`now`).
-func (dc *DelegatedCredential) InvalidTTL(start, now time.Time) bool {
-	return dc.Cred.ValidTime > (now.Sub(start) + dcMaxTTL).Round(time.Second)
-}
-
 // Validate checks that that the signature is valid, that the credential hasn't
 // expired, and that the TTL is valid. It also checks that certificate can be
 // used for delegation.
@@ -366,11 +366,11 @@ func (dc *DelegatedCredential) Validate(cert *x509.Certificate, vers uint16, now
 		return false, errNoDelegationUsage
 	}
 
-	if dc.IsExpired(cert.NotBefore, now) {
+	if dc.Cred.IsExpired(cert.NotBefore, now) {
 		return false, errors.New("credential has expired")
 	}
 
-	if dc.InvalidTTL(cert.NotBefore, now) {
+	if dc.Cred.InvalidTTL(cert.NotBefore, now) {
 		return false, errors.New("credential TTL is invalid")
 	}
 
