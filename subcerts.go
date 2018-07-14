@@ -83,21 +83,78 @@ func canDelegate(cert *x509.Certificate) bool {
 	return false
 }
 
-// This structure stores the public components of a credential.
-type credential struct {
-	validTime time.Duration
-	publicKey crypto.PublicKey
-	scheme    SignatureScheme
+// Credential structure stores the public components of a credential.
+type Credential struct {
+	// The amount of time for which the credential is valid. Specifically, the
+	// the credential expires `ValidTime` seconds after the `notBefore` of the
+	// delegation certificate. The delegator shall not issue delegated
+	// credentials that are valid for more than 7 days from the current time.
+	//
+	// When this data structure is serialized, this value is converted to a
+	// uint32 representing the duration in seconds.
+	ValidTime time.Duration
+
+	// The credential public key.
+	PublicKey crypto.PublicKey
+
+	// The signature scheme associated with the credential public key.
+	//
+	// NOTE This is used for bookkeeping and is not actually part of the
+	// Credential structure specified in the standard.
+	scheme SignatureScheme
+}
+
+// IsExpired returns true if the credential has expired. The end of the validity
+// interval is defined as the delegator certificate's notBefore field (`start`)
+// plus ValidTime seconds. This function simply checks that the current time
+// (`now`) is before the end of the valdity interval.
+func (cred *Credential) IsExpired(start, now time.Time) bool {
+	end := start.Add(cred.ValidTime)
+	return !now.Before(end)
+}
+
+// InvalidTTL returns true if the credential's validity period is longer than the
+// maximum permitted. This is defined by the certificate's notBefore field
+// (`start`) plus the ValidTime, minus the current time (`now`).
+func (cred *Credential) InvalidTTL(start, now time.Time) bool {
+	return cred.ValidTime > (now.Sub(start) + dcMaxTTL).Round(time.Second)
+}
+
+// NewCredential generates a key pair for signature algorithm `scheme` and
+// returns a credential with the public key and provided validity time.
+func NewCredential(scheme SignatureScheme, validTime time.Duration) (*Credential, crypto.PrivateKey, error) {
+	// The granularity of DC validity is seconds.
+	validTime = validTime.Round(time.Second)
+
+	// Generate a new key pair.
+	var err error
+	var sk crypto.PrivateKey
+	var pk crypto.PublicKey
+	switch scheme {
+	case ECDSAWithP256AndSHA256,
+		ECDSAWithP384AndSHA384,
+		ECDSAWithP521AndSHA512:
+		sk, err = ecdsa.GenerateKey(getCurve(scheme), rand.Reader)
+		if err != nil {
+			return nil, nil, err
+		}
+		pk = sk.(*ecdsa.PrivateKey).Public()
+
+	default:
+		return nil, nil, fmt.Errorf("unsupported signature scheme: 0x%04x", scheme)
+	}
+
+	return &Credential{validTime, pk, scheme}, sk, nil
 }
 
 // marshalSubjectPublicKeyInfo returns a DER encoded SubjectPublicKeyInfo structure
 // (as defined in the X.509 standard) for the credential.
-func (cred *credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
+func (cred *Credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
 	switch cred.scheme {
 	case ECDSAWithP256AndSHA256,
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512:
-		serializedPublicKey, err := x509.MarshalPKIXPublicKey(cred.publicKey)
+		serializedPublicKey, err := x509.MarshalPKIXPublicKey(cred.PublicKey)
 		if err != nil {
 			return nil, err
 		}
@@ -109,10 +166,10 @@ func (cred *credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
 }
 
 // marshal encodes a credential as per the spec.
-func (cred *credential) marshal() ([]byte, error) {
+func (cred *Credential) Marshal() ([]byte, error) {
 	// Write the valid_time field.
 	serialized := make([]byte, 6)
-	binary.BigEndian.PutUint32(serialized, uint32(cred.validTime/time.Second))
+	binary.BigEndian.PutUint32(serialized, uint32(cred.ValidTime/time.Second))
 
 	// Encode the public key and assert that the encoding is no longer than 2^16
 	// bytes (per the spect).
@@ -132,7 +189,7 @@ func (cred *credential) marshal() ([]byte, error) {
 }
 
 // unmarshalCredential decodes a credential and returns it.
-func unmarshalCredential(serialized []byte) (*credential, error) {
+func UnmarshalCredential(serialized []byte) (*Credential, error) {
 	// Bytes 0-3 are the validity time field; bytes 4-6 are the length of the
 	// serialized SubjectPublicKeyInfo.
 	if len(serialized) < 6 {
@@ -148,18 +205,18 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 		return nil, err
 	}
 
-	return &credential{validTime, pk, scheme}, nil
+	return &Credential{validTime, pk, scheme}, nil
 }
 
 // unmarshalSubjectPublicKeyInfo parses a DER encoded SubjectPublicKeyInfo
 // structure into a public key and its corresponding algorithm.
 func unmarshalSubjectPublicKeyInfo(serialized []byte) (crypto.PublicKey, SignatureScheme, error) {
-	publicKey, err := x509.ParsePKIXPublicKey(serialized)
+	PublicKey, err := x509.ParsePKIXPublicKey(serialized)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	switch pk := publicKey.(type) {
+	switch pk := PublicKey.(type) {
 	case *ecdsa.PublicKey:
 		curveName := pk.Curve.Params().Name
 		if curveName == "P-256" {
@@ -203,20 +260,8 @@ type DelegatedCredential struct {
 	// The serialized form of the credential.
 	Raw []byte
 
-	// The amount of time for which the credential is valid. Specifically, the
-	// the credential expires `ValidTime` seconds after the `notBefore` of the
-	// delegation certificate. The delegator shall not issue delegated
-	// credentials that are valid for more than 7 days from the current time.
-	//
-	// When this data structure is serialized, this value is converted to a
-	// uint32 representing the duration in seconds.
-	ValidTime time.Duration
-
-	// The credential public key.
-	PublicKey crypto.PublicKey
-
-	// The signature scheme associated with the credential public key.
-	publicKeyScheme SignatureScheme
+	// The credential, which contains a public and its validity time.
+	Cred *Credential
 
 	// The signature scheme used to sign the credential.
 	Scheme SignatureScheme
@@ -225,29 +270,24 @@ type DelegatedCredential struct {
 	Signature []byte
 }
 
-// NewDelegatedCredential creates a new delegated credential using `cert` for
-// delegation. It generates a public/private key pair for the provided signature
-// algorithm (`scheme`), validity interval (defined by `cert.Leaf.notBefore` and
-// `validTime`), and TLS version (`vers`), and signs it using `cert.PrivateKey`.
-func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime time.Duration, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
-	// The granularity of DC validity is seconds.
-	validTime = validTime.Round(time.Second)
-
+// Delegate signs a credential `cred` using `cert`, bindding it to the protocol
+// version `vers`. It returns a delegated credential.
+func Delegate(cert *Certificate, cred *Credential, vers uint16) (*DelegatedCredential, error) {
 	// Parse the leaf certificate if needed.
 	var err error
 	if cert.Leaf == nil {
 		if len(cert.Certificate[0]) == 0 {
-			return nil, nil, errors.New("missing leaf certificate")
+			return nil, errors.New("missing leaf certificate")
 		}
 		cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	// Check that the leaf certificate can be used for delegation.
 	if !canDelegate(cert.Leaf) {
-		return nil, nil, errNoDelegationUsage
+		return nil, errNoDelegationUsage
 	}
 
 	// Extract the delegator signature scheme from the certificate.
@@ -265,38 +305,19 @@ func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime
 		} else if certAlg == x509.ECDSAWithSHA512 && curveName == "P-521" {
 			delegatorScheme = ECDSAWithP521AndSHA512
 		} else {
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"using curve %s for %s is not supported",
 				curveName, cert.Leaf.SignatureAlgorithm)
 		}
-
 	default:
-		return nil, nil, fmt.Errorf("unsupported delgation key type: %T", sk)
-	}
-
-	// Generate a new key pair.
-	var sk crypto.PrivateKey
-	var pk crypto.PublicKey
-	switch scheme {
-	case ECDSAWithP256AndSHA256,
-		ECDSAWithP384AndSHA384,
-		ECDSAWithP521AndSHA512:
-		sk, err = ecdsa.GenerateKey(getCurve(scheme), rand.Reader)
-		if err != nil {
-			return nil, nil, err
-		}
-		pk = sk.(*ecdsa.PrivateKey).Public()
-
-	default:
-		return nil, nil, fmt.Errorf("unsupported signature scheme: 0x%04x", scheme)
+		return nil, fmt.Errorf("unsupported delgation key type: %T", sk)
 	}
 
 	// Prepare the credential for digital signing.
 	hash := getHash(delegatorScheme)
-	cred := &credential{validTime, pk, scheme}
 	in, err := prepareDelegation(hash, cred, cert.Leaf.Raw, delegatorScheme, vers)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Sign the credential.
@@ -306,35 +327,34 @@ func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime
 		opts := crypto.SignerOpts(hash)
 		sig, err = sk.Sign(rand.Reader, in, opts)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	default:
-		return nil, nil, fmt.Errorf("unsupported delgation key type: %T", sk)
+		return nil, fmt.Errorf("unsupported delgation key type: %T", sk)
 	}
 
 	return &DelegatedCredential{
-		ValidTime:       validTime,
-		PublicKey:       pk,
-		publicKeyScheme: scheme,
-		Scheme:          delegatorScheme,
-		Signature:       sig,
-	}, sk, nil
+		Cred:      cred,
+		Scheme:    delegatorScheme,
+		Signature: sig,
+	}, nil
 }
 
-// IsExpired returns true if the credential has expired. The end of the validity
-// interval is defined as the delegator certificate's notBefore field (`start`)
-// plus ValidTime seconds. This function simply checks that the current time
-// (`now`) is before the end of the valdity interval.
-func (dc *DelegatedCredential) IsExpired(start, now time.Time) bool {
-	end := start.Add(dc.ValidTime)
-	return !now.Before(end)
-}
+// NewDelegatedCredential creates a new delegated credential using `cert` for
+// delegation. It generates a public/private key pair for the provided signature
+// algorithm (`scheme`), validity interval (defined by `cert.Leaf.notBefore` and
+// `nalidTime`), and TLS version (`vers`), and signs it using `cert.PrivateKey`.
+func NewDelegatedCredential(cert *Certificate, scheme SignatureScheme, validTime time.Duration, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
+	cred, sk, err := NewCredential(scheme, validTime)
+	if err != nil {
+		return nil, nil, err
+	}
 
-// InvalidTTL returns true if the credential's validity period is longer than the
-// maximum permitted. This is defined by the certificate's notBefore field
-// (`start`) plus the ValidTime, minus the current time (`now`).
-func (dc *DelegatedCredential) InvalidTTL(start, now time.Time) bool {
-	return dc.ValidTime > (now.Sub(start) + dcMaxTTL).Round(time.Second)
+	dc, err := Delegate(cert, cred, vers)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dc, sk, nil
 }
 
 // Validate checks that that the signature is valid, that the credential hasn't
@@ -346,18 +366,17 @@ func (dc *DelegatedCredential) Validate(cert *x509.Certificate, vers uint16, now
 		return false, errNoDelegationUsage
 	}
 
-	if dc.IsExpired(cert.NotBefore, now) {
+	if dc.Cred.IsExpired(cert.NotBefore, now) {
 		return false, errors.New("credential has expired")
 	}
 
-	if dc.InvalidTTL(cert.NotBefore, now) {
+	if dc.Cred.InvalidTTL(cert.NotBefore, now) {
 		return false, errors.New("credential TTL is invalid")
 	}
 
 	// Prepare the credential for verification.
 	hash := getHash(dc.Scheme)
-	cred := &credential{dc.ValidTime, dc.PublicKey, dc.publicKeyScheme}
-	in, err := prepareDelegation(hash, cred, cert.Raw, dc.Scheme, vers)
+	in, err := prepareDelegation(hash, dc.Cred, cert.Raw, dc.Scheme, vers)
 	if err != nil {
 		return false, err
 	}
@@ -388,8 +407,7 @@ func (dc *DelegatedCredential) Validate(cert *x509.Certificate, vers uint16, now
 // dc.Raw to the output as a side effect.
 func (dc *DelegatedCredential) Marshal() ([]byte, error) {
 	// The credential.
-	cred := &credential{dc.ValidTime, dc.PublicKey, dc.publicKeyScheme}
-	serialized, err := cred.marshal()
+	serialized, err := dc.Cred.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +440,7 @@ func UnmarshalDelegatedCredential(serialized []byte) (*DelegatedCredential, erro
 	}
 
 	// Parse the credential.
-	cred, err := unmarshalCredential(serialized[:serializedCredentialLen])
+	cred, err := UnmarshalCredential(serialized[:serializedCredentialLen])
 	if err != nil {
 		return nil, err
 	}
@@ -446,11 +464,9 @@ func UnmarshalDelegatedCredential(serialized []byte) (*DelegatedCredential, erro
 	sig := serialized[:serializedSignatureLen]
 
 	return &DelegatedCredential{
-		ValidTime:       cred.validTime,
-		PublicKey:       cred.publicKey,
-		publicKeyScheme: cred.scheme,
-		Scheme:          scheme,
-		Signature:       sig,
+		Cred:      cred,
+		Scheme:    scheme,
+		Signature: sig,
 	}, nil
 }
 
@@ -489,7 +505,7 @@ func getHash(scheme SignatureScheme) crypto.Hash {
 // certificate (`delegatorCert`), the signature scheme of the delegator
 // (`delegatorScheme`), and the protocol version (`vers`) in which the credential
 // is to be used.
-func prepareDelegation(hash crypto.Hash, cred *credential, delegatorCert []byte, delegatorScheme SignatureScheme, vers uint16) ([]byte, error) {
+func prepareDelegation(hash crypto.Hash, cred *Credential, delegatorCert []byte, delegatorScheme SignatureScheme, vers uint16) ([]byte, error) {
 	h := hash.New()
 
 	// The header.
@@ -511,7 +527,7 @@ func prepareDelegation(hash crypto.Hash, cred *credential, delegatorCert []byte,
 	h.Write(serializedScheme[:])
 
 	// The credential.
-	serializedCred, err := cred.marshal()
+	serializedCred, err := cred.Marshal()
 	if err != nil {
 		return nil, err
 	}

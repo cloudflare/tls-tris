@@ -535,7 +535,7 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	// If the delegated credential extension has successfully been negotiated,
 	// then the ServerKeyExchange DelegatedCredential's private key.
 	if c.verifiedDc != nil {
-		pk = c.verifiedDc.PublicKey
+		pk = c.verifiedDc.Cred.PublicKey
 	}
 
 	skx, ok := msg.(*serverKeyExchangeMsg)
