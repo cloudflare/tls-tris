@@ -5,23 +5,14 @@
 package tls
 
 import (
-	"bytes"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/x509"
-	"errors"
+	"encoding/asn1"
+	"encoding/pem"
 	"fmt"
 	"testing"
 	"time"
 )
-
-// dcWithPrivateKey stores a delegated credential and its corresponding private
-// key.
-type dcWithPrivateKey struct {
-	*DelegatedCredential
-	privateKey crypto.PrivateKey
-}
 
 // These test keys were generated with the following program, available in the
 // crypto/tls directory:
@@ -68,34 +59,80 @@ zP3NGxnDVqlMX+HI1+IuFXgQTVWvBdxPkw==
 -----END EC PRIVATE KEY-----
 `
 
-// Invalid TLS versions used for testing purposes.
-const (
-	versionInvalidDC     uint16 = 0xff00
-	versionMalformedDC12 uint16 = 0xff12
-	versionMalformedDC13 uint16 = 0xff13
-)
+var dcTestDCsPEM = `-----BEGIN DC TEST DATA-----
+MIIGQzCCAToTBXRsczEyAgIDAwICBAMEga0ACUp3AFswWTATBgcqhkjOPQIBBggq
+hkjOPQMBBwNCAAQ9z9RDrMvyRzPOkw9SK2S/O5DiwfRNjAwYcq7e/sKdN0ZcSP1K
+se/+ZDXfruwyviuq+h5oSzWPoejHHx7jnwBTBAMASDBGAiEAtYH/x0Ue2B2a34WG
+Oj9wVPJeyYBXxIbUrCdqfoQzq2oCIQCJYtwRE9UJvAQKve4ulJOr+zGjN8jG4tdg
+9YSb/yOQgQR5MHcCAQEEIOBCmSaGwzZtXOJRCbA03GgxegoSV5GasVjJlttpUAPh
+oAoGCCqGSM49AwEHoUQDQgAEPc/UQ6zL8kczzpMPUitkvzuQ4sH0TYwMGHKu3v7C
+nTdGXEj9SrHv/mQ1367sMr4rqvoeaEs1j6Hoxx8e458AUzCCATgTBXRsczEzAgJ/
+FwICBAMEgasACUp3AFswWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARcqxvo0JO1
+yiXoBhV/T2hmkUhwMnP5XtTJCGGfI0ILShmTeuTcScmiTuzo3qA/HVmr2sdnfBvx
+zhQOYXrsfTNxBAMARjBEAiB8xrQk3DRFkACXMLZTJ1jAml/2zj/Vqc4cav0xi9zk
+dQIgDSrNtkK1akKGeNt7Iquv0lLZgyLp1i+rwQwOTdbw6ScEeTB3AgEBBCC7JqZM
+yIFzXdTmuYIUqOGQ602V4VtQttg/Oh2NuSCteKAKBggqhkjOPQMBB6FEA0IABFyr
+G+jQk7XKJegGFX9PaGaRSHAyc/le1MkIYZ8jQgtKGZN65NxJyaJO7OjeoD8dWava
+x2d8G/HOFA5heux9M3EwggE9EwdpbnZhbGlkAgMA/wACAgQDBIGtAAlKdwBbMFkw
+EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEdlKK5Dv35nOxaTS0LGqBnQstHSqVFIoZ
+FsHGdXuR2N4pAoMkUF0w94+BZ/KHm1Djv/ugELm0aMHp8SBbJV3JVQQDAEgwRgIh
+AL/gfo5JGFV/pNZe4ktc2yO41a4ipFvb8WIv8qn29gjoAiEAw1DB1EelNEfjl+fp
+CDMT+mdFKRDMnXTRrM2K8gI1QsEEeTB3AgEBBCCdu3sMkUAsbHAcYOZ9wJnQujWr
+5UqPQotIys9hqJ3PTaAKBggqhkjOPQMBB6FEA0IABHZSiuQ79+ZzsWk0tCxqgZ0L
+LR0qlRSKGRbBxnV7kdjeKQKDJFBdMPePgWfyh5tQ47/7oBC5tGjB6fEgWyVdyVUw
+ggFAEwttYWxmb3JtZWQxMgICAwMCAgQDBIGtAAlKdwBbMFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAEn8Rr7eedTHuGJjv7mglv7nJrV7KMDE2A33v8EAMGU+AvRq2m
+XNIoc+a6JxpYetjTnT3s8TW4qWXq9dJzw3VAVgQDAEgwRgIhAKEVbifQNllzjTwX
+s5CUsN42Eo8R8WTiFNSbhJmqDKsCAiEA4cqhQA2Cop2WtuOAG3aMnO9MKAPxLeUc
+fEmnM658P3kEeTB3AgEBBCAR4EtE/WbJIc6id2bLOR4xgis7mzOWJdiRAiGKNshB
+iKAKBggqhkjOPQMBB6FEA0IABF/2VNK9W/QsMdiBn3qdG19trNMAFvVM0JbeBHin
+gl/7WVXGBk0WzgvmA0qSH4Bc7d8z8n3JKdmByYPgpxTjbFUwggFAEwttYWxmb3Jt
+ZWQxMwICAwQCAgQDBIGtAAlKdwBbMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+FGWBYWhjdr9al2imEFlGx+r0tQdcEqL/Qtf7imo/z5fr2z+tG3TawC0QeHU6uyRX
+8zPvZGJ/Xps5q3RBI0tVggQDAEgwRgIhAMv30xlPKpajZuahNRHx3AlGtM9mNt5K
+WbWvhqDXhlVgAiEAxqI0K57Y9p9lLC8cSoy2arppjPMWKkVA4G2ck2n4NwUEeTB3
+AgEBBCCaruxlln2bwAX0EGy4oge0EpSDObt8Z+pNqx1nxDYyYKAKBggqhkjOPQMB
+B6FEA0IABBYfBBlgDC3TLkbJJTTJaZMXiXvDkUiWMeYFpcbAHdvMI8zoS6b++Zgc
+HJbn52hmB027JEIMPWsxKxPkr7udk7Q=
+-----END DC TEST DATA-----
+`
 
-var dcTestConfig *Config
-var dcTestCerts map[string]*Certificate
-var dcTestDCs map[uint16]dcWithPrivateKey
-var dcNow time.Time
-var dcTestDCScheme = ECDSAWithP521AndSHA512
-var dcTestDCVersions = []uint16{
-	VersionTLS12,
-	VersionTLS13,
-	VersionTLS13Draft23,
-	versionInvalidDC,
+type dcTestDC struct {
+	Name       string
+	Version    int
+	Scheme     int
+	DC         []byte
+	PrivateKey []byte
 }
+
+var dcTestDCs []dcTestDC
+var dcTestConfig *Config
+var dcTestDelegationCert Certificate
+var dcTestCert Certificate
+var dcTestNow time.Time
 
 func init() {
 
-	// Use a static time for testing at whcih time the test certificates are
-	// valid.
-	dcNow = time.Date(2018, 07, 03, 18, 0, 0, 234234, time.UTC)
+	// Parse the PEM-encoded DER block containing the test DCs.
+	block, _ := pem.Decode([]byte(dcTestDCsPEM))
+	if block == nil {
+		panic("failed to decode DC tests PEM block")
+	}
 
+	// Parse the DER-encoded test DCs.
+	_, err := asn1.Unmarshal(block.Bytes, &dcTestDCs)
+	if err != nil {
+		panic("failed to unmarshal DC test ASN.1 data")
+	}
+
+	// Use a static time for testing. This is the point at which the test DCs
+	// were generated.
+	dcTestNow = time.Date(2018, 07, 03, 18, 0, 0, 234234, time.UTC)
+
+	// The base configuration for the client and server.
 	dcTestConfig = &Config{
 		Time: func() time.Time {
-			return dcNow
+			return dcTestNow
 		},
 		Rand:         zeroSource{},
 		Certificates: nil,
@@ -104,230 +141,51 @@ func init() {
 		CipherSuites: allCipherSuites(),
 	}
 
-	// The certificates of the server.
-	dcTestCerts = make(map[string]*Certificate)
-	var err error
-
 	// The delegation certificate.
-	dcCert := new(Certificate)
-	*dcCert, err = X509KeyPair([]byte(delegatorCertPEM), []byte(delegatorKeyPEM))
+	dcTestDelegationCert, err = X509KeyPair([]byte(delegatorCertPEM), []byte(delegatorKeyPEM))
 	if err != nil {
 		panic(err)
 	}
-	dcCert.Leaf, err = x509.ParseCertificate(dcCert.Certificate[0])
+	dcTestDelegationCert.Leaf, err = x509.ParseCertificate(dcTestDelegationCert.Certificate[0])
 	if err != nil {
 		panic(err)
 	}
-	dcTestCerts["dc"] = dcCert
 
-	// The standard certificate.
-	ndcCert := new(Certificate)
-	*ndcCert, err = X509KeyPair([]byte(nonDelegatorCertPEM), []byte(nonDelegatorKeyPEM))
+	// A certificate without the the DelegationUsage extension for X.509.
+	dcTestCert, err = X509KeyPair([]byte(nonDelegatorCertPEM), []byte(nonDelegatorKeyPEM))
 	if err != nil {
 		panic(err)
 	}
-	ndcCert.Leaf, err = x509.ParseCertificate(ndcCert.Certificate[0])
+	dcTestCert.Leaf, err = x509.ParseCertificate(dcTestCert.Certificate[0])
 	if err != nil {
 		panic(err)
 	}
-	dcTestCerts["no dc"] = ndcCert
 
-	// The root certificates for the client.
+	// Make these roots of these certificates the client's trusted CAs.
 	dcTestConfig.RootCAs = x509.NewCertPool()
 
-	dcRoot, err := x509.ParseCertificate(dcCert.Certificate[len(dcCert.Certificate)-1])
+	raw := dcTestDelegationCert.Certificate[len(dcTestDelegationCert.Certificate)-1]
+	root, err := x509.ParseCertificate(raw)
 	if err != nil {
 		panic(err)
 	}
-	dcTestConfig.RootCAs.AddCert(dcRoot)
+	dcTestConfig.RootCAs.AddCert(root)
 
-	ndcRoot, err := x509.ParseCertificate(ndcCert.Certificate[len(ndcCert.Certificate)-1])
+	raw = dcTestCert.Certificate[len(dcTestCert.Certificate)-1]
+	root, err = x509.ParseCertificate(raw)
 	if err != nil {
 		panic(err)
 	}
-	dcTestConfig.RootCAs.AddCert(ndcRoot)
-
-	// A pool of DCs.
-	dcTestDCs = make(map[uint16]dcWithPrivateKey)
-	for _, vers := range dcTestDCVersions {
-		dc, sk, err := NewDelegatedCredential(dcCert, dcTestDCScheme, dcNow.Sub(dcCert.Leaf.NotBefore)+dcMaxTTL, vers)
-		if err != nil {
-			panic(err)
-		}
-		dcTestDCs[vers] = dcWithPrivateKey{dc, sk}
-	}
-	// Add two DCs with invalid private keys, one for TLS 1.2 and another for
-	// 1.3.
-	malformedDC12 := new(DelegatedCredential)
-	*malformedDC12 = *dcTestDCs[VersionTLS12].DelegatedCredential
-	dcTestDCs[versionMalformedDC12] = dcWithPrivateKey{
-		malformedDC12,
-		dcTestDCs[versionInvalidDC].privateKey,
-	}
-	malformedDC13 := new(DelegatedCredential)
-	*malformedDC13 = *dcTestDCs[VersionTLS13].DelegatedCredential
-	dcTestDCs[versionMalformedDC13] = dcWithPrivateKey{
-		malformedDC13,
-		dcTestDCs[versionInvalidDC].privateKey,
-	}
-}
-
-func checkECDSAPublicKeysEqual(
-	publicKey, publicKey2 crypto.PublicKey, scheme SignatureScheme) error {
-
-	curve := getCurve(scheme)
-	pk := publicKey.(*ecdsa.PublicKey)
-	pk2 := publicKey2.(*ecdsa.PublicKey)
-	serializedPublicKey := elliptic.Marshal(curve, pk.X, pk.Y)
-	serializedPublicKey2 := elliptic.Marshal(curve, pk2.X, pk2.Y)
-	if !bytes.Equal(serializedPublicKey2, serializedPublicKey) {
-		return errors.New("PublicKey mismatch")
-	}
-
-	return nil
-}
-
-// Test that cred and cred2 are equal.
-func checkCredentialsEqual(dc, dc2 *DelegatedCredential) error {
-	if dc2.ValidTime != dc.ValidTime {
-		return fmt.Errorf("ValidTime mismatch: got %d; want %d", dc2.ValidTime, dc.ValidTime)
-	}
-	if dc2.publicKeyScheme != dc.publicKeyScheme {
-		return fmt.Errorf("scheme mismatch: got %04x; want %04x", dc2.publicKeyScheme, dc.publicKeyScheme)
-	}
-
-	return checkECDSAPublicKeysEqual(dc.PublicKey, dc2.PublicKey, dc.publicKeyScheme)
-}
-
-// Test delegation and validation of credentials.
-func TestDelegateValidate(t *testing.T) {
-	ver := uint16(VersionTLS12)
-	cert := dcTestCerts["dc"]
-
-	validTime := dcNow.Sub(cert.Leaf.NotBefore) + dcMaxTTL
-	shortValidTime := dcNow.Sub(cert.Leaf.NotBefore) + time.Second
-
-	delegatedCred, _, err := NewDelegatedCredential(cert, ECDSAWithP256AndSHA256, validTime, ver)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Test validation of good DC.
-	if v, err := delegatedCred.Validate(cert.Leaf, ver, dcNow); err != nil {
-		t.Error(err)
-	} else if !v {
-		t.Error("good DC is invalid; want valid")
-	}
-
-	// Test validation of expired DC.
-	tooLate := dcNow.Add(dcMaxTTL).Add(time.Nanosecond)
-	if v, err := delegatedCred.Validate(cert.Leaf, ver, tooLate); err == nil {
-		t.Error("expired DC validation succeeded; want failure")
-	} else if v {
-		t.Error("expired DC is valid; want invalid")
-	}
-
-	// Test protocol binding.
-	if v, err := delegatedCred.Validate(cert.Leaf, VersionSSL30, dcNow); err != nil {
-		t.Fatal(err)
-	} else if v {
-		t.Error("DC with wrong version is valid; want invalid")
-	}
-
-	// Test signature algorithm binding.
-	delegatedCred.Scheme = ECDSAWithP521AndSHA512
-	if v, err := delegatedCred.Validate(cert.Leaf, ver, dcNow); err != nil {
-		t.Fatal(err)
-	} else if v {
-		t.Error("DC with wrong scheme is valid; want invalid")
-	}
-	delegatedCred.Scheme = ECDSAWithP256AndSHA256
-
-	// Test delegation cedrtificate binding.
-	cert.Leaf.Raw[0] ^= byte(42)
-	if v, err := delegatedCred.Validate(cert.Leaf, ver, dcNow); err != nil {
-		t.Fatal(err)
-	} else if v {
-		t.Error("DC with wrong cert is valid; want invalid")
-	}
-	cert.Leaf.Raw[0] ^= byte(42)
-
-	// Test validation of DC who's TTL is too long.
-	delegatedCred2, _, err := NewDelegatedCredential(cert, ECDSAWithP256AndSHA256, validTime+time.Second, ver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, err := delegatedCred2.Validate(cert.Leaf, ver, dcNow); err == nil {
-		t.Error("DC validation with long TTL succeeded; want failure")
-	} else if v {
-		t.Error("DC with long TTL is valid; want invalid")
-	}
-
-	// Test validation of DC who's TTL is short.
-	delegatedCred3, _, err := NewDelegatedCredential(cert, ECDSAWithP256AndSHA256, shortValidTime, ver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, err := delegatedCred3.Validate(cert.Leaf, ver, dcNow); err != nil {
-		t.Error(err)
-	} else if !v {
-		t.Error("good DC is invalid; want valid")
-	}
-
-	// Test validation of DC using a certificate that can't delegate.
-	if v, err := delegatedCred.Validate(
-		dcTestCerts["no dc"].Leaf, ver, dcNow); err != errNoDelegationUsage {
-		t.Error("DC validation with non-delegation cert succeeded; want failure")
-	} else if v {
-		t.Error("DC with non-delegation cert is valid; want invalid")
-	}
-}
-
-// Test encoding/decoding of delegated credentials.
-func TestDelegatedCredentialMarshalUnmarshal(t *testing.T) {
-	cert := dcTestCerts["dc"]
-	delegatedCred, _, err := NewDelegatedCredential(cert,
-		ECDSAWithP256AndSHA256,
-		dcNow.Sub(cert.Leaf.NotBefore)+dcMaxTTL,
-		VersionTLS12)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	serialized, err := delegatedCred.Marshal()
-	if err != nil {
-		t.Error(err)
-	}
-
-	delegatedCred2, err := UnmarshalDelegatedCredential(serialized)
-	if err != nil {
-		t.Error(err)
-	}
-
-	err = checkCredentialsEqual(delegatedCred, delegatedCred2)
-	if err != nil {
-		t.Error(err)
-	}
-
-	if delegatedCred.Scheme != delegatedCred2.Scheme {
-		t.Errorf("scheme mismatch: got %04x; want %04x",
-			delegatedCred2.Scheme, delegatedCred.Scheme)
-	}
-
-	if !bytes.Equal(delegatedCred2.Signature, delegatedCred.Signature) {
-		t.Error("Signature mismatch")
-	}
+	dcTestConfig.RootCAs.AddCert(root)
 }
 
 // Tests the handshake and one round of application data. Returns true if the
 // connection used a DC.
-func testConnWithDC(t *testing.T,
-	clientMsg, serverMsg string,
-	clientConfig, serverConfig *Config) (bool, error) {
-
+func testConnWithDC(t *testing.T, clientMsg, serverMsg string, clientConfig, serverConfig *Config) (bool, error) {
 	ln := newLocalListener(t)
 	defer ln.Close()
 
+	// Listen for and serve a single client connection.
 	srvCh := make(chan *Conn, 1)
 	var serr error
 	go func() {
@@ -346,6 +204,7 @@ func testConnWithDC(t *testing.T,
 		srvCh <- srv
 	}()
 
+	// Dial the server.
 	cli, err := Dial("tcp", ln.Addr().String(), clientConfig)
 	if err != nil {
 		return false, err
@@ -363,12 +222,14 @@ func testConnWithDC(t *testing.T,
 	}
 	buf := make([]byte, bufLen)
 
+	// Client sends a message to the server, which is read by the server.
 	cli.Write([]byte(clientMsg))
 	n, err := srv.Read(buf)
 	if n != len(clientMsg) || string(buf[:n]) != clientMsg {
 		return false, fmt.Errorf("Server read = %d, buf= %q; want %d, %s", n, buf, len(clientMsg), clientMsg)
 	}
 
+	// Server reads a message from the client, which is read by the client.
 	srv.Write([]byte(serverMsg))
 	n, err = cli.Read(buf)
 	if n != len(serverMsg) || err != nil || string(buf[:n]) != serverMsg {
@@ -389,76 +250,39 @@ func testServerGetCertificate(ch *ClientHelloInfo) (*Certificate, error) {
 	}
 
 	if versOk && ch.AcceptsDelegatedCredential {
-		return dcTestCerts["dc"], nil
+		return &dcTestDelegationCert, nil
 	}
-	return dcTestCerts["no dc"], nil
+	return &dcTestCert, nil
 }
 
-// Checks that the ciient supports the signature algorithm supported by the test
-// server, and that the server has a DC for the selected protocol version.
-func testServerGetDC(ch *ClientHelloInfo, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
-	schemeOk := false
-	for _, scheme := range ch.SignatureSchemes {
-		schemeOk = schemeOk || (scheme == dcTestDCScheme)
-	}
-
-	versOk := false
-	for _, testVers := range dcTestDCVersions {
-		versOk = versOk || (vers == testVers)
-	}
-
-	if schemeOk && versOk && ch.AcceptsDelegatedCredential {
-		d := dcTestDCs[vers]
-		return d.DelegatedCredential, d.privateKey, nil
-	}
-	return nil, nil, nil
-}
-
-// Returns a DC signed with a bad version number.
-func testServerGetInvalidDC(ch *ClientHelloInfo, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
-	d := dcTestDCs[versionInvalidDC]
-	return d.DelegatedCredential, d.privateKey, nil
-}
-
-// Returns a DC with the wrong private key.
-func testServerGetMalformedDC(ch *ClientHelloInfo, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
-	if vers == VersionTLS12 {
-		d := dcTestDCs[versionMalformedDC12]
-		return d.DelegatedCredential, d.privateKey, nil
-	} else if vers == VersionTLS13 {
-		d := dcTestDCs[versionMalformedDC13]
-		return d.DelegatedCredential, d.privateKey, nil
-	} else {
-		return nil, nil, fmt.Errorf("testServerGetMalformedDC: unsupported version %x", vers)
-	}
-
-}
-
+// Various test cases for handshakes involving DCs.
 var dcTests = []struct {
 	clientDC         bool
 	serverDC         bool
 	clientSkipVerify bool
 	clientMaxVers    uint16
 	serverMaxVers    uint16
-	useMalformedDC   bool
-	useInvalidDC     bool
+	nowOffset        time.Duration
+	dcTestName       string
 	expectSuccess    bool
 	expectDC         bool
 	name             string
 }{
-	{true, true, false, VersionTLS12, VersionTLS12, false, false, true, true, "tls12"},
-	{true, true, false, VersionTLS13, VersionTLS13, false, false, true, true, "tls13"},
-	{true, true, false, VersionTLS12, VersionTLS12, true, false, false, false, "tls12, malformed dc"},
-	{true, true, false, VersionTLS13, VersionTLS13, true, false, false, false, "tls13, malformed dc"},
-	{true, true, true, VersionTLS12, VersionTLS12, false, true, true, true, "tls12, invalid dc, skip verify"},
-	{true, true, true, VersionTLS13, VersionTLS13, false, true, true, true, "tls13, invalid dc, skip verify"},
-	{false, true, false, VersionTLS12, VersionTLS12, false, false, true, false, "client no dc"},
-	{true, false, false, VersionTLS12, VersionTLS12, false, false, true, false, "server no dc"},
-	{true, true, false, VersionTLS11, VersionTLS12, false, false, true, false, "client old"},
-	{true, true, false, VersionTLS12, VersionTLS11, false, false, true, false, "server old"},
+	{true, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, true, "tls12"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "tls13", true, true, "tls13"},
+	{true, true, false, VersionTLS12, VersionTLS12, 0, "malformed12", false, false, "tls12, malformed dc"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "malformed13", false, false, "tls13, malformed dc"},
+	{true, true, true, VersionTLS12, VersionTLS12, 0, "invalid", true, true, "tls12, invalid dc, skip verify"},
+	{true, true, true, VersionTLS13, VersionTLS13, 0, "invalid", true, true, "tls13, invalid dc, skip verify"},
+	{false, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "client no dc"},
+	{true, false, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "server no dc"},
+	{true, true, false, VersionTLS11, VersionTLS12, 0, "tls12", true, false, "client old"},
+	{true, true, false, VersionTLS12, VersionTLS11, 0, "tls12", true, false, "server old"},
+	{true, true, false, VersionTLS13, VersionTLS13, dcMaxTTL, "tls13", false, false, "expired dc"},
 }
 
-// Tests the handshake with the delegated credential extension.
+// Tests the handshake with the delegated credential extension for each test
+// case in dcTests.
 func TestDCHandshake(t *testing.T) {
 	serverMsg := "hello"
 	clientMsg := "world"
@@ -468,23 +292,35 @@ func TestDCHandshake(t *testing.T) {
 	serverConfig.GetCertificate = testServerGetCertificate
 
 	for i, test := range dcTests {
-		clientConfig.AcceptDelegatedCredential = test.clientDC
+		clientConfig.MaxVersion = test.clientMaxVers
+		serverConfig.MaxVersion = test.serverMaxVers
 		clientConfig.InsecureSkipVerify = test.clientSkipVerify
+		clientConfig.AcceptDelegatedCredential = test.clientDC
+		clientConfig.Time = func() time.Time {
+			return dcTestNow.Add(time.Duration(test.nowOffset))
+		}
 
 		if test.serverDC {
-			if test.useInvalidDC {
-				serverConfig.GetDelegatedCredential = testServerGetInvalidDC
-			} else if test.useMalformedDC {
-				serverConfig.GetDelegatedCredential = testServerGetMalformedDC
-			} else {
-				serverConfig.GetDelegatedCredential = testServerGetDC
+			serverConfig.GetDelegatedCredential = func(
+				ch *ClientHelloInfo, vers uint16) (*DelegatedCredential, crypto.PrivateKey, error) {
+				for _, t := range dcTestDCs {
+					if t.Name == test.dcTestName {
+						dc, err := UnmarshalDelegatedCredential(t.DC)
+						if err != nil {
+							return nil, nil, err
+						}
+						sk, err := x509.ParseECPrivateKey(t.PrivateKey)
+						if err != nil {
+							return nil, nil, err
+						}
+						return dc, sk, nil
+					}
+				}
+				return nil, nil, fmt.Errorf("Test DC with name '%s' not found", test.dcTestName)
 			}
 		} else {
 			serverConfig.GetDelegatedCredential = nil
 		}
-
-		clientConfig.MaxVersion = test.clientMaxVers
-		serverConfig.MaxVersion = test.serverMaxVers
 
 		usedDC, err := testConnWithDC(t, clientMsg, serverMsg, clientConfig, serverConfig)
 		if err != nil && test.expectSuccess {
