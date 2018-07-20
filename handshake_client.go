@@ -413,15 +413,15 @@ func (hs *clientHandshakeState) processCertsFromServer(certificates [][]byte) er
 	return nil
 }
 
-// processDelegatedCredentialFromServer unmarshals the DelegatedCredential
+// processDelegatedCredentialFromServer unmarshals the delegated credential
 // offered by the server (if present) and validates it using the peer
 // certificate.
-func (hs *clientHandshakeState) processDelegatedCredentialFromServer(dc []byte) error {
+func (hs *clientHandshakeState) processDelegatedCredentialFromServer(serialized []byte) error {
 	c := hs.c
 
-	var cred *DelegatedCredential
+	var dc *delegatedCredential
 	var err error
-	if dc != nil {
+	if serialized != nil {
 
 		// Assert that the DC extension was indicated by the client.
 		if !hs.hello.delegatedCredential {
@@ -436,15 +436,15 @@ func (hs *clientHandshakeState) processDelegatedCredentialFromServer(dc []byte) 
 			return errors.New("tls: ServerHello with delegated credential extension in TLS != 1.2")
 		}
 
-		cred, err = UnmarshalDelegatedCredential(dc)
+		dc, err = unmarshalDelegatedCredential(serialized)
 		if err != nil {
 			c.sendAlert(alertDecodeError)
 			return fmt.Errorf("tls: delegated credential: %s", err)
 		}
 	}
 
-	if cred != nil && !c.config.InsecureSkipVerify {
-		if v, err := cred.Validate(c.peerCertificates[0], hs.c.vers, c.config.time()); err != nil {
+	if dc != nil && !c.config.InsecureSkipVerify {
+		if v, err := dc.validate(c.peerCertificates[0], hs.c.vers, c.config.time()); err != nil {
 			c.sendAlert(alertIllegalParameter)
 			return fmt.Errorf("delegated credential: %s", err)
 		} else if !v {
@@ -453,7 +453,7 @@ func (hs *clientHandshakeState) processDelegatedCredentialFromServer(dc []byte) 
 		}
 	}
 
-	c.verifiedDc = cred
+	c.verifiedDc = dc
 	return nil
 }
 
@@ -533,9 +533,10 @@ func (hs *clientHandshakeState) doFullHandshake() error {
 	pk := c.peerCertificates[0].PublicKey
 
 	// If the delegated credential extension has successfully been negotiated,
-	// then the ServerKeyExchange DelegatedCredential's private key.
+	// then the ServerKeyExchange is signed with delegated credential private
+	// key.
 	if c.verifiedDc != nil {
-		pk = c.verifiedDc.PublicKey
+		pk = c.verifiedDc.cred.publicKey
 	}
 
 	skx, ok := msg.(*serverKeyExchangeMsg)

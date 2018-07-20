@@ -219,6 +219,7 @@ type ConnectionState struct {
 	VerifiedChains              [][]*x509.Certificate // verified chains built from PeerCertificates
 	SignedCertificateTimestamps [][]byte              // SCTs from the server, if any
 	OCSPResponse                []byte                // stapled OCSP response from server, if any
+	DelegatedCredential         []byte                // Delegated credential sent by the server, if any
 
 	// TLSUnique contains the "tls-unique" channel binding value (see RFC
 	// 5929, section 3). For resumed sessions this value will be nil
@@ -619,16 +620,20 @@ type Config struct {
 	//
 	// This value has no meaning for the server.
 	//
-	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts.
+	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts-01.
 	AcceptDelegatedCredential bool
 
-	// GetDelegatedCredential returns a DelegatedCredential for use with the
-	// delegated credential extension based on the ClientHello and TLS version
-	// selected for the session. If this is nil, then the server will not offer
-	// a DelegatedCredential.
+	// GetDelegatedCredential returns a DC and its private key for use in the
+	// delegated credential extension. The inputs to the callback are some
+	// information parsed from the ClientHello, as well as the protocol version
+	// selected by the server. This is necessary because the DC is bound to
+	// protocol version in which it's used. The return value is the raw DC
+	// encoded in the wire format specified in
+	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01. If the return
+	// value is nil, then the server will not offer negotiate the extension.
 	//
 	// This value has no meaning for the client.
-	GetDelegatedCredential func(*ClientHelloInfo, uint16) (*DelegatedCredential, crypto.PrivateKey, error)
+	GetDelegatedCredential func(*ClientHelloInfo, uint16) ([]byte, crypto.PrivateKey, error)
 
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 

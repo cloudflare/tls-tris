@@ -759,7 +759,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
 		case extensionDelegatedCredential:
-			// https://tools.ietf.org/html/draft-ietf-tls-subcerts
+			// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01
 			m.delegatedCredential = true
 		}
 		data = data[length:]
