@@ -408,7 +408,7 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	// server is using the delegated credential extension. In TLS 1.3, the DC is
 	// added as an extension to the end-entity certificate, i.e., the last
 	// CertificateEntry of Certificate.certficate_list (see
-	// https://tools.ietf.org/html/draft-ietf-tls-subcerts).
+	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01).
 	if len(certEntries) > 0 && hs.clientHello.delegatedCredential && hs.delegatedCredential != nil {
 		certEntries[0].delegatedCredential = hs.delegatedCredential
 	}
@@ -1069,7 +1069,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	// then the  CertificateVerify signature will have been produced with the
 	// DelegatedCredential's private key.
 	if hs.c.verifiedDc != nil {
-		pk = hs.c.verifiedDc.PublicKey
+		pk = hs.c.verifiedDc.cred.publicKey
 	}
 
 	// Receive CertificateVerify message.

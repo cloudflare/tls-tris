@@ -58,7 +58,7 @@ type Conn struct {
 	verifiedChains [][]*x509.Certificate
 	// verifiedDc is set by a client who negotiates the use of a valid delegated
 	// credential.
-	verifiedDc *DelegatedCredential
+	verifiedDc *delegatedCredential
 	// serverName contains the server name indicated by the client, if any.
 	serverName string
 	// secureRenegotiation is true if the server echoed the secure
@@ -1666,6 +1666,9 @@ func (c *Conn) ConnectionState() ConnectionState {
 		state.VerifiedChains = c.verifiedChains
 		state.SignedCertificateTimestamps = c.scts
 		state.OCSPResponse = c.ocspResponse
+		if c.verifiedDc != nil {
+			state.DelegatedCredential = c.verifiedDc.raw
+		}
 		state.HandshakeConfirmed = atomic.LoadInt32(&c.handshakeConfirmed) == 1
 		if !state.HandshakeConfirmed {
 			state.Unique0RTTToken = c.binder

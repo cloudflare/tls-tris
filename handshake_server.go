@@ -329,14 +329,7 @@ Curves:
 		// Set the handshake private key.
 		if dc != nil {
 			hs.privateKey = sk
-			if dc.Raw == nil {
-				dc.Raw, err = dc.Marshal()
-				if err != nil {
-					c.sendAlert(alertInternalError)
-					return false, err
-				}
-			}
-			hs.delegatedCredential = dc.Raw
+			hs.delegatedCredential = dc
 
 			// For TLS 1.2, the DC is an extension to the ServerHello.
 			if c.vers == VersionTLS12 {
