@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	sidh "github_com/henrydcase/nobs/dh/sidh"
 	"golang_org/x/crypto/curve25519"
 )
 
@@ -40,6 +41,16 @@ const (
 	secretResumption
 )
 
+// OZAPTF: better index by AlgID
+const (
+	P751PubKeySize                  = 564
+	P751PrvKeySize                  = 48
+	P751SharedSecretSize            = 188
+	SidhP751Curve25519PubKeySize    = 32 + P751PubKeySize
+	SidhP751Curve25519PrvKeySize    = 32 + P751PrvKeySize
+	SidhP751Curve25519SharedKeySize = 32 + P751SharedSecretSize
+)
+
 type keySchedule13 struct {
 	suite          *cipherSuite
 	transcriptHash hash.Hash // uses the cipher suite hash algo
@@ -47,6 +58,24 @@ type keySchedule13 struct {
 	handshakeCtx   []byte    // cached handshake context, invalidated on updates.
 	clientRandom   []byte    // Used for keylogging, nil if keylogging is disabled.
 	config         *Config   // Used for KeyLogWriter callback, nil if keylogging is disabled.
+}
+
+type Role uint8
+
+const (
+	kRole_Server = iota
+	kRole_Client
+)
+
+// OZAPTF: comment
+// Depending on role returns key variant to be used by local and remote
+// process.
+func getSidhKeyVariant(r Role) (local, remote sidh.KeyVariant) {
+	if r == kRole_Client {
+		local, remote = sidh.KeyVariant_SIDH_A, sidh.KeyVariant_SIDH_B
+	}
+	local, remote = sidh.KeyVariant_SIDH_B, sidh.KeyVariant_SIDH_A
+	return local, remote
 }
 
 func newKeySchedule13(suite *cipherSuite, config *Config, clientRandom []byte) *keySchedule13 {
@@ -158,7 +187,7 @@ CurvePreferenceLoop:
 		}
 	}
 
-	privateKey, serverKS, err := config.generateKeyShare(ks.group)
+	privateKey, serverKS, err := config.generateKeyShare(ks.group, kRole_Server)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -186,7 +215,7 @@ CurvePreferenceLoop:
 
 	earlyClientCipher, _ := hs.keySchedule.prepareCipher(secretEarlyClient)
 
-	ecdheSecret := deriveECDHESecret(ks, privateKey)
+	ecdheSecret := deriveECDHESecret(ks, privateKey, kRole_Server)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
@@ -541,8 +570,36 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	return h.Sum(nil)
 }
 
-func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
-	if curveID == X25519 {
+// generateKeyShare generates keypair. Private key is returned as first argument, public key
+// is returned in keyShare.data. keyshare.curveID stores ID of the scheme used.
+func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare, error) {
+	if curveID == SidhP751Curve25519 {
+		var public25519 [32]byte
+		var secret25519 [32]byte
+		var public [SidhP751Curve25519PubKeySize]byte
+		var secret [SidhP751Curve25519PrvKeySize]byte
+		var variant, _ = getSidhKeyVariant(role)
+		var prvKey = sidh.NewPrivateKey(sidh.FP_751, variant)
+
+		if _, err := io.ReadFull(c.rand(), secret25519[:]); err != nil {
+			return nil, keyShare{}, err
+		}
+
+		curve25519.ScalarBaseMult(&public25519, &secret25519)
+
+		if prvKey.Generate(c.rand()) != nil {
+			return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
+		}
+		pubKey, err := sidh.GeneratePublicKey(prvKey)
+		if err != nil {
+			return nil, keyShare{}, errors.New("tls: public SIDH key generation failed")
+		}
+
+		// Hybrid "shared key" = X25519 || P751
+		copy(public[:], pubKey.Export())
+		copy(secret[:], prvKey.Export())
+		return secret25519[:], keyShare{group: curveID, data: public[:]}, nil
+	} else if curveID == X25519 {
 		var scalar, public [32]byte
 		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
 			return nil, keyShare{}, err
@@ -552,6 +609,7 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 		return scalar[:], keyShare{group: curveID, data: public[:]}, nil
 	}
 
+	// else...
 	curve, ok := curveForCurveID(curveID)
 	if !ok {
 		return nil, keyShare{}, errors.New("tls: preferredCurves includes unsupported curve")
@@ -566,8 +624,43 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
 }
 
-func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
-	if ks.group == X25519 {
+func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
+	if ks.group == SidhP751Curve25519 {
+		var prvVariant, pubVariant = getSidhKeyVariant(role)
+		var sharedKey [SidhP751Curve25519SharedKeySize]byte
+		var pubX25519, prvX25519, sharedKeyX25519 [32]byte
+
+		if len(ks.data) != SidhP751Curve25519PubKeySize {
+			return nil
+		}
+		if len(secretKey) != SidhP751Curve25519PrvKeySize {
+			return nil
+		}
+
+		prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
+		pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
+
+		if err := prvKey.Import(secretKey[:]); err != nil {
+			return nil
+		}
+		if err := pubKey.Import(ks.data[:]); err != nil {
+			return nil
+		}
+		sharedSidhKey, err := sidh.DeriveSecret(prvKey, pubKey)
+		if err != nil {
+			return nil
+		}
+
+		// OZAPTF: same thing for x25519
+		copy(prvX25519[:], secretKey[P751PrvKeySize:])
+		copy(pubX25519[:], ks.data[P751PubKeySize:])
+		curve25519.ScalarMult(&sharedKeyX25519, &prvX25519, &pubX25519)
+
+		// format shared key
+		copy(sharedKey[:], sharedSidhKey)
+		copy(sharedKey[P751SharedSecretSize:], sharedKeyX25519[:])
+		return sharedKey[:]
+	} else if ks.group == X25519 {
 		if len(ks.data) != 32 {
 			return nil
 		}
@@ -971,7 +1064,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 
 	// 0-RTT is not supported yet, so use an empty PSK.
 	hs.keySchedule.setSecret(nil)
-	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey)
+	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey, kRole_Client)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE server share")

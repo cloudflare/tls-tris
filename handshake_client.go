@@ -192,7 +192,7 @@ func (c *Conn) clientHandshake() error {
 		// Create one keyshare for the first default curve. If it is not
 		// appropriate, the server should raise a HRR.
 		defaultGroup := c.config.curvePreferences()[0]
-		hs.privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup)
+		hs.privateKey, clientKS, err = c.config.generateKeyShare(defaultGroup, kRole_Client)
 		if err != nil {
 			c.sendAlert(alertInternalError)
 			return err
