@@ -620,16 +620,16 @@ type Config struct {
 	//
 	// This value has no meaning for the server.
 	//
-	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts-01.
+	// See https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
 	AcceptDelegatedCredential bool
 
 	// GetDelegatedCredential returns a DC and its private key for use in the
 	// delegated credential extension. The inputs to the callback are some
 	// information parsed from the ClientHello, as well as the protocol version
-	// selected by the server. This is necessary because the DC is bound to
+	// selected by the server. This is necessary because the DC is bound to the
 	// protocol version in which it's used. The return value is the raw DC
 	// encoded in the wire format specified in
-	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01. If the return
+	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-02. If the return
 	// value is nil, then the server will not offer negotiate the extension.
 	//
 	// This value has no meaning for the client.

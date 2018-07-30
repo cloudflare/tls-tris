@@ -405,10 +405,10 @@ func (hs *serverHandshakeState) sendCertificate13() error {
 	}
 
 	// If hs.delegatedCredential is set (see hs.readClientHello()) then the
-	// server is using the delegated credential extension. In TLS 1.3, the DC is
-	// added as an extension to the end-entity certificate, i.e., the last
-	// CertificateEntry of Certificate.certficate_list (see
-	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01).
+	// server is using the delegated credential extension. The DC is added as an
+	// extension to the end-entity certificate, i.e., the last CertificateEntry
+	// of Certificate.certficate_list. (For details, see
+	// https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.)
 	if len(certEntries) > 0 && hs.clientHello.delegatedCredential && hs.delegatedCredential != nil {
 		certEntries[0].delegatedCredential = hs.delegatedCredential
 	}
@@ -1051,13 +1051,24 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return err
 	}
 
+	// Receive CertificateVerify message.
+	msg, err = c.readHandshake()
+	if err != nil {
+		return err
+	}
+	certVerifyMsg, ok := msg.(*certificateVerifyMsg)
+	if !ok {
+		c.sendAlert(alertUnexpectedMessage)
+		return unexpectedMessageError(certVerifyMsg, msg)
+	}
+
 	// Validate the DC if present. The DC is only processed if the extension was
 	// indicated by the ClientHello; otherwise this call will result in an
-	// "illegal_parameter" alert. The call also asserts that the DC extension
-	// did not appear in the ServerHello.
+	// "illegal_parameter" alert.
 	if len(certMsg.certificates) > 0 {
 		if err := hs.processDelegatedCredentialFromServer(
-			certMsg.certificates[0].delegatedCredential); err != nil {
+			certMsg.certificates[0].delegatedCredential,
+			certVerifyMsg.signatureAlgorithm); err != nil {
 			return err
 		}
 	}
@@ -1072,16 +1083,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		pk = hs.c.verifiedDc.cred.publicKey
 	}
 
-	// Receive CertificateVerify message.
-	msg, err = c.readHandshake()
-	if err != nil {
-		return err
-	}
-	certVerifyMsg, ok := msg.(*certificateVerifyMsg)
-	if !ok {
-		c.sendAlert(alertUnexpectedMessage)
-		return unexpectedMessageError(certVerifyMsg, msg)
-	}
+	// Verify the handshake signature.
 	err, alertCode := verifyPeerHandshakeSignature(
 		certVerifyMsg,
 		pk,

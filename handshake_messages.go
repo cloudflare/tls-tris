@@ -759,7 +759,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
 		case extensionDelegatedCredential:
-			// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01
+			// https://tools.ietf.org/html/draft-ietf-tls-subcerts-02
 			m.delegatedCredential = true
 		}
 		data = data[length:]
@@ -788,10 +788,6 @@ type serverHelloMsg struct {
 	secureRenegotiation          []byte
 	secureRenegotiationSupported bool
 	alpnProtocol                 string
-
-	// TLS 1.2. In TLS 1.3, the DC extension is included in of the end-entity
-	// certificate in the Certificate message.
-	delegatedCredential []byte
 
 	// TLS 1.3
 	keyShare    keyShare
@@ -828,7 +824,6 @@ func (m *serverHelloMsg) equal(i interface{}) bool {
 		bytes.Equal(m.secureRenegotiation, m1.secureRenegotiation) &&
 		m.alpnProtocol == m1.alpnProtocol &&
 		m.keyShare.group == m1.keyShare.group &&
-		bytes.Equal(m.delegatedCredential, m1.delegatedCredential) &&
 		bytes.Equal(m.keyShare.data, m1.keyShare.data) &&
 		m.psk == m1.psk &&
 		m.pskIdentity == m1.pskIdentity
@@ -880,10 +875,6 @@ func (m *serverHelloMsg) marshal() []byte {
 			sctLen += len(sct) + 2
 		}
 		extensionsLength += 2 + sctLen
-		numExtensions++
-	}
-	if dcLen := len(m.delegatedCredential); dcLen > 0 && m.vers == VersionTLS12 {
-		extensionsLength += 4 + dcLen
 		numExtensions++
 	}
 	if m.keyShare.group != 0 {
@@ -1014,13 +1005,6 @@ func (m *serverHelloMsg) marshal() []byte {
 			copy(z[2:], sct)
 			z = z[len(sct)+2:]
 		}
-	}
-	if dcLen := len(m.delegatedCredential); dcLen > 0 && m.vers == VersionTLS12 {
-		binary.BigEndian.PutUint16(z, extensionDelegatedCredential)
-		binary.BigEndian.PutUint16(z[2:], uint16(dcLen))
-		z = z[4:]
-		copy(z, m.delegatedCredential)
-		z = z[dcLen:]
 	}
 	if m.keyShare.group != 0 {
 		z[0] = uint8(extensionKeyShare >> 8)
@@ -1209,11 +1193,6 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 				m.scts = append(m.scts, d[:sctLen])
 				d = d[sctLen:]
 			}
-		case extensionDelegatedCredential:
-			if m.vers != VersionTLS12 {
-				return alertUnexpectedMessage
-			}
-			m.delegatedCredential = data[:length]
 		case extensionKeyShare:
 			d := data[:length]
 
