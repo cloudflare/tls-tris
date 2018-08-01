@@ -8,6 +8,7 @@ BUILD_DIR   ?= $(PRJ_DIR)/_dev/GOROOT
 # Compiler
 GO ?= go
 DOCKER ?= docker
+GIT ?= git
 
 # Build environment
 OS          ?= $(shell $(GO) env GOHOSTOS)
@@ -18,6 +19,7 @@ GOROOT_ENV  := $(shell $(GO) env GOROOT)
 GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
 # Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
 INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
+TMP_DIR		:= $(shell mktemp -d)
 
 # Test targets used for compatibility testing
 TARGET_TEST_COMPAT=boring picotls tstclnt
@@ -25,6 +27,10 @@ TARGET_TEST_COMPAT=boring picotls tstclnt
 # Some target-specific constants
 BORINGSSL_REVISION=03de6813d8992a649092b4874ef0ebc022e2f58a
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
+
+# NOBS crypto
+NOBS_REPO=https://github.com/henrydcase/nobscrypto.git
+
 
 ###############
 #
@@ -48,11 +54,17 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 # Apply additional patches
 	for p in $(wildcard $(DEV_DIR)/patches/*); do patch -d "$(GOROOT_LOCAL)" -p1 < "$$p"; done
 
+# Vendor nobs
+	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
+	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
+	cp -rf $(TMP_DIR)/nobs/tls_vendor/* $(GOROOT_LOCAL)/src/vendor/
+
 # Create go package
 	GOARCH=$(ARCH) GOROOT="$(GOROOT_LOCAL)" $(GO) install -v std
 ifeq ($(INSTALL_RACE),1)
 	GOARCH=$(ARCH) GOROOT="$(GOROOT_LOCAL)" $(GO) install -race -v std
 endif
+	rm -rf $(TMP_DIR)
 	@touch "$@"
 
 build-test-%: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
