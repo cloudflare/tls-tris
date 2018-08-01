@@ -67,6 +67,11 @@ endif
 	rm -rf $(TMP_DIR)
 	@touch "$@"
 
+# Swap TLS implementation
+swap_tls:
+	rm -r $(GOROOT_LOCAL)/src/crypto/tls/*
+	rsync -rltgoD $(PRJ_DIR)/ $(GOROOT_LOCAL)/src/crypto/tls/ --exclude=$(lastword $(subst /, ,$(DEV_DIR)))
+
 build-test-%: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
 	$(DOCKER) build $(BUILDARG) -t tls-tris:$* $(DEV_DIR)/$*
 	$(DOCKER) build $(BUILDARG) -t $(*)-localserver $(DEV_DIR)/$*
