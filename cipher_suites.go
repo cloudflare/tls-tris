@@ -110,6 +110,9 @@ var cipherSuites = []*cipherSuite{
 	{TLS_RSA_WITH_RC4_128_SHA, 16, 20, 0, rsaKA, suiteDefaultOff, cipherRC4, macSHA1, nil},
 	{TLS_ECDHE_RSA_WITH_RC4_128_SHA, 16, 20, 0, ecdheRSAKA, suiteECDHE | suiteDefaultOff, cipherRC4, macSHA1, nil},
 	{TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, 16, 20, 0, ecdheECDSAKA, suiteECDHE | suiteECDSA | suiteDefaultOff, cipherRC4, macSHA1, nil},
+
+	// Experimental TLS 1.3 cipher suites
+	{TLS_ECDHE_SIDH_ECDSA_WITH_AES_128_GCM_SHA256, 16, 0, 4, nil, suiteDefaultOff | suiteTLS13, nil, nil, aeadAESGCM13},
 }
 
 func cipherRC4(key, iv []byte, isRead bool) interface{} {
@@ -420,6 +423,11 @@ const (
 	TLS_AES_128_GCM_SHA256       uint16 = 0x1301
 	TLS_AES_256_GCM_SHA384       uint16 = 0x1302
 	TLS_CHACHA20_POLY1305_SHA256 uint16 = 0x1303
+
+	// SIDH (OZAPTF: I'm not sure about IDs - it's unasigned, but not reserved/private)
+	TLS_ECDHE_SIDH_ECDSA_WITH_AES_128_GCM_SHA256 uint16 = 0x1304
+	// OZAPTF, AES 256?
+	TLS_ECDHE_SIDH_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0x1305
 
 	// TLS_FALLBACK_SCSV isn't a standard cipher suite but an indicator
 	// that the client is doing version fallback. See
