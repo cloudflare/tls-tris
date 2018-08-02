@@ -29,7 +29,7 @@ BORINGSSL_REVISION=03de6813d8992a649092b4874ef0ebc022e2f58a
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 # NOBS crypto
-NOBS_REPO=https://github.com/henrydcase/nobscrypto.git
+NOBS_REPO	?= https://github.com/henrydcase/nobscrypto.git
 
 
 ###############
