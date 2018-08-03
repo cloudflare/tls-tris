@@ -192,6 +192,7 @@ CurvePreferenceLoop:
 		return err
 	}
 	hs.hello.keyShare = serverKS
+	c.KeyShareCurve = serverKS.group
 
 	hash := hashForSuite(hs.suite)
 	hashSize := hash.Size()
@@ -1213,6 +1214,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 		return errors.New("tls: unexpected data after handshake")
 	}
 	c.in.setCipher(c.vers, appServerCipher)
+	c.KeyShareCurve = clientKS.group
 	return nil
 }
 

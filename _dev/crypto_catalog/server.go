@@ -163,9 +163,10 @@ func main() {
 			http2 = " [HTTP/2]"
 		}
 
-		fmt.Printf("Established: TLS ver %X CipherSuite: %X\n",
+		fmt.Printf("Established: TLS ver %X CipherSuite: %X CurveID: %X\n",
 			r.TLS.Version,
-			r.TLS.CipherSuite)
+			r.TLS.CipherSuite,
+			tlsConn.KeyShareCurve)
 
 		fmt.Fprintf(w, "<!DOCTYPE html><p>Hello TLS %s%s%s%s _o/\n", tlsVersionToName[r.TLS.Version], resumed, with0RTT, http2)
 	})

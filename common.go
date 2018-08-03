@@ -244,7 +244,8 @@ type ConnectionState struct {
 	// Unique0RTTToken is only present if HandshakeConfirmed is false.
 	Unique0RTTToken []byte
 
-	ClientHello []byte // ClientHello packet
+	ClientHello   []byte // ClientHello packet
+	KeyShareCurve CurveID
 }
 
 // ClientAuthType declares the policy the server will follow for

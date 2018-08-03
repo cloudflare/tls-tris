@@ -126,6 +126,9 @@ type Conn struct {
 	binder []byte
 
 	tmp [16]byte
+
+	// OZAPTF: Stores curve ID established during TLS 1.3 handshake
+	KeyShareCurve CurveID
 }
 
 type handshakeStatus int

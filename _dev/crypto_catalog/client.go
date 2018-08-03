@@ -56,9 +56,10 @@ func (c *Client) run(addr string, version, cipherSuite uint16) {
 	}
 	defer con.Close()
 
-	fmt.Printf("Established: TLS ver %X CipherSuite: %X\n",
+	fmt.Printf("Established: TLS ver %X CipherSuite: %X CurveID %X\n",
 		con.ConnectionState().Version,
-		con.ConnectionState().CipherSuite)
+		con.ConnectionState().CipherSuite,
+		con.KeyShareCurve)
 
 	_, err = con.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"))
 	if err != nil {
