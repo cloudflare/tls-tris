@@ -22,6 +22,7 @@ import (
 	"time"
 
 	sidh "github_com/henrydcase/nobs/dh/sidh"
+	x448 "github_com/henrydcase/nobs/ec/x448"
 	"golang_org/x/crypto/curve25519"
 )
 
@@ -43,12 +44,17 @@ const (
 
 // OZAPTF: better index by AlgID
 const (
+	x25519SharedSecretSize          = 32
 	P751PubKeySize                  = 564
 	P751PrvKeySize                  = 48
 	P751SharedSecretSize            = 188
-	SidhP751Curve25519PubKeySize    = 32 + P751PubKeySize
-	SidhP751Curve25519PrvKeySize    = 32 + P751PrvKeySize
-	SidhP751Curve25519SharedKeySize = 32 + P751SharedSecretSize
+	SidhP751Curve25519PubKeySize    = x25519SharedSecretSize + P751PubKeySize
+	SidhP751Curve25519PrvKeySize    = x25519SharedSecretSize + P751PrvKeySize
+	SidhP751Curve25519SharedKeySize = x25519SharedSecretSize + P751SharedSecretSize
+
+	SidhP751Curve448PubKeySize    = x448.SharedSecretSize + P751PubKeySize
+	SidhP751Curve448PrvKeySize    = x448.SharedSecretSize + P751PrvKeySize
+	SidhP751Curve448SharedKeySize = x448.SharedSecretSize + P751SharedSecretSize
 )
 
 type keySchedule13 struct {
@@ -575,7 +581,7 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare, error) {
 	// OZAPTF: refactor
 	if curveID == X25519 {
-		var scalar, public [32]byte
+		var scalar, public [x25519SharedSecretSize]byte
 		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
 			return nil, keyShare{}, err
 		}
@@ -585,8 +591,8 @@ func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare,
 	}
 
 	if curveID == SidhP751Curve25519 {
-		var public25519 [32]byte
-		var secret25519 [32]byte
+		var public25519 [x25519SharedSecretSize]byte
+		var secret25519 [x25519SharedSecretSize]byte
 		var public [SidhP751Curve25519PubKeySize]byte
 		var secret [SidhP751Curve25519PrvKeySize]byte
 		var variant, _ = getSidhKeyVariant(role)
@@ -615,6 +621,37 @@ func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare,
 		return secret[:], keyShare{group: curveID, data: public[:]}, nil
 	}
 
+	if curveID == SidhP751Curve448 {
+		var public448 [x448.SharedSecretSize]byte
+		var secret448 [x448.SharedSecretSize]byte
+		var public [SidhP751Curve448PubKeySize]byte
+		var secret [SidhP751Curve448PrvKeySize]byte
+		var variant, _ = getSidhKeyVariant(role)
+		var prvKey = sidh.NewPrivateKey(sidh.FP_751, variant)
+
+		if _, err := io.ReadFull(c.rand(), secret448[:]); err != nil {
+			return nil, keyShare{}, err
+		}
+
+		x448.ScalarBaseMult(&public448, &secret448)
+
+		if prvKey.Generate(c.rand()) != nil {
+			return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
+		}
+		pubKey, err := sidh.GeneratePublicKey(prvKey)
+		if err != nil {
+			return nil, keyShare{}, errors.New("tls: public SIDH key generation failed")
+		}
+
+		// Hybrid "shared key" = X448 || P751
+		// OZAPTF SIZE-len
+		copy(public[:], pubKey.Export())
+		copy(public[P751PubKeySize:], public448[:])
+		copy(secret[:], prvKey.Export())
+		copy(secret[P751PrvKeySize:], secret448[:])
+		return secret[:], keyShare{group: curveID, data: public[:]}, nil
+	}
+
 	// else...
 	curve, ok := curveForCurveID(curveID)
 	if !ok {
@@ -632,11 +669,11 @@ func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare,
 
 func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
 	if ks.group == X25519 {
-		if len(ks.data) != 32 {
+		if len(ks.data) != x25519SharedSecretSize {
 			return nil
 		}
 
-		var theirPublic, sharedKey, scalar [32]byte
+		var theirPublic, sharedKey, scalar [x25519SharedSecretSize]byte
 		copy(theirPublic[:], ks.data)
 		copy(scalar[:], secretKey)
 		curve25519.ScalarMult(&sharedKey, &scalar, &theirPublic)
@@ -646,7 +683,7 @@ func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
 	if ks.group == SidhP751Curve25519 {
 		var prvVariant, pubVariant = getSidhKeyVariant(role)
 		var sharedKey [SidhP751Curve25519SharedKeySize]byte
-		var pubX25519, prvX25519, sharedKeyX25519 [32]byte
+		var pubX25519, prvX25519, sharedKeyX25519 [x25519SharedSecretSize]byte
 
 		if len(ks.data) != SidhP751Curve25519PubKeySize {
 			return nil
@@ -677,6 +714,43 @@ func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
 		// format shared key
 		copy(sharedKey[:], sharedSidhKey)
 		copy(sharedKey[P751SharedSecretSize:], sharedKeyX25519[:])
+		return sharedKey[:]
+	}
+
+	if ks.group == SidhP751Curve448 {
+		var prvVariant, pubVariant = getSidhKeyVariant(role)
+		var sharedKey [SidhP751Curve448SharedKeySize]byte
+		var pubX448, prvX448, sharedKeyX448 [x448.SharedSecretSize]byte
+
+		if len(ks.data) != SidhP751Curve448PubKeySize {
+			return nil
+		}
+		if len(secretKey) != SidhP751Curve448PrvKeySize {
+			return nil
+		}
+
+		prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
+		pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
+
+		if err := prvKey.Import(secretKey[:P751PrvKeySize]); err != nil {
+			return nil
+		}
+		if err := pubKey.Import(ks.data[:P751PubKeySize]); err != nil {
+			return nil
+		}
+		sharedSidhKey, err := sidh.DeriveSecret(prvKey, pubKey)
+		if err != nil {
+			return nil
+		}
+
+		// OZAPTF: same thing for x25519
+		copy(prvX448[:], secretKey[P751PrvKeySize:])
+		copy(pubX448[:], ks.data[P751PubKeySize:])
+		x448.ScalarMult(&sharedKeyX448, &prvX448, &pubX448)
+
+		// format shared key
+		copy(sharedKey[:], sharedSidhKey)
+		copy(sharedKey[P751SharedSecretSize:], sharedKeyX448[:])
 		return sharedKey[:]
 	}
 

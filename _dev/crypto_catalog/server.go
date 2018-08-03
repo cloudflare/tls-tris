@@ -131,7 +131,7 @@ func main() {
 	}
 
 	if *arg_sidhon {
-		s.curves = []tls.CurveID{tls.SidhP751Curve25519}
+		s.curves = []tls.CurveID{tls.SidhP751Curve25519, tls.SidhP751Curve448}
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -83,14 +83,14 @@ func (c *Client) run(addr string, version, cipherSuite uint16) {
 }
 
 func main() {
-	var keylog_file string
-	var enable_rsa, enable_ecdsa, enable_sidh, client_auth bool
+	var keylog_file, enable_sidh string
+	var enable_rsa, enable_ecdsa, client_auth bool
 
 	flag.StringVar(&keylog_file, "keylogfile", "", "Secrets will be logged here")
 	flag.BoolVar(&enable_rsa, "rsa", false, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", false, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
-	flag.BoolVar(&enable_sidh, "sidh", false, "Whether to use SIDH")
+	flag.StringVar(&enable_sidh, "sidh", "", "Whether to use SIDH. Argumens: X25519 or X448")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -136,8 +136,13 @@ func main() {
 		client.run(addr, tls.VersionTLS12, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
 	}
 
-	if enable_sidh {
-		client.preferedCurves = []tls.CurveID{tls.SidhP751Curve25519}
+	if enable_sidh != "" {
+		switch enable_sidh {
+		case "X25519":
+			client.preferedCurves = []tls.CurveID{tls.SidhP751Curve25519}
+		case "X448":
+			client.preferedCurves = []tls.CurveID{tls.SidhP751Curve448}
+		}
 		client.run(addr, tls.VersionTLS13, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
 	}
 
