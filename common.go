@@ -124,12 +124,11 @@ const (
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
 
+	SidhP503Curve25519 CurveID = 0x0105
+	// X448 + P751
+	SidhP751Curve448 CurveID = 0x0106
 	// X25519 + P751
-	SidhP751Curve25519 CurveID = 0xFE00
-	// X448 + P503
-	SidhP503Curve448 CurveID = 0xFE01
-	// X25519 + P503
-	SidhP503Curve25519 CurveID = 0xFE02
+	SidhP751Curve25519 CurveID = 0x0107
 )
 
 // TLS 1.3 Key Share
