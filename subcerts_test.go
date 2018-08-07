@@ -139,7 +139,7 @@ func init() {
 		Rand:         zeroSource{},
 		Certificates: nil,
 		MinVersion:   VersionTLS10,
-		MaxVersion:   VersionTLS13Draft22,
+		MaxVersion:   VersionTLS13,
 		CipherSuites: allCipherSuites(),
 	}
 
