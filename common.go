@@ -31,6 +31,7 @@ const (
 	VersionTLS13Draft21 = 0x7f00 | 21
 	VersionTLS13Draft22 = 0x7f00 | 22
 	VersionTLS13Draft23 = 0x7f00 | 23
+	VersionTLS13Draft28 = 0x7f00 | 28
 )
 
 const (
@@ -41,7 +42,7 @@ const (
 	maxWarnAlertCount = 5            // maximum number of consecutive warning alerts
 
 	minVersion = VersionTLS12
-	maxVersion = VersionTLS13Draft23
+	maxVersion = VersionTLS13Draft28
 )
 
 // TLS record types.
@@ -860,7 +861,7 @@ var configSuppVersArray = [...]uint16{VersionTLS13, VersionTLS12, VersionTLS11, 
 // with TLS 1.3 draft versions included.
 //
 // TODO: remove once TLS 1.3 is finalised.
-var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft23, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
+var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft28, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
 
 // getSupportedVersions returns the protocol versions that are supported by the
 // current configuration.
