@@ -24,7 +24,10 @@ ENV USE_64=1 NSS_ENABLE_TLS_1_3=1
 #ARG REVISION=88c3f3fa581b
 
 # Draft 23
-ARG REVISION=16c622c9e1cc
+# ARG REVISION=16c622c9e1cc
+
+# Latest
+ARG REVISION=09ab3310e710
 
 RUN cd nss && hg pull
 RUN cd nss && hg checkout -C $REVISION

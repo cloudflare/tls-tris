@@ -11,6 +11,7 @@ import (
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -358,6 +359,15 @@ func (hc *halfConn) decrypt(b *block) (ok bool, prefixLen int, alertValue alert)
 				hc.additionalData[11] = byte(n >> 8)
 				hc.additionalData[12] = byte(n)
 				additionalData = hc.additionalData[:]
+			} else {
+				if len(payload) > int(uint16(1<<14)+256) {
+					return false, 0, alertRecordOverflow
+				}
+				// Check AD header, see 5.2 of RFC8446
+				additionalData = make([]byte, 5)
+				additionalData[0] = byte(recordTypeApplicationData)
+				binary.BigEndian.PutUint16(additionalData[1:], VersionTLS12)
+				binary.BigEndian.PutUint16(additionalData[3:], uint16(len(payload)))
 			}
 			var err error
 			payload, err = c.Open(payload[:0], nonce, payload, additionalData)
@@ -463,7 +473,7 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
 			overhead := c.Overhead()
 			if hc.version >= VersionTLS13 {
-				overhead++
+				overhead++ // TODO(kk): why this is done?
 			}
 			b.resize(len(b.data) + overhead)
 
@@ -481,13 +491,17 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 				hc.additionalData[11] = byte(payloadLen >> 8)
 				hc.additionalData[12] = byte(payloadLen)
 				additionalData = hc.additionalData[:]
-			}
-
-			if hc.version >= VersionTLS13 {
+			} else {
 				// opaque type
 				payload = payload[:len(payload)+1]
 				payload[len(payload)-1] = b.data[0]
 				b.data[0] = byte(recordTypeApplicationData)
+
+				// Add AD header, see 5.2 of RFC8446
+				additionalData = make([]byte, 5)
+				additionalData[0] = byte(recordTypeApplicationData)
+				binary.BigEndian.PutUint16(additionalData[1:], VersionTLS12)
+				binary.BigEndian.PutUint16(additionalData[3:], uint16(payloadLen+overhead))
 			}
 
 			c.Seal(payload[:0], nonce, payload, additionalData)
