@@ -174,7 +174,10 @@ type fixedNonceAEAD struct {
 	aead  cipher.AEAD
 }
 
-func (f *fixedNonceAEAD) NonceSize() int        { return 8 }
+func (f *fixedNonceAEAD) NonceSize() int { return 8 }
+
+// Overhead returns the maximum difference between the lengths of a
+// plaintext and its ciphertext.
 func (f *fixedNonceAEAD) Overhead() int         { return f.aead.Overhead() }
 func (f *fixedNonceAEAD) explicitNonceLen() int { return 8 }
 
