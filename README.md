@@ -71,7 +71,7 @@ We run 3 kinds of test:.
 
 * Unit testing: <br/>``make -f _dev/Makefile test-unit``
 * Testing against BoringSSL test suite: <br/>``make -f _dev/Makefile test-bogo``
-* Compatibility testing (see below):<br/>``make -f _dev/Makefile test-compat``
+* Compatibility testing (see below):<br/>``make -f _dev/Makefile test-interop``
 
 To run all the tests in one go use:
 ```
