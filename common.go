@@ -27,7 +27,6 @@ const (
 	VersionTLS11        = 0x0302
 	VersionTLS12        = 0x0303
 	VersionTLS13        = 0x0304
-	VersionTLS13Draft28 = 0x7f00 | 28
 )
 
 const (
@@ -38,7 +37,7 @@ const (
 	maxWarnAlertCount = 5            // maximum number of consecutive warning alerts
 
 	minVersion = VersionTLS12
-	maxVersion = VersionTLS13Draft28
+	maxVersion = VersionTLS13
 )
 
 // TLS record types.

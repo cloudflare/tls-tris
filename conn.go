@@ -52,22 +52,17 @@ type Conn struct {
 	didResume        bool // whether this connection was a session resumption
 	cipherSuite      uint16
 	ocspResponse     []byte   // stapled OCSP response
-	scts             [][]byte // Signed certificate timestamps from server
+	scts             [][]byte // signed certificate timestamps from server
 	peerCertificates []*x509.Certificate
 	// verifiedChains contains the certificate chains that we built, as
 	// opposed to the ones presented by the server.
 	verifiedChains [][]*x509.Certificate
-	// verifiedDc is set by a client who negotiates the use of a valid delegated
-	// credential.
-	verifiedDc *delegatedCredential
 	// serverName contains the server name indicated by the client, if any.
 	serverName string
 	// secureRenegotiation is true if the server echoed the secure
 	// renegotiation extension. (This is meaningless as a server because
 	// renegotiation is not supported in that case.)
 	secureRenegotiation bool
-	// indicates wether extended MasterSecret extension is used (see RFC7627)
-	useEMS bool
 
 	// clientFinishedIsFirst is true if the client sent the first Finished
 	// message during the most recent handshake. This is recorded because
@@ -472,42 +467,40 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 		case cipher.Stream:
 			c.XORKeyStream(payload, payload)
 		case aead:
-			// explicitIVLen is always 0 for TLS1.3
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
-			payloadOffset := recordHeaderLen + explicitIVLen
+			overhead := c.Overhead()
+			if hc.version >= VersionTLS13 {
+				overhead++ // TODO(kk): why this is done?
+			}
+			b.resize(len(b.data) + overhead)
+
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
 			}
+			payload = b.data[recordHeaderLen+explicitIVLen:]
+			payload = payload[:payloadLen]
 
 			var additionalData []byte
 			if hc.version < VersionTLS13 {
-				// make room in a buffer for payload + MAC
-				b.resize(len(b.data) + c.Overhead())
-
-				payload = b.data[payloadOffset : payloadOffset+payloadLen]
 				copy(hc.additionalData[:], hc.seq[:])
 				copy(hc.additionalData[8:], b.data[:3])
-				binary.BigEndian.PutUint16(hc.additionalData[11:], uint16(payloadLen))
+				hc.additionalData[11] = byte(payloadLen >> 8)
+				hc.additionalData[12] = byte(payloadLen)
 				additionalData = hc.additionalData[:]
 			} else {
-				// make room in a buffer for TLSCiphertext.encrypted_record:
-				// payload + MAC + extra data if needed
-				b.resize(len(b.data) + c.Overhead() + 1)
-
-				payload = b.data[payloadOffset : payloadOffset+payloadLen+1]
-				// 1 byte of content type is appended to payload and encrypted
+				// opaque type
+				payload = payload[:len(payload)+1]
 				payload[len(payload)-1] = b.data[0]
-
-				// opaque_type
 				b.data[0] = byte(recordTypeApplicationData)
 
 				// Add AD header, see 5.2 of RFC8446
 				additionalData = make([]byte, 5)
-				additionalData[0] = b.data[0]
+				additionalData[0] = byte(recordTypeApplicationData)
 				binary.BigEndian.PutUint16(additionalData[1:], VersionTLS12)
-				binary.BigEndian.PutUint16(additionalData[3:], uint16(len(payload)+c.Overhead()))
+				binary.BigEndian.PutUint16(additionalData[3:], uint16(payloadLen+overhead))
 			}
+
 			c.Seal(payload[:0], nonce, payload, additionalData)
 		case cbcMode:
 			blockSize := c.BlockSize()
@@ -1684,9 +1677,6 @@ func (c *Conn) ConnectionState() ConnectionState {
 		state.VerifiedChains = c.verifiedChains
 		state.SignedCertificateTimestamps = c.scts
 		state.OCSPResponse = c.ocspResponse
-		if c.verifiedDc != nil {
-			state.DelegatedCredential = c.verifiedDc.raw
-		}
 		state.HandshakeConfirmed = atomic.LoadInt32(&c.handshakeConfirmed) == 1
 		if !state.HandshakeConfirmed {
 			state.Unique0RTTToken = c.binder
