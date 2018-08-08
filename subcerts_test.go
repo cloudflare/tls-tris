@@ -18,7 +18,7 @@ import (
 // A PEM-encoded "delegation certificate", an X.509 certificate with the
 // DelegationUsage extension. The extension is defined in
 // specified in https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
-var dcDelegationCertPEM = `-----BEGIN CERTIFICATE-----
+const DcCertWithDelegationUsage = `-----BEGIN CERTIFICATE-----
 MIIBejCCASGgAwIBAgIQXXtl0v50W2OadoW0QwLUlzAKBggqhkjOPQQDAjAUMRIw
 EAYDVQQKEwlBY21lIEluYy4wHhcNMTgwNzMwMjAxMTE5WhcNMTgwODA2MjAxMTE5
 WjAUMRIwEAYDVQQKEwlBY21lIEluYy4wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
@@ -32,7 +32,7 @@ AQQBgtpLLAQAMAoGCCqGSM49BAMCA0cAMEQCIEMdIkwwmzQAJ6RSDT3wcrsySx2B
 
 // The PEM-encoded "delegation key", the secret key associated with the
 // delegation certificate. This is a key for ECDSA with P256 and SHA256.
-var dcDelegationKeyPEM = `-----BEGIN EC PRIVATE KEY-----
+const DcKeyWithDelegationUsage = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIAS/pGktmxK1hlt3gF4N2nkMrJnoZihvOO63nnNcxXQroAoGCCqGSM49
 AwEHoUQDQgAE3ELrmlDSd5KihrOAwXSVXe81s8hgDU+LgTRlZGdnIGg7HRZ8ffXx
 om34KFnq/By7fWfkuh7PvGwzwRzYE0fy3w==
@@ -40,7 +40,7 @@ om34KFnq/By7fWfkuh7PvGwzwRzYE0fy3w==
 `
 
 // A certificate without the DelegationUsage extension.
-var dcCertPEM = `-----BEGIN CERTIFICATE-----
+const DcCertWithoutDelegationUsage = `-----BEGIN CERTIFICATE-----
 MIIBajCCAQ+gAwIBAgIRAMUg/VFqJaWWJwZ9iHoMjqIwCgYIKoZIzj0EAwIwEjEQ
 MA4GA1UEChMHQWNtZSBDbzAeFw0xODA3MzAyMDExMTlaFw0xOTA3MzAyMDExMTla
 MBIxEDAOBgNVBAoTB0FjbWUgQ28wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATA
@@ -52,8 +52,8 @@ KFyrowMTan791RJnyANH/4uYhmvkfhfrFGSTXUli
 -----END CERTIFICATE-----
 `
 
-// The secret key associatted with dcCertPEM.
-var dcKeyPEM = `-----BEGIN EC PRIVATE KEY-----
+// The secret key associatted with DcCertWithoutDelegationUsage.
+const DcKeyWithoutDelegationUsage = `-----BEGIN EC PRIVATE KEY-----
 MHcCAQEEIEP82pOhzx0tKkky9t0OmUo9MHgmfdAHxDN2cHmWGqOhoAoGCCqGSM49
 AwEHoUQDQgAEwJ/qHlkr0jR4RLJEkYJJHqwkA6FfzQPq90uQLQjhU+QGC7fMZbUk
 1nqxSP2JWSyHC8ZST0+0/l6QZ30usWgLsQ==
@@ -75,7 +75,7 @@ type dcTestDC struct {
 // Use with maxVersion == VersionTLS13Draft23.
 //
 // TODO(henrydcase): Remove this when we drop support for draft23.
-var dcTestDataDraft23PEM = `-----BEGIN DC TEST DATA-----
+const DcTestDataDraft23PEM = `-----BEGIN DC TEST DATA-----
 MIIIPDCCAUETCXRsczEzcDI1NgICfxcCAgQDBIGwAAk6gAQDfxcAWzBZMBMGByqG
 SM49AgEGCCqGSM49AwEHA0IABDFeK+EcMQWKDM6xZJqHEHLcIWE0iHTAL1xAB5r6
 bkm7GLlz1HLWcTy28PNsb9KQLV3Yeay2WYA2d2zGQjNbEhcEAwBHMEUCIQDnXyP4
@@ -126,7 +126,7 @@ AiEiKCRicw1Upfdy+xdSF0N3XXkLHB13criCfJr2rbZ1o8V7CsX6U70o+/48huPI
 // Use with maxVersion == VersionTLS13Draft28.
 //
 // TODO(henrydcase): Remove this when we drop support for draft28.
-var dcTestDataDraft28PEM = `-----BEGIN DC TEST DATA-----
+const DcTestDataDraft28PEM = `-----BEGIN DC TEST DATA-----
 MIIIOjCCAUATCXRsczEzcDI1NgICfxwCAgQDBIGvAAk6gAQDfxwAWzBZMBMGByqG
 SM49AgEGCCqGSM49AwEHA0IABAOcQMVs6VmVQ1BYyK+YhUAucZqH3LmDQmAaVDs8
 brnePHVmSdOoQCU+Ybp3kgnklW958EFZiJ2oK7iWkIpi4TIEAwBGMEQCIB8w0eko
@@ -175,7 +175,7 @@ x/tlNfATUGmFQGwPug4RyWVux22dGrn81/SsIXJ8hz1eb0s9EKOBbxwhJ//ACg==
 `
 
 // Use with maxVersion == VersionTLS13.
-var dcTestDataPEM = `-----BEGIN DC TEST DATA-----
+const DcTestDataTLS13PEM = `-----BEGIN DC TEST DATA-----
 MIIIOzCCAUATCXRsczEzcDI1NgICAwQCAgQDBIGvAAk6gAQDAwQAWzBZMBMGByqG
 SM49AgEGCCqGSM49AwEHA0IABFTImzqflLfyu3rqlCVsezSv45fKJglhjDYcwJ3H
 ylqX6rFCupeCwKmMhFvxRkkWAOobv2DZxLYALFgggC8KckkEAwBGMEQCIBWO8rFt
@@ -273,11 +273,11 @@ func init() {
 	var testData []byte
 	switch maxVersion {
 	case VersionTLS13Draft23:
-		testData = []byte(dcTestDataDraft23PEM)
+		testData = []byte(DcTestDataDraft23PEM)
 	case 0x7f00 | 28: // TODO(henrydcase): Fix once draft 28 is implemented
-		testData = []byte(dcTestDataDraft28PEM)
+		testData = []byte(DcTestDataDraft28PEM)
 	case 0x0304: // TODO(henrydcase): Fix once the final version is implemented
-		testData = []byte(dcTestDataPEM)
+		testData = []byte(DcTestDataTLS13PEM)
 	default:
 		panic(fmt.Errorf("no test data for version %04x", maxVersion))
 	}
@@ -299,7 +299,7 @@ func init() {
 	}
 
 	// The delegation certificate.
-	dcTestDelegationCert, err = X509KeyPair([]byte(dcDelegationCertPEM), []byte(dcDelegationKeyPEM))
+	dcTestDelegationCert, err = X509KeyPair([]byte(DcCertWithDelegationUsage), []byte(DcKeyWithDelegationUsage))
 	if err != nil {
 		panic(err)
 	}
@@ -309,7 +309,7 @@ func init() {
 	}
 
 	// A certificate without the the DelegationUsage extension for X.509.
-	dcTestCert, err = X509KeyPair([]byte(dcCertPEM), []byte(dcKeyPEM))
+	dcTestCert, err = X509KeyPair([]byte(DcCertWithoutDelegationUsage), []byte(DcKeyWithoutDelegationUsage))
 	if err != nil {
 		panic(err)
 	}
