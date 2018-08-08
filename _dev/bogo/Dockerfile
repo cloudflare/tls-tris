@@ -26,7 +26,10 @@ RUN git clone https://github.com/henrydcase/crypto-tls-bogo-shim \
 #ARG REVISION=d07b9e80a87c871c2569ce4aabd06695336c5dc5
 
 # Draft 23 (+ client authentication)
-ARG REVISION=cd33ad248ae9490854f0077ca046b47cac3735bf
+# ARG REVISION=cd33ad248ae9490854f0077ca046b47cac3735bf
+
+# Draft 28
+ARG REVISION=33204d1eaa497819c6325998d7ba6b66316790f3
 
 RUN cd /go/src/github.com/henrydcase/crypto-tls-bogo-shim && \
     git checkout $REVISION
