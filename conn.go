@@ -489,8 +489,7 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 			if hc.version < VersionTLS13 {
 				copy(hc.additionalData[:], hc.seq[:])
 				copy(hc.additionalData[8:], b.data[:3])
-				hc.additionalData[11] = byte(payloadLen >> 8)
-				hc.additionalData[12] = byte(payloadLen)
+				binary.BigEndian.PutUint16(hc.additionalData[11:], uint16(payloadLen))
 				additionalData = hc.additionalData[:]
 			} else {
 				// opaque type
