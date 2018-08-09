@@ -16,46 +16,46 @@ import (
 
 // A PEM-encoded "delegation certificate", an X.509 certificate with the
 // DelegationUsage extension. The extension is defined in
-// specified in https://tools.ietf.org/html/draft-ietf-tls-subcerts-01.
+// specified in https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
 var dcDelegationCertPEM = `-----BEGIN CERTIFICATE-----
-MIIBdzCCAR2gAwIBAgIQLVIvEpo0/0TzRja4ImvB1TAKBggqhkjOPQQDAjASMRAw
-DgYDVQQKEwdBY21lIENvMB4XDTE4MDcwMzE2NTE1M1oXDTE5MDcwMzE2NTE1M1ow
-EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOhB
-U6adaAgliLaFc1PAo9HBO4Wish1G4df3IK5EXLy+ooYfmkfzT1FxqbNLZufNYzve
-25fmpal/1VJAjpVyKq2jVTBTMA4GA1UdDwEB/wQEAwIFoDATBgNVHSUEDDAKBggr
-BgEFBQcDATAMBgNVHRMBAf8EAjAAMA8GA1UdEQQIMAaHBH8AAAEwDQYJKwYBBAGC
-2kssBAAwCgYIKoZIzj0EAwIDSAAwRQIhAPNwRk6cygm6zO5rjOzohKYWS+1KuWCM
-OetDIvU4mdyoAiAGN97y3GJccYn9ZOJS4UOqhr9oO8PuZMLgdq4OrMRiiA==
+MIIBejCCASGgAwIBAgIQXXtl0v50W2OadoW0QwLUlzAKBggqhkjOPQQDAjAUMRIw
+EAYDVQQKEwlBY21lIEluYy4wHhcNMTgwNzMwMjAxMTE5WhcNMTgwODA2MjAxMTE5
+WjAUMRIwEAYDVQQKEwlBY21lIEluYy4wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
+AATcQuuaUNJ3kqKGs4DBdJVd7zWzyGANT4uBNGVkZ2cgaDsdFnx99fGibfgoWer8
+HLt9Z+S6Hs+8bDPBHNgTR/Lfo1UwUzAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAww
+CgYIKwYBBQUHAwEwDAYDVR0TAQH/BAIwADAPBgNVHREECDAGhwR/AAABMA0GCSsG
+AQQBgtpLLAQAMAoGCCqGSM49BAMCA0cAMEQCIEMdIkwwmzQAJ6RSDT3wcrsySx2B
+5Lvx5HGzc43Fgu9eAiAi4sFXnizFBVUL43qXZBq4ARw17o0JW3/7eec1xttQhw==
 -----END CERTIFICATE-----
 `
 
 // The PEM-encoded "delegation key", the secret key associated with the
-// delegation certificate.
+// delegation certificate. This is a key for ECDSA with P256 and SHA256.
 var dcDelegationKeyPEM = `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIJDVlo+sJolMcNjMkfCGDUjMJcE4UgclcXGCrOtbJAi2oAoGCCqGSM49
-AwEHoUQDQgAE6EFTpp1oCCWItoVzU8Cj0cE7haKyHUbh1/cgrkRcvL6ihh+aR/NP
-UXGps0tm581jO97bl+alqX/VUkCOlXIqrQ==
+MHcCAQEEIAS/pGktmxK1hlt3gF4N2nkMrJnoZihvOO63nnNcxXQroAoGCCqGSM49
+AwEHoUQDQgAE3ELrmlDSd5KihrOAwXSVXe81s8hgDU+LgTRlZGdnIGg7HRZ8ffXx
+om34KFnq/By7fWfkuh7PvGwzwRzYE0fy3w==
 -----END EC PRIVATE KEY-----
 `
 
 // A certificate without the DelegationUsage extension.
 var dcCertPEM = `-----BEGIN CERTIFICATE-----
-MIIBaTCCAQ6gAwIBAgIQSUo+9uaip3qCW+1EPeHZgDAKBggqhkjOPQQDAjASMRAw
-DgYDVQQKEwdBY21lIENvMB4XDTE4MDYxMjIzNDAyNloXDTE5MDYxMjIzNDAyNlow
-EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABLf7
-fiznPVdc3V5mM3ymswU2/IoJaq/deA6dgdj50ozdYyRiAPjxzcz9zRsZw1apTF/h
-yNfiLhV4EE1VrwXcT5OjRjBEMA4GA1UdDwEB/wQEAwIFoDATBgNVHSUEDDAKBggr
-BgEFBQcDATAMBgNVHRMBAf8EAjAAMA8GA1UdEQQIMAaHBH8AAAEwCgYIKoZIzj0E
-AwIDSQAwRgIhANXG0zmrVtQBK0TNZZoEGMOtSwxmiZzXNe+IjdpxO3TiAiEA5VYx
-0CWJq5zqpVXbJMeKVMASo2nrXZoA6NhJvFQ97hw=
+MIIBajCCAQ+gAwIBAgIRAMUg/VFqJaWWJwZ9iHoMjqIwCgYIKoZIzj0EAwIwEjEQ
+MA4GA1UEChMHQWNtZSBDbzAeFw0xODA3MzAyMDExMTlaFw0xOTA3MzAyMDExMTla
+MBIxEDAOBgNVBAoTB0FjbWUgQ28wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATA
+n+oeWSvSNHhEskSRgkkerCQDoV/NA+r3S5AtCOFT5AYLt8xltSTWerFI/YlZLIcL
+xlJPT7T+XpBnfS6xaAuxo0YwRDAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYI
+KwYBBQUHAwEwDAYDVR0TAQH/BAIwADAPBgNVHREECDAGhwR/AAABMAoGCCqGSM49
+BAMCA0kAMEYCIQCFGWnoJmwH1rxNCKBJWVDBKDTSsYhySRk4h9RPyR8bUwIhAJxc
+KFyrowMTan791RJnyANH/4uYhmvkfhfrFGSTXUli
 -----END CERTIFICATE-----
 `
 
 // The secret key associatted with dcCertPEM.
 var dcKeyPEM = `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIMw9DiOfGI1E/XZrrW2huZSjYi0EKwvVjAe+dYtyFsSloAoGCCqGSM49
-AwEHoUQDQgAEt/t+LOc9V1zdXmYzfKazBTb8iglqr914Dp2B2PnSjN1jJGIA+PHN
-zP3NGxnDVqlMX+HI1+IuFXgQTVWvBdxPkw==
+MHcCAQEEIEP82pOhzx0tKkky9t0OmUo9MHgmfdAHxDN2cHmWGqOhoAoGCCqGSM49
+AwEHoUQDQgAEwJ/qHlkr0jR4RLJEkYJJHqwkA6FfzQPq90uQLQjhU+QGC7fMZbUk
+1nqxSP2JWSyHC8ZST0+0/l6QZ30usWgLsQ==
 -----END EC PRIVATE KEY-----
 `
 
@@ -71,40 +71,50 @@ type dcTestDC struct {
 // Test data used for testing the TLS handshake with the delegated creedential
 // extension. The PEM block encodes a DER encoded slice of dcTestDC's.
 var dcTestDCsPEM = `-----BEGIN DC TEST DATA-----
-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
-HJbn52hmB027JEIMPWsxKxPkr7udk7Q=
+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
 -----END DC TEST DATA-----
 `
 
@@ -126,10 +136,6 @@ func init() {
 	if err != nil {
 		panic("failed to unmarshal DC test ASN.1 data")
 	}
-
-	// Use a static time for testing. This is the point at which the test DCs
-	// were generated.
-	dcTestNow = time.Date(2018, 07, 03, 18, 0, 0, 234234, time.UTC)
 
 	// The base configuration for the client and server.
 	dcTestConfig = &Config{
@@ -162,6 +168,11 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+
+	// For testing purposes, use the point at which the test DCs were generated
+	// as the current time.  This is the same as the time at which the
+	// delegation certificate was generated.
+	dcTestNow = dcTestDelegationCert.Leaf.NotBefore
 
 	// Make these roots of these certificates the client's trusted CAs.
 	dcTestConfig.RootCAs = x509.NewCertPool()
@@ -251,17 +262,16 @@ var dcTesters = []struct {
 	expectDC         bool
 	name             string
 }{
-	{true, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, true, "tls12"},
-	{true, true, false, VersionTLS13, VersionTLS13, 0, "tls13", true, true, "tls13"},
-	{true, true, false, VersionTLS12, VersionTLS12, 0, "malformed12", false, false, "tls12, malformed dc"},
-	{true, true, false, VersionTLS13, VersionTLS13, 0, "malformed13", false, false, "tls13, malformed dc"},
-	{true, true, true, VersionTLS12, VersionTLS12, 0, "invalid", true, true, "tls12, invalid dc, skip verify"},
-	{true, true, true, VersionTLS13, VersionTLS13, 0, "invalid", true, true, "tls13, invalid dc, skip verify"},
-	{false, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "client no dc"},
-	{true, false, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "server no dc"},
-	{true, true, false, VersionTLS11, VersionTLS12, 0, "tls12", true, false, "client old"},
-	{true, true, false, VersionTLS12, VersionTLS11, 0, "tls12", true, false, "server old"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "tls13p256", true, true, "tls13"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "tls13p521", true, true, "tls13"},
+	{true, false, false, VersionTLS13, VersionTLS13, 0, "tls13p256", true, false, "server no dc"},
+	{true, true, false, VersionTLS12, VersionTLS13, 0, "tls13p256", true, false, "client old"},
+	{true, true, false, VersionTLS13, VersionTLS12, 0, "tls13p256", true, false, "server old"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "badkey", false, false, "bad key"},
+	{true, true, true, VersionTLS13, VersionTLS13, 0, "badsig", true, true, "bad key, skip verify"},
 	{true, true, false, VersionTLS13, VersionTLS13, dcMaxTTL, "tls13", false, false, "expired dc"},
+	{true, true, false, VersionTLS13, VersionTLS13, 0, "badvers", false, false, "dc wrong version"},
+	{true, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "tls12"},
 }
 
 // Tests the handshake with the delegated credential extension for each test
@@ -283,6 +293,9 @@ func TestDCHandshake(t *testing.T) {
 		if tester.serverDC {
 			serverConfig.GetDelegatedCredential = func(
 				ch *ClientHelloInfo, vers uint16) ([]byte, crypto.PrivateKey, error) {
+				if vers < VersionTLS13 {
+					return nil, nil, nil
+				}
 				for _, test := range dcTestDCs {
 					if test.Name == tester.dcTestName {
 						sk, err := x509.ParseECPrivateKey(test.PrivateKey)

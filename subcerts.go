@@ -5,7 +5,7 @@
 package tls
 
 // Delegated credentials for TLS
-// (https://tools.ietf.org/html/draft-ietf-tls-subcerts-01) is an IETF Internet
+// (https://tools.ietf.org/html/draft-ietf-tls-subcerts-02) is an IETF Internet
 // draft and proposed TLS extension. This allows a backend server to delegate
 // TLS termination to a trusted frontend. If the client supports this extension,
 // then the frontend may use a "delegated credential" as the signing key in the
@@ -14,7 +14,7 @@ package tls
 // revoked; in order to mitigate risk in case the frontend is compromised, the
 // credential is only valid for a short time (days, hours, or even minutes).
 //
-// This implements draft 01. This draft doesn't specify an object identifier for
+// This implements draft 02. This draft doesn't specify an object identifier for
 // the X.509 extension; we use one assigned by Cloudflare. In addition, IANA has
 // not assigned an extension ID for this extension; we picked up one that's not
 // yet taken.
@@ -70,8 +70,11 @@ func canDelegate(cert *x509.Certificate) bool {
 
 // credential stores the public components of a credential.
 type credential struct {
+	// The serialized form of the credential.
+	raw []byte
+
 	// The amount of time for which the credential is valid. Specifically, the
-	// credential expires `ValidTime` seconds after the `notBefore` of the
+	// the credential expires `ValidTime` seconds after the `notBefore` of the
 	// delegation certificate. The delegator shall not issue delegated
 	// credentials that are valid for more than 7 days from the current time.
 	//
@@ -79,14 +82,14 @@ type credential struct {
 	// uint32 representing the duration in seconds.
 	validTime time.Duration
 
+	// The signature scheme associated with the delegated credential public key.
+	expectedCertVerifyAlgorithm SignatureScheme
+
+	// The version of TLS in which the credential will be used.
+	expectedVersion uint16
+
 	// The credential public key.
 	publicKey crypto.PublicKey
-
-	// The signature scheme associated with the credential public key.
-	//
-	// NOTE(cjpatton) This is used for bookkeeping and is not actually part of
-	// the credential structure specified in the standard.
-	scheme SignatureScheme
 }
 
 // isExpired returns true if the credential has expired. The end of the validity
@@ -108,7 +111,7 @@ func (cred *credential) invalidTTL(start, now time.Time) bool {
 // marshalSubjectPublicKeyInfo returns a DER encoded SubjectPublicKeyInfo structure
 // (as defined in the X.509 standard) for the credential.
 func (cred *credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
-	switch cred.scheme {
+	switch cred.expectedCertVerifyAlgorithm {
 	case ECDSAWithP256AndSHA256,
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512:
@@ -119,19 +122,26 @@ func (cred *credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
 		return serializedPublicKey, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported signature scheme: 0x%04x", cred.scheme)
+		return nil, fmt.Errorf("unsupported signature scheme: 0x%04x", cred.expectedCertVerifyAlgorithm)
 	}
 }
 
 // marshal encodes a credential in the wire format specified in
-// https://tools.ietf.org/html/draft-ietf-tls-subcerts-01.
+// https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
 func (cred *credential) marshal() ([]byte, error) {
-	// Write the valid_time field.
-	serialized := make([]byte, 6)
+	// The number of bytes comprising the DC parameters, which includes the
+	// validity time (4 bytes), the signature scheme of the public key (2 bytes), and
+	// the protocol version (2 bytes).
+	paramsLen := 8
+
+	// The first 4 bytes are the valid_time, scheme, and version fields.
+	serialized := make([]byte, paramsLen+2)
 	binary.BigEndian.PutUint32(serialized, uint32(cred.validTime/time.Second))
+	binary.BigEndian.PutUint16(serialized[4:], uint16(cred.expectedCertVerifyAlgorithm))
+	binary.BigEndian.PutUint16(serialized[6:], cred.expectedVersion)
 
 	// Encode the public key and assert that the encoding is no longer than 2^16
-	// bytes (per the spect).
+	// bytes (per the spec).
 	serializedPublicKey, err := cred.marshalSubjectPublicKeyInfo()
 	if err != nil {
 		return nil, err
@@ -140,68 +150,58 @@ func (cred *credential) marshal() ([]byte, error) {
 		return nil, errors.New("public key is too long")
 	}
 
-	// Write the length of the public_key field.
-	binary.BigEndian.PutUint16(serialized[4:], uint16(len(serializedPublicKey)))
+	// The next 2 bytes are the length of the public key field.
+	binary.BigEndian.PutUint16(serialized[paramsLen:], uint16(len(serializedPublicKey)))
 
-	// Write the public key.
-	return append(serialized, serializedPublicKey...), nil
+	// The remaining bytes are the public key itself.
+	serialized = append(serialized, serializedPublicKey...)
+	cred.raw = serialized
+	return serialized, nil
 }
 
 // unmarshalCredential decodes a credential and returns it.
 func unmarshalCredential(serialized []byte) (*credential, error) {
-	// Bytes 0-3 are the validity time field; bytes 4-6 are the length of the
-	// serialized SubjectPublicKeyInfo.
-	if len(serialized) < 6 {
+	// The number of bytes comprising the DC parameters.
+	paramsLen := 8
+
+	if len(serialized) < paramsLen+2 {
 		return nil, errors.New("credential is too short")
 	}
 
-	// Parse the validity time.
+	// Parse the valid_time, scheme, and version fields.
 	validTime := time.Duration(binary.BigEndian.Uint32(serialized)) * time.Second
+	scheme := SignatureScheme(binary.BigEndian.Uint16(serialized[4:]))
+	version := binary.BigEndian.Uint16(serialized[6:])
 
 	// Parse the SubjectPublicKeyInfo.
-	pk, scheme, err := unmarshalSubjectPublicKeyInfo(serialized[6:])
+	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+2:])
 	if err != nil {
 		return nil, err
 	}
 
-	return &credential{validTime, pk, scheme}, nil
-}
-
-// unmarshalSubjectPublicKeyInfo parses a DER encoded SubjectPublicKeyInfo
-// structure into a public key and its corresponding algorithm.
-func unmarshalSubjectPublicKeyInfo(serialized []byte) (crypto.PublicKey, SignatureScheme, error) {
-	publicKey, err := x509.ParsePKIXPublicKey(serialized)
-	if err != nil {
-		return nil, 0, err
+	if _, ok := pk.(*ecdsa.PublicKey); !ok {
+		return nil, fmt.Errorf("unsupported delegation key type: %T", pk)
 	}
 
-	switch pk := publicKey.(type) {
-	case *ecdsa.PublicKey:
-		curveName := pk.Curve.Params().Name
-		if curveName == "P-256" {
-			return pk, ECDSAWithP256AndSHA256, nil
-		} else if curveName == "P-384" {
-			return pk, ECDSAWithP384AndSHA384, nil
-		} else if curveName == "P-521" {
-			return pk, ECDSAWithP521AndSHA512, nil
-		} else {
-			return nil, 0, fmt.Errorf("curve %s s not supported", curveName)
-		}
-
-	default:
-		return nil, 0, fmt.Errorf("unsupported delgation key type: %T", pk)
-	}
+	return &credential{
+		raw:                         serialized,
+		validTime:                   validTime,
+		expectedCertVerifyAlgorithm: scheme,
+		expectedVersion:             version,
+		publicKey:                   pk,
+	}, nil
 }
 
 // getCredentialLen returns the number of bytes comprising the serialized
 // credential that starts at the beginning of the input slice. It returns an
 // error if the input is too short to contain a credential.
 func getCredentialLen(serialized []byte) (int, error) {
-	if len(serialized) < 6 {
+	paramsLen := 8
+	if len(serialized) < paramsLen+2 {
 		return 0, errors.New("credential is too short")
 	}
-	// First 4 bytes is the validity time.
-	serialized = serialized[4:]
+	// First several bytes are the valid_time, scheme, and version fields.
+	serialized = serialized[paramsLen:]
 
 	// The next 2 bytes are the length of the serialized public key.
 	serializedPublicKeyLen := int(binary.BigEndian.Uint16(serialized))
@@ -211,7 +211,7 @@ func getCredentialLen(serialized []byte) (int, error) {
 		return 0, errors.New("public key of credential is too short")
 	}
 
-	return 6 + serializedPublicKeyLen, nil
+	return paramsLen + 2 + serializedPublicKeyLen, nil
 }
 
 // delegatedCredential stores a credential and its delegation.
@@ -222,7 +222,7 @@ type delegatedCredential struct {
 	cred *credential
 
 	// The signature scheme used to sign the credential.
-	scheme SignatureScheme
+	algorithm SignatureScheme
 
 	// The credential's delegation.
 	signature []byte
@@ -246,7 +246,7 @@ func ensureCertificateHasLeaf(cert *Certificate) error {
 // validate checks that that the signature is valid, that the credential hasn't
 // expired, and that the TTL is valid. It also checks that certificate can be
 // used for delegation.
-func (dc *delegatedCredential) validate(cert *x509.Certificate, vers uint16, now time.Time) (bool, error) {
+func (dc *delegatedCredential) validate(cert *x509.Certificate, now time.Time) (bool, error) {
 	// Check that the cert can delegate.
 	if !canDelegate(cert) {
 		return false, errNoDelegationUsage
@@ -261,15 +261,16 @@ func (dc *delegatedCredential) validate(cert *x509.Certificate, vers uint16, now
 	}
 
 	// Prepare the credential for verification.
-	hash := getHash(dc.scheme)
-	in, err := prepareDelegation(hash, dc.cred, cert.Raw, dc.scheme, vers)
+	rawCred, err := dc.cred.marshal()
 	if err != nil {
 		return false, err
 	}
+	hash := getHash(dc.algorithm)
+	in := prepareDelegation(hash, rawCred, cert.Raw, dc.algorithm)
 
-	// TODO(any) This code overlaps signficantly with verifyHandshakeSignature()
+	// TODO(any) This code overlaps significantly with verifyHandshakeSignature()
 	// in ../auth.go. This should be refactored.
-	switch dc.scheme {
+	switch dc.algorithm {
 	case ECDSAWithP256AndSHA256,
 		ECDSAWithP384AndSHA384,
 		ECDSAWithP521AndSHA512:
@@ -285,7 +286,7 @@ func (dc *delegatedCredential) validate(cert *x509.Certificate, vers uint16, now
 
 	default:
 		return false, fmt.Errorf(
-			"unsupported signature scheme: 0x%04x", dc.scheme)
+			"unsupported signature scheme: 0x%04x", dc.algorithm)
 	}
 }
 
@@ -325,7 +326,7 @@ func unmarshalDelegatedCredential(serialized []byte) (*delegatedCredential, erro
 	return &delegatedCredential{
 		raw:       serialized,
 		cred:      cred,
-		scheme:    scheme,
+		algorithm: scheme,
 		signature: sig,
 	}, nil
 }
@@ -361,11 +362,10 @@ func getHash(scheme SignatureScheme) crypto.Hash {
 }
 
 // prepareDelegation returns a hash of the message that the delegator is to
-// sign. The inputs are the credential (cred), the DER-encoded delegator
-// certificate (`delegatorCert`), the signature scheme of the delegator
-// (`delegatorScheme`), and the protocol version (`vers`) in which the credential
-// is to be used.
-func prepareDelegation(hash crypto.Hash, cred *credential, delegatorCert []byte, delegatorScheme SignatureScheme, vers uint16) ([]byte, error) {
+// sign. The inputs are the credential (`cred`), the DER-encoded delegator
+// certificate (`delegatorCert`) and the signature scheme of the delegator
+// (`delegatorAlgorithm`).
+func prepareDelegation(hash crypto.Hash, cred, delegatorCert []byte, delegatorAlgorithm SignatureScheme) []byte {
 	h := hash.New()
 
 	// The header.
@@ -373,25 +373,16 @@ func prepareDelegation(hash crypto.Hash, cred *credential, delegatorCert []byte,
 	h.Write([]byte("TLS, server delegated credentials"))
 	h.Write([]byte{0x00})
 
-	// The protocol version.
-	var serializedVers [2]byte
-	binary.BigEndian.PutUint16(serializedVers[:], uint16(vers))
-	h.Write(serializedVers[:])
-
 	// The delegation certificate.
 	h.Write(delegatorCert)
 
+	// The credential.
+	h.Write(cred)
+
 	// The delegator signature scheme.
 	var serializedScheme [2]byte
-	binary.BigEndian.PutUint16(serializedScheme[:], uint16(delegatorScheme))
+	binary.BigEndian.PutUint16(serializedScheme[:], uint16(delegatorAlgorithm))
 	h.Write(serializedScheme[:])
 
-	// The credential.
-	serializedCred, err := cred.marshal()
-	if err != nil {
-		return nil, err
-	}
-	h.Write(serializedCred)
-
-	return h.Sum(nil), nil
+	return h.Sum(nil)
 }

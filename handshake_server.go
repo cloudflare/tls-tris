@@ -330,11 +330,6 @@ Curves:
 		if dc != nil {
 			hs.privateKey = sk
 			hs.delegatedCredential = dc
-
-			// For TLS 1.2, the DC is an extension to the ServerHello.
-			if c.vers == VersionTLS12 {
-				hs.hello.delegatedCredential = hs.delegatedCredential
-			}
 		}
 	}
 
