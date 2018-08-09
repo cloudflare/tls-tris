@@ -1114,7 +1114,11 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 		if m.vers != VersionTLS12 {
 			return alertDecodeError
 		}
-		m.vers = uint16(svData[0])<<8 | uint16(svData[1])
+		rcvVer := binary.BigEndian.Uint16(svData[0:])
+		if rcvVer < VersionTLS13 {
+			return alertIllegalParameter
+		}
+		m.vers = rcvVer
 	}
 
 	for len(data) != 0 {
