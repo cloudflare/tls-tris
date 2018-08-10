@@ -37,6 +37,8 @@ import (
 )
 
 const (
+	// length of the public key field
+	dcPubKeyFieldLen  = 3
 	dcMaxTTLSeconds   = 60 * 60 * 24 * 7 // 7 days
 	dcMaxTTL          = time.Duration(dcMaxTTLSeconds * time.Second)
 	dcMaxPublicKeyLen = 1 << 24 // Bytes
@@ -135,7 +137,7 @@ func (cred *credential) marshal() ([]byte, error) {
 	paramsLen := 8
 
 	// The first 4 bytes are the valid_time, scheme, and version fields.
-	serialized := make([]byte, paramsLen+3) // +3 for the length of the public key field
+	serialized := make([]byte, paramsLen+dcPubKeyFieldLen)
 	binary.BigEndian.PutUint32(serialized, uint32(cred.validTime/time.Second))
 	binary.BigEndian.PutUint16(serialized[4:], uint16(cred.expectedCertVerifyAlgorithm))
 	binary.BigEndian.PutUint16(serialized[6:], cred.expectedVersion)
@@ -165,7 +167,7 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 	// The number of bytes comprising the DC parameters.
 	paramsLen := 8
 
-	if len(serialized) < paramsLen+3 { // +3 bytes for the public key length
+	if len(serialized) < paramsLen+dcPubKeyFieldLen {
 		return nil, errors.New("credential is too short")
 	}
 
@@ -175,7 +177,7 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 	version := binary.BigEndian.Uint16(serialized[6:])
 
 	// Parse the SubjectPublicKeyInfo.
-	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+3:])
+	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+dcPubKeyFieldLen:])
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +200,7 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 // error if the input is too short to contain a credential.
 func getCredentialLen(serialized []byte) (int, error) {
 	paramsLen := 8
-	if len(serialized) < paramsLen+3 { // +3 for the public key length
+	if len(serialized) < paramsLen+dcPubKeyFieldLen {
 		return 0, errors.New("credential is too short")
 	}
 	// First several bytes are the valid_time, scheme, and version fields.
@@ -207,13 +209,13 @@ func getCredentialLen(serialized []byte) (int, error) {
 	// The next 3 bytes are the length of the serialized public key, which may
 	// be up to 2^24 bytes in length.
 	serializedPublicKeyLen := getUint24(serialized)
-	serialized = serialized[3:]
+	serialized = serialized[dcPubKeyFieldLen:]
 
 	if len(serialized) < serializedPublicKeyLen {
 		return 0, errors.New("public key of credential is too short")
 	}
 
-	return paramsLen + 3 + serializedPublicKeyLen, nil
+	return paramsLen + dcPubKeyFieldLen + serializedPublicKeyLen, nil
 }
 
 // delegatedCredential stores a credential and its delegation.
@@ -387,17 +389,4 @@ func prepareDelegation(hash crypto.Hash, cred, delegatorCert []byte, delegatorAl
 	h.Write(serializedScheme[:])
 
 	return h.Sum(nil)
-}
-
-func getUint24(b []byte) int {
-	n := int(b[2])
-	n += int(b[1] << 8)
-	n += int(b[0] << 16)
-	return n
-}
-
-func putUint24(b []byte, n int) {
-	b[0] = byte(n >> 16)
-	b[1] = byte(n >> 8)
-	b[2] = byte(n & 0xff)
 }
