@@ -39,7 +39,7 @@ import (
 const (
 	dcMaxTTLSeconds   = 60 * 60 * 24 * 7 // 7 days
 	dcMaxTTL          = time.Duration(dcMaxTTLSeconds * time.Second)
-	dcMaxPublicKeyLen = 1 << 16 // Bytes
+	dcMaxPublicKeyLen = 1 << 24 // Bytes
 	dcMaxSignatureLen = 1 << 16 // Bytes
 )
 
@@ -135,7 +135,7 @@ func (cred *credential) marshal() ([]byte, error) {
 	paramsLen := 8
 
 	// The first 4 bytes are the valid_time, scheme, and version fields.
-	serialized := make([]byte, paramsLen+2)
+	serialized := make([]byte, paramsLen+3) // +3 for the length of the public key field
 	binary.BigEndian.PutUint32(serialized, uint32(cred.validTime/time.Second))
 	binary.BigEndian.PutUint16(serialized[4:], uint16(cred.expectedCertVerifyAlgorithm))
 	binary.BigEndian.PutUint16(serialized[6:], cred.expectedVersion)
@@ -150,8 +150,9 @@ func (cred *credential) marshal() ([]byte, error) {
 		return nil, errors.New("public key is too long")
 	}
 
-	// The next 2 bytes are the length of the public key field.
-	binary.BigEndian.PutUint16(serialized[paramsLen:], uint16(len(serializedPublicKey)))
+	// The next 3 bytes are the length of the public key field, which may be up
+	// to 2^24 bytes long.
+	putUint24(serialized[paramsLen:], len(serializedPublicKey))
 
 	// The remaining bytes are the public key itself.
 	serialized = append(serialized, serializedPublicKey...)
@@ -164,7 +165,7 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 	// The number of bytes comprising the DC parameters.
 	paramsLen := 8
 
-	if len(serialized) < paramsLen+2 {
+	if len(serialized) < paramsLen+3 { // +3 bytes for the public key length
 		return nil, errors.New("credential is too short")
 	}
 
@@ -174,7 +175,7 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 	version := binary.BigEndian.Uint16(serialized[6:])
 
 	// Parse the SubjectPublicKeyInfo.
-	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+2:])
+	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+3:])
 	if err != nil {
 		return nil, err
 	}
@@ -197,21 +198,22 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 // error if the input is too short to contain a credential.
 func getCredentialLen(serialized []byte) (int, error) {
 	paramsLen := 8
-	if len(serialized) < paramsLen+2 {
+	if len(serialized) < paramsLen+3 { // +3 for the public key length
 		return 0, errors.New("credential is too short")
 	}
 	// First several bytes are the valid_time, scheme, and version fields.
 	serialized = serialized[paramsLen:]
 
-	// The next 2 bytes are the length of the serialized public key.
-	serializedPublicKeyLen := int(binary.BigEndian.Uint16(serialized))
-	serialized = serialized[2:]
+	// The next 3 bytes are the length of the serialized public key, which may
+	// be up to 2^24 bytes in length.
+	serializedPublicKeyLen := getUint24(serialized)
+	serialized = serialized[3:]
 
 	if len(serialized) < serializedPublicKeyLen {
 		return 0, errors.New("public key of credential is too short")
 	}
 
-	return paramsLen + 2 + serializedPublicKeyLen, nil
+	return paramsLen + 3 + serializedPublicKeyLen, nil
 }
 
 // delegatedCredential stores a credential and its delegation.
@@ -385,4 +387,17 @@ func prepareDelegation(hash crypto.Hash, cred, delegatorCert []byte, delegatorAl
 	h.Write(serializedScheme[:])
 
 	return h.Sum(nil)
+}
+
+func getUint24(b []byte) int {
+	n := int(b[2])
+	n += int(b[1] << 8)
+	n += int(b[0] << 16)
+	return n
+}
+
+func putUint24(b []byte, n int) {
+	b[0] = byte(n >> 16)
+	b[1] = byte(n >> 8)
+	b[2] = byte(n & 0xff)
 }
