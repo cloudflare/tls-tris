@@ -472,12 +472,6 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 		case aead:
 			// explicitIVLen is always 0 for TLS1.3
 			payloadLen := len(b.data) - recordHeaderLen - explicitIVLen
-			overhead := c.Overhead()
-			if hc.version >= VersionTLS13 {
-				overhead++ // TODO(kk): why this is done?
-			}
-			b.resize(len(b.data) + overhead)
-
 			nonce := b.data[recordHeaderLen : recordHeaderLen+explicitIVLen]
 			if len(nonce) == 0 {
 				nonce = hc.seq[:]
@@ -491,17 +485,24 @@ func (hc *halfConn) encrypt(b *block, explicitIVLen int) (bool, alert) {
 				copy(hc.additionalData[8:], b.data[:3])
 				binary.BigEndian.PutUint16(hc.additionalData[11:], uint16(payloadLen))
 				additionalData = hc.additionalData[:]
+				b.resize(len(b.data) + c.Overhead())
 			} else {
-				// opaque type
-				payload = payload[:len(payload)+1]
-				payload[len(payload)-1] = b.data[0]
+				// In TLS1.3 1 byte of content type is encrypted
+				innerPlaintextLen := payloadLen + 1
+				payload = payload[:innerPlaintextLen]
+				payload[innerPlaintextLen-1] = b.data[0]
+
+				// opaque_type
 				b.data[0] = byte(recordTypeApplicationData)
 
 				// Add AD header, see 5.2 of RFC8446
 				additionalData = make([]byte, 5)
-				additionalData[0] = byte(recordTypeApplicationData)
+				additionalData[0] = b.data[0]
 				binary.BigEndian.PutUint16(additionalData[1:], VersionTLS12)
-				binary.BigEndian.PutUint16(additionalData[3:], uint16(payloadLen+overhead))
+				binary.BigEndian.PutUint16(additionalData[3:], uint16(innerPlaintextLen+c.Overhead()))
+
+				// make room for TLSCiphertext.encrypted_record
+				b.resize(innerPlaintextLen + recordHeaderLen + c.Overhead())
 			}
 
 			c.Seal(payload[:0], nonce, payload, additionalData)
