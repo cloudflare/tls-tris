@@ -466,7 +466,7 @@ func runClientTestTLS12(t *testing.T, template *clientTest) {
 func TestHandshakeClientRSARC4(t *testing.T) {
 	test := &clientTest{
 		name:    "RSA-RC4",
-		command: []string{"openssl", "s_server", "-cipher", "RC4-SHA"},
+		command: []string{"IF_THIS_PASSES_THEN_THOSE_TESTS_ARE_USELESS", "s_server", "-cipher", "RC4-SHA"},
 	}
 	runClientTestTLS10(t, test)
 	runClientTestTLS11(t, test)
