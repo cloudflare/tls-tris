@@ -29,28 +29,38 @@ var cipherSuiteIdToName = map[uint16]string{
 	tls.TLS_CHACHA20_POLY1305_SHA256:            "TLS_CHACHA20_POLY1305_SHA256",
 }
 
+var failed uint
+
 type Client struct {
-	KeyLogWriter    io.Writer
-	failed          uint
-	client_cert     tls.Certificate
-	client_certpool *x509.CertPool
+	TLS  tls.Config
+	addr string
 }
 
-func (c *Client) run(addr string, version, cipherSuite uint16) {
-	fmt.Printf("TLS %s with %s\n", tlsVersionToName[version], cipherSuiteIdToName[cipherSuite])
-	tls_config := &tls.Config{
-		InsecureSkipVerify: true,
-		MinVersion:         version,
-		MaxVersion:         version,
-		CipherSuites:       []uint16{cipherSuite},
-		KeyLogWriter:       c.KeyLogWriter,
-		Certificates:       []tls.Certificate{c.client_cert},
-		RootCAs:            c.client_certpool,
-	}
-	con, err := tls.Dial("tcp", addr, tls_config)
+func NewClient() *Client {
+	var c Client
+	c.TLS.InsecureSkipVerify = true
+	return &c
+}
+
+func (c *Client) clone() *Client {
+	var clone Client
+	clone.TLS = *c.TLS.Clone()
+	clone.addr = c.addr
+	return &clone
+}
+
+func (c *Client) setMinMaxTLS(ver uint16) {
+	c.TLS.MinVersion = ver
+	c.TLS.MaxVersion = ver
+}
+
+func (c *Client) run() {
+	fmt.Printf("TLS %s with %s\n", tlsVersionToName[c.TLS.MinVersion], cipherSuiteIdToName[c.TLS.CipherSuites[0]])
+
+	con, err := tls.Dial("tcp", c.addr, &c.TLS)
 	if err != nil {
 		fmt.Printf("handshake failed: %v\n\n", err)
-		c.failed++
+		failed++
 		return
 	}
 	defer con.Close()
@@ -58,7 +68,7 @@ func (c *Client) run(addr string, version, cipherSuite uint16) {
 	_, err = con.Write([]byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"))
 	if err != nil {
 		fmt.Printf("Write failed: %v\n\n", err)
-		c.failed++
+		failed++
 		return
 	}
 
@@ -68,12 +78,20 @@ func (c *Client) run(addr string, version, cipherSuite uint16) {
 	// is received right after reading data (observed with NSS selfserv).
 	if !(n > 0 && err == io.EOF) && err != nil {
 		fmt.Printf("Read failed: %v\n\n", err)
-		c.failed++
+		failed++
 		return
 	}
 	fmt.Printf("Read %d bytes\n", n)
 
 	fmt.Println("OK\n")
+}
+
+func result() {
+	if failed > 0 {
+		log.Fatalf("Failed handshakes: %d\n", failed)
+	} else {
+		fmt.Println("All handshakes passed")
+	}
 }
 
 func main() {
@@ -89,12 +107,13 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	addr := flag.Arg(0)
-	if !strings.Contains(addr, ":") {
-		addr += ":443"
+
+	client := NewClient()
+	client.addr = flag.Arg(0)
+	if !strings.Contains(client.addr, ":") {
+		client.addr += ":443"
 	}
 
-	client := Client{}
 	if keylog_file == "" {
 		keylog_file = os.Getenv("SSLKEYLOGFILE")
 	}
@@ -103,44 +122,55 @@ func main() {
 		if err != nil {
 			log.Fatalf("Cannot open keylog file: %v", err)
 		}
-		client.KeyLogWriter = keylog_writer
+		client.TLS.KeyLogWriter = keylog_writer
 		log.Println("Enabled keylog")
 	}
 
 	if client_auth {
 		var err error
-		client.client_cert, err = tls.X509KeyPair([]byte(client_crt), []byte(client_key))
+		client_cert, err := tls.X509KeyPair([]byte(client_crt), []byte(client_key))
 		if err != nil {
 			panic("Can't load client certificate")
 		}
 
-		client.client_certpool = x509.NewCertPool()
-		if !client.client_certpool.AppendCertsFromPEM([]byte(client_ca)) {
+		client.TLS.Certificates = []tls.Certificate{client_cert}
+		client.TLS.RootCAs = x509.NewCertPool()
+		if !client.TLS.RootCAs.AppendCertsFromPEM([]byte(client_ca)) {
 			panic("Can't load client CA cert")
 		}
 	}
 
 	if enable_rsa {
 		// Sanity check: TLS 1.2 with the mandatory cipher suite from RFC 5246
-		client.run(addr, tls.VersionTLS12, tls.TLS_RSA_WITH_AES_128_CBC_SHA)
+		c := client.clone()
+		c.TLS.CipherSuites = []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}
+		c.setMinMaxTLS(tls.VersionTLS12)
+		c.run()
 	}
 	if enable_ecdsa {
 		// Sane cipher suite for TLS 1.2 with an ECDSA cert (as used by boringssl)
-		client.run(addr, tls.VersionTLS12, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256)
+		c := client.clone()
+		c.TLS.CipherSuites = []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
+		c.setMinMaxTLS(tls.VersionTLS12)
+		c.run()
 	}
 
-	client.run(addr, tls.VersionTLS13, tls.TLS_CHACHA20_POLY1305_SHA256)
-	client.run(addr, tls.VersionTLS13, tls.TLS_AES_128_GCM_SHA256)
-	client.run(addr, tls.VersionTLS13, tls.TLS_AES_256_GCM_SHA384)
+	client.setMinMaxTLS(tls.VersionTLS13)
+	client.TLS.CipherSuites = []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}
+	client.run()
+
+	client.setMinMaxTLS(tls.VersionTLS13)
+	client.TLS.CipherSuites = []uint16{tls.TLS_AES_128_GCM_SHA256}
+	client.run()
+
+	client.setMinMaxTLS(tls.VersionTLS13)
+	client.TLS.CipherSuites = []uint16{tls.TLS_AES_256_GCM_SHA384}
+	client.run()
 
 	// TODO test other kex methods besides X25519, like MTI secp256r1
 	// TODO limit supported groups?
 
-	if client.failed > 0 {
-		log.Fatalf("Failed handshakes: %d\n", client.failed)
-	} else {
-		fmt.Println("All handshakes passed")
-	}
+	result()
 }
 
 const (
