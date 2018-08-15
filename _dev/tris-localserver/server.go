@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -29,10 +28,10 @@ const (
 )
 
 type server struct {
-	Address          string
-	ZeroRTT          ZeroRTT_t
-	PubKey           PubKeyAlgo_t
-	ClientAuthMethod tls.ClientAuthType
+	Address string
+	ZeroRTT ZeroRTT_t
+	PubKey  PubKeyAlgo_t
+	TLS     tls.Config
 }
 
 var tlsVersionToName = map[uint16]string{
@@ -49,9 +48,18 @@ var tlsVersionToName = map[uint16]string{
 
 func NewServer() *server {
 	s := new(server)
-	s.ClientAuthMethod = tls.NoClientCert
 	s.ZeroRTT = ZeroRTT_None
-	s.Address = "0.0.0.1:443"
+	s.Address = "0.0.0.0:443"
+	s.TLS = tls.Config{
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			// If we send the first flight too fast, NSS sends empty early data.
+			time.Sleep(500 * time.Millisecond)
+			return nil, nil
+		},
+		MaxVersion: tls.VersionTLS13,
+		ClientAuth: tls.NoClientCert,
+	}
+
 	return s
 }
 
@@ -60,41 +68,29 @@ func (s *server) start() {
 	if s.PubKey == PubKeyRSA {
 		cert, err = tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
 	}
+	s.TLS.Certificates = []tls.Certificate{cert}
 	if err != nil {
 		log.Fatal(err)
 	}
-	var Max0RTTDataSize uint32
 	if (s.ZeroRTT & ZeroRTT_Offer) == ZeroRTT_Offer {
-		Max0RTTDataSize = 100 * 1024
+		s.TLS.Max0RTTDataSize = 100 * 1024
 	}
-	var keyLogWriter io.Writer
+
 	if keyLogFile := os.Getenv("SSLKEYLOGFILE"); keyLogFile != "" {
-		keyLogWriter, err = os.OpenFile(keyLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		s.TLS.KeyLogWriter, err = os.OpenFile(keyLogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			log.Fatalf("Cannot open keylog file: %v", err)
 		}
 		log.Println("Enabled keylog")
 	}
 
-	clientCAs := x509.NewCertPool()
-	clientCAs.AppendCertsFromPEM([]byte(rsaCa_client))
+	s.TLS.ClientCAs = x509.NewCertPool()
+	s.TLS.ClientCAs.AppendCertsFromPEM([]byte(rsaCa_client))
+	s.TLS.Accept0RTTData = ((s.ZeroRTT & ZeroRTT_Accept) == ZeroRTT_Accept)
 
 	httpServer := &http.Server{
-		Addr: s.Address,
-		TLSConfig: &tls.Config{
-			Certificates:    []tls.Certificate{cert},
-			Max0RTTDataSize: Max0RTTDataSize,
-			Accept0RTTData:  (s.ZeroRTT & ZeroRTT_Accept) == ZeroRTT_Accept,
-			KeyLogWriter:    keyLogWriter,
-			GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
-				// If we send the first flight too fast, NSS sends empty early data.
-				time.Sleep(500 * time.Millisecond)
-				return nil, nil
-			},
-			MaxVersion: tls.VersionTLS13,
-			ClientAuth: s.ClientAuthMethod,
-			ClientCAs:  clientCAs,
-		},
+		Addr:      s.Address,
+		TLSConfig: &s.TLS,
 	}
 	log.Fatal(httpServer.ListenAndServeTLS("", ""))
 }
@@ -125,7 +121,7 @@ func main() {
 	}
 
 	if *arg_clientauth {
-		s.ClientAuthMethod = tls.RequireAndVerifyClientCert
+		s.TLS.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
