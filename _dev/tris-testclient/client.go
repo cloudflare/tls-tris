@@ -31,6 +31,10 @@ var cipherSuiteIdToName = map[uint16]string{
 
 var failed uint
 
+const (
+	qr_algos = "[SIDH-P751-X448, SIDH-P503-X25519, SIDH-P751-X25519]"
+)
+
 type Client struct {
 	TLS  tls.Config
 	addr string
@@ -94,14 +98,27 @@ func result() {
 	}
 }
 
+func setQrAlgo(qr string, client *Client) {
+	switch qr {
+	case "SIDH-P751-X448":
+		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve448}
+	case "SIDH-P503-X25519":
+		//client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP503Curve25519}
+		panic("UNSUPPORTED")
+	case "SIDH-P751-X25519":
+		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve25519}
+	}
+}
+
 func main() {
-	var keylog_file string
+	var keylog_file, qr string
 	var enable_rsa, enable_ecdsa, client_auth bool
 
 	flag.StringVar(&keylog_file, "keylogfile", "", "Secrets will be logged here")
 	flag.BoolVar(&enable_rsa, "rsa", true, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", true, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
+	flag.StringVar(&qr, "qr", "", "Specifies qr algorithm from following list:\n"+qr_algos)
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -138,6 +155,15 @@ func main() {
 		if !client.TLS.RootCAs.AppendCertsFromPEM([]byte(client_ca)) {
 			panic("Can't load client CA cert")
 		}
+	}
+
+	if len(qr) > 0 {
+		setQrAlgo(qr, client)
+		c := client.clone()
+		c.TLS.CipherSuites = []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
+		c.setMinMaxTLS(tls.VersionTLS13)
+		c.run()
+		return
 	}
 
 	if enable_rsa {

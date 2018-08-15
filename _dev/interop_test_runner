@@ -243,13 +243,22 @@ class InteropClient_NSS(
     ): SERVER_NAME = "tstclnt-localserver"
 
 # TRIS as a client
-class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
+class InteropServer_TRIS(
+        ClientNominalMixin,
+        InteropServer,
+        unittest.TestCase):
 
     CLIENT_NAME = 'tris-testclient'
 
     def test_client_auth(self):
         # I need to block TLS v1.2 as test server needs some rework
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=false -cliauth '+self.server_ip+":6443")
+        self.assertEqual(res[0], 0)
+
+    def test_qr(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P751-X25519 '+self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P751-X448 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
 if __name__ == '__main__':
