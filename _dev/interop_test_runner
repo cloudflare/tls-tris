@@ -210,7 +210,19 @@ class InteropServer_BoringSSL(
         ServerNominalMixin,
         ServerClientAuthMixin,
         unittest.TestCase
-    ): CLIENT_NAME = "tls-tris:boring"
+    ):
+
+    CLIENT_NAME = "tls-tris:boring"
+
+    def test_qrServerAcceptsNonQR(self):
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":"+'7443')
+        self.assertTrue(res[0] == 0)
+        # Check there was TLS hello without resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
+        # Check there was TLS hello with resume
+        self.assertIsNotNone(
+            re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
 
 # PicoTLS doesn't seem to implement draft-23 correctly. It will
 # be enabled when draft-28 is implemented.
@@ -259,6 +271,10 @@ class InteropServer_TRIS(
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P751-X25519 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P751-X448 '+self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+
+    def test_qrServerAcceptsNonQR(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
 if __name__ == '__main__':
