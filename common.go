@@ -118,17 +118,26 @@ const (
 // curve-based ones anyway. See https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.4.
 type CurveID uint16
 
+// IDs for unexpored Params
+const (
+	sidhP503 CurveID = 0
+	sidhP751 CurveID = 1
+)
+
 const (
 	CurveP256 CurveID = 23
 	CurveP384 CurveID = 24
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
+	X448      CurveID = 30
 
-	SidhP503Curve25519 CurveID = 0x0105
+	// X25519 + P503
+	SidhP503Curve25519 CurveID = 0x0105 + sidhP503
 	// X448 + P751
-	SidhP751Curve448 CurveID = 0x0106
-	// X25519 + P751
-	SidhP751Curve25519 CurveID = 0x0107
+	SidhP751Curve448 CurveID = 0x0105 + sidhP751
+
+	// Temporary: X25519 + P751
+	SidhP751Curve25519 CurveID = 0x0115 + sidhP751
 )
 
 // TLS 1.3 Key Share

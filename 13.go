@@ -576,193 +576,217 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	return h.Sum(nil)
 }
 
-// generateKeyShare generates keypair. Private key is returned as first argument, public key
-// is returned in keyShare.data. keyshare.curveID stores ID of the scheme used.
-func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare, error) {
-	// OZAPTF: refactor
-	if curveID == X25519 {
-		var scalar, public [x25519SharedSecretSize]byte
-		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
-			return nil, keyShare{}, err
-		}
+type dhKeyAgreementCtx struct {
+	ks   keyShare
+	key  []byte
+	role Role
+	cId  CurveID
+	rand io.Reader
+}
 
-		curve25519.ScalarBaseMult(&public, &scalar)
-		return scalar[:], keyShare{group: curveID, data: public[:]}, nil
+var dhKeyAgreement = map[CurveID]struct {
+	generate func(c *dhKeyAgreementCtx) ([]byte, keyShare, error)
+	derive   func(c *dhKeyAgreementCtx) []byte
+}{
+	X25519:             {genX25519, deriveX25519},
+	X448:               {genX448, deriveX448},
+	sidhP751:           {genSidhP751, deriveSidhP751},
+	SidhP751Curve25519: {genSidhP751x25519, deriveSidhP751x25519},
+	SidhP751Curve448:   {genSidhP751x448, deriveSidhP751x448},
+	CurveP256:          {genNist, deriveNist},
+	CurveP384:          {genNist, deriveNist},
+	CurveP521:          {genNist, deriveNist},
+}
+
+// Ephemeral key generators and derivators
+
+func genX25519(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
+	var scalar, public [x25519SharedSecretSize]byte
+
+	if _, err := io.ReadFull(c.rand, scalar[:]); err != nil {
+		return nil, keyShare{}, err
 	}
 
-	if curveID == SidhP751Curve25519 {
-		var public25519 [x25519SharedSecretSize]byte
-		var secret25519 [x25519SharedSecretSize]byte
-		var public [SidhP751Curve25519PubKeySize]byte
-		var secret [SidhP751Curve25519PrvKeySize]byte
-		var variant, _ = getSidhKeyVariant(role)
-		var prvKey = sidh.NewPrivateKey(sidh.FP_751, variant)
+	curve25519.ScalarBaseMult(&public, &scalar)
+	return scalar[:], keyShare{group: X25519, data: public[:]}, nil
+}
 
-		if _, err := io.ReadFull(c.rand(), secret25519[:]); err != nil {
-			return nil, keyShare{}, err
-		}
+func deriveX25519(c *dhKeyAgreementCtx) []byte {
+	var theirPublic, sharedKey, scalar [x25519SharedSecretSize]byte
 
-		curve25519.ScalarBaseMult(&public25519, &secret25519)
-
-		if prvKey.Generate(c.rand()) != nil {
-			return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
-		}
-		pubKey, err := sidh.GeneratePublicKey(prvKey)
-		if err != nil {
-			return nil, keyShare{}, errors.New("tls: public SIDH key generation failed")
-		}
-
-		// Hybrid "shared key" = X25519 || P751
-		// OZAPTF SIZE-len
-		copy(public[:], pubKey.Export())
-		copy(public[P751PubKeySize:], public25519[:])
-		copy(secret[:], prvKey.Export())
-		copy(secret[P751PrvKeySize:], secret25519[:])
-		return secret[:], keyShare{group: curveID, data: public[:]}, nil
+	if len(c.ks.data) != x25519SharedSecretSize {
+		return nil
 	}
 
-	if curveID == SidhP751Curve448 {
-		var public448 [x448.SharedSecretSize]byte
-		var secret448 [x448.SharedSecretSize]byte
-		var public [SidhP751Curve448PubKeySize]byte
-		var secret [SidhP751Curve448PrvKeySize]byte
-		var variant, _ = getSidhKeyVariant(role)
-		var prvKey = sidh.NewPrivateKey(sidh.FP_751, variant)
+	copy(theirPublic[:], c.ks.data)
+	copy(scalar[:], c.key)
+	curve25519.ScalarMult(&sharedKey, &scalar, &theirPublic)
+	return sharedKey[:]
+}
 
-		if _, err := io.ReadFull(c.rand(), secret448[:]); err != nil {
-			return nil, keyShare{}, err
-		}
+func genX448(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
+	var scalar, public [x448.SharedSecretSize]byte
 
-		x448.ScalarBaseMult(&public448, &secret448)
-
-		if prvKey.Generate(c.rand()) != nil {
-			return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
-		}
-		pubKey, err := sidh.GeneratePublicKey(prvKey)
-		if err != nil {
-			return nil, keyShare{}, errors.New("tls: public SIDH key generation failed")
-		}
-
-		// Hybrid "shared key" = X448 || P751
-		// OZAPTF SIZE-len
-		copy(public[:], pubKey.Export())
-		copy(public[P751PubKeySize:], public448[:])
-		copy(secret[:], prvKey.Export())
-		copy(secret[P751PrvKeySize:], secret448[:])
-		return secret[:], keyShare{group: curveID, data: public[:]}, nil
+	if _, err := io.ReadFull(c.rand, scalar[:]); err != nil {
+		return nil, keyShare{}, err
 	}
 
-	// else...
-	curve, ok := curveForCurveID(curveID)
-	if !ok {
-		return nil, keyShare{}, errors.New("tls: preferredCurves includes unsupported curve")
+	x448.ScalarBaseMult(&public, &scalar)
+	return scalar[:], keyShare{group: X448, data: public[:]}, nil
+}
+
+func deriveX448(c *dhKeyAgreementCtx) []byte {
+	var theirPublic, sharedKey, scalar [x448.SharedSecretSize]byte
+
+	if len(c.ks.data) != x448.SharedSecretSize {
+		return nil
 	}
 
-	privateKey, x, y, err := elliptic.GenerateKey(curve, c.rand())
+	copy(theirPublic[:], c.ks.data)
+	copy(scalar[:], c.key)
+	x448.ScalarMult(&sharedKey, &scalar, &theirPublic)
+	return sharedKey[:]
+}
+
+func genSidhP751(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
+	var variant, _ = getSidhKeyVariant(c.role)
+	var prvKey = sidh.NewPrivateKey(sidh.FP_751, variant)
+	if prvKey.Generate(c.rand) != nil {
+		return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
+	}
+	pubKey, err := sidh.GeneratePublicKey(prvKey)
+	if err != nil {
+		return nil, keyShare{}, errors.New("tls: public SIDH key generation failed")
+	}
+	return prvKey.Export(), keyShare{group: c.cId, data: pubKey.Export()}, nil
+}
+
+func deriveSidhP751(c *dhKeyAgreementCtx) []byte {
+	var prvVariant, pubVariant = getSidhKeyVariant(c.role)
+
+	if len(c.ks.data) != P751PubKeySize || len(c.key) != P751PrvKeySize {
+		return nil
+	}
+
+	prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
+	pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
+
+	if err := prvKey.Import(c.key[:P751PrvKeySize]); err != nil {
+		return nil
+	}
+	if err := pubKey.Import(c.ks.data[:P751PubKeySize]); err != nil {
+		return nil
+	}
+
+	// Never fails
+	sharedKey, _ := sidh.DeriveSecret(prvKey, pubKey)
+	return sharedKey
+}
+
+func genSidhP751x25519(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
+	var pubHybrid [SidhP751Curve25519PubKeySize]byte
+	var prvHybrid [SidhP751Curve25519PrvKeySize]byte
+
+	// Generate PQ
+	private, ks, err = genSidhP751(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[:], ks.data[:])
+	copy(prvHybrid[:], private)
+
+	// Generate classic
+	private, ks, err = genX25519(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[P751PubKeySize:], ks.data)
+	copy(prvHybrid[P751PrvKeySize:], private)
+	return prvHybrid[:], keyShare{group: SidhP751Curve25519, data: pubHybrid[:]}, nil
+}
+
+func deriveSidhP751x25519(c *dhKeyAgreementCtx) (ks []byte) {
+	var sharedKey [SidhP751Curve25519SharedKeySize]byte
+
+	// Key agreement for PQ
+	ks = deriveSidhP751(c)
+	if ks == nil {
+		return
+	}
+	copy(sharedKey[:], ks)
+
+	// Key agreement for classic
+	ks = deriveX25519(c)
+	if ks == nil {
+		return
+	}
+	copy(sharedKey[P751SharedSecretSize:], ks)
+
+	return sharedKey[:]
+}
+
+func genSidhP751x448(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
+	var pubHybrid [SidhP751Curve448PubKeySize]byte
+	var prvHybrid [SidhP751Curve448PrvKeySize]byte
+
+	// Generate PQ
+	private, ks, err = genSidhP751(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[:], ks.data[:])
+	copy(prvHybrid[:], private)
+
+	// Generate classic
+	private, ks, err = genX448(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[P751PubKeySize:], ks.data)
+	copy(prvHybrid[P751PrvKeySize:], private)
+	return prvHybrid[:], keyShare{group: SidhP751Curve25519, data: pubHybrid[:]}, nil
+}
+
+func deriveSidhP751x448(c *dhKeyAgreementCtx) (ks []byte) {
+	var sharedKey [SidhP751Curve448SharedKeySize]byte
+
+	// Key agreement for PQ
+	ks = deriveSidhP751(c)
+	if ks == nil {
+		return
+	}
+	copy(sharedKey[:], ks)
+
+	// Key agreement for classic
+	ks = deriveX448(c)
+	if ks == nil {
+		return
+	}
+	copy(sharedKey[P751SharedSecretSize:], ks)
+
+	return sharedKey[:]
+}
+
+func genNist(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
+	ks.group = c.cId
+	// never fails
+	curve, _ := curveForCurveID(ks.group)
+	private, x, y, err := elliptic.GenerateKey(curve, c.rand)
 	if err != nil {
 		return nil, keyShare{}, err
 	}
-	ecdhePublic := elliptic.Marshal(curve, x, y)
-
-	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
+	ks.data = elliptic.Marshal(curve, x, y)
+	return
 }
 
-func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
-	if ks.group == X25519 {
-		if len(ks.data) != x25519SharedSecretSize {
-			return nil
-		}
-
-		var theirPublic, sharedKey, scalar [x25519SharedSecretSize]byte
-		copy(theirPublic[:], ks.data)
-		copy(scalar[:], secretKey)
-		curve25519.ScalarMult(&sharedKey, &scalar, &theirPublic)
-		return sharedKey[:]
-	}
-
-	if ks.group == SidhP751Curve25519 {
-		var prvVariant, pubVariant = getSidhKeyVariant(role)
-		var sharedKey [SidhP751Curve25519SharedKeySize]byte
-		var pubX25519, prvX25519, sharedKeyX25519 [x25519SharedSecretSize]byte
-
-		if len(ks.data) != SidhP751Curve25519PubKeySize {
-			return nil
-		}
-		if len(secretKey) != SidhP751Curve25519PrvKeySize {
-			return nil
-		}
-
-		prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
-		pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
-
-		if err := prvKey.Import(secretKey[:P751PrvKeySize]); err != nil {
-			return nil
-		}
-		if err := pubKey.Import(ks.data[:P751PubKeySize]); err != nil {
-			return nil
-		}
-		sharedSidhKey, err := sidh.DeriveSecret(prvKey, pubKey)
-		if err != nil {
-			return nil
-		}
-
-		// OZAPTF: same thing for x25519
-		copy(prvX25519[:], secretKey[P751PrvKeySize:])
-		copy(pubX25519[:], ks.data[P751PubKeySize:])
-		curve25519.ScalarMult(&sharedKeyX25519, &prvX25519, &pubX25519)
-
-		// format shared key
-		copy(sharedKey[:], sharedSidhKey)
-		copy(sharedKey[P751SharedSecretSize:], sharedKeyX25519[:])
-		return sharedKey[:]
-	}
-
-	if ks.group == SidhP751Curve448 {
-		var prvVariant, pubVariant = getSidhKeyVariant(role)
-		var sharedKey [SidhP751Curve448SharedKeySize]byte
-		var pubX448, prvX448, sharedKeyX448 [x448.SharedSecretSize]byte
-
-		if len(ks.data) != SidhP751Curve448PubKeySize {
-			return nil
-		}
-		if len(secretKey) != SidhP751Curve448PrvKeySize {
-			return nil
-		}
-
-		prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
-		pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
-
-		if err := prvKey.Import(secretKey[:P751PrvKeySize]); err != nil {
-			return nil
-		}
-		if err := pubKey.Import(ks.data[:P751PubKeySize]); err != nil {
-			return nil
-		}
-		sharedSidhKey, err := sidh.DeriveSecret(prvKey, pubKey)
-		if err != nil {
-			return nil
-		}
-
-		// OZAPTF: same thing for x25519
-		copy(prvX448[:], secretKey[P751PrvKeySize:])
-		copy(pubX448[:], ks.data[P751PubKeySize:])
-		x448.ScalarMult(&sharedKeyX448, &prvX448, &pubX448)
-
-		// format shared key
-		copy(sharedKey[:], sharedSidhKey)
-		copy(sharedKey[P751SharedSecretSize:], sharedKeyX448[:])
-		return sharedKey[:]
-	}
-
-	curve, ok := curveForCurveID(ks.group)
-	if !ok {
-		return nil
-	}
-	x, y := elliptic.Unmarshal(curve, ks.data)
+func deriveNist(c *dhKeyAgreementCtx) (ks []byte) {
+	// never fails
+	curve, _ := curveForCurveID(c.cId)
+	x, y := elliptic.Unmarshal(curve, c.ks.data)
 	if x == nil {
 		return nil
 	}
-	x, _ = curve.ScalarMult(x, y, secretKey)
+	x, _ = curve.ScalarMult(x, y, c.key)
 	xBytes := x.Bytes()
 	curveSize := (curve.Params().BitSize + 8 - 1) >> 3
 	if len(xBytes) == curveSize {
@@ -771,6 +795,32 @@ func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
 	buf := make([]byte, curveSize)
 	copy(buf[len(buf)-len(xBytes):], xBytes)
 	return buf
+}
+
+// generateKeyShare generates keypair. Private key is returned as first argument, public key
+// is returned in keyShare.data. keyshare.curveID stores ID of the scheme used.
+func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare, error) {
+	var ctx = dhKeyAgreementCtx{
+		cId:  curveID,
+		role: role,
+		rand: c.rand(),
+	}
+	if val, ok := dhKeyAgreement[curveID]; ok {
+		return val.generate(&ctx)
+	}
+	return nil, keyShare{}, errors.New("tls: preferredCurves includes unsupported curve")
+}
+
+func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
+	var ctx = dhKeyAgreementCtx{
+		role: role,
+		ks:   ks,
+		key:  secretKey,
+	}
+	if val, ok := dhKeyAgreement[ks.group]; ok {
+		return val.derive(&ctx)
+	}
+	return nil
 }
 
 func hkdfExpandLabel(hash crypto.Hash, secret, hashValue []byte, label string, L int) []byte {
