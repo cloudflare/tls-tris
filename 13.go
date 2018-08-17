@@ -51,10 +51,9 @@ const (
 	SidhP751Curve25519PubKeySize    = x25519SharedSecretSize + P751PubKeySize
 	SidhP751Curve25519PrvKeySize    = x25519SharedSecretSize + P751PrvKeySize
 	SidhP751Curve25519SharedKeySize = x25519SharedSecretSize + P751SharedSecretSize
-
-	SidhP751Curve448PubKeySize    = x448.SharedSecretSize + P751PubKeySize
-	SidhP751Curve448PrvKeySize    = x448.SharedSecretSize + P751PrvKeySize
-	SidhP751Curve448SharedKeySize = x448.SharedSecretSize + P751SharedSecretSize
+	SidhP751Curve448PubKeySize      = x448.SharedSecretSize + P751PubKeySize
+	SidhP751Curve448PrvKeySize      = x448.SharedSecretSize + P751PrvKeySize
+	SidhP751Curve448SharedKeySize   = x448.SharedSecretSize + P751SharedSecretSize
 )
 
 type keySchedule13 struct {
