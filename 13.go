@@ -587,14 +587,14 @@ var dhKeyAgreement = map[CurveID]struct {
 	generate func(c *dhKeyAgreementCtx) ([]byte, keyShare, error)
 	derive   func(c *dhKeyAgreementCtx, keyShare, key []byte) []byte
 }{
-	X25519:             {genX25519, deriveX25519},
-	X448:               {genX448, deriveX448},
-	sidhP751:           {genSidhP751, deriveSidhP751},
-	SidhP751Curve25519: {genSidhP751x25519, deriveSidhP751x25519},
-	SidhP751Curve448:   {genSidhP751x448, deriveSidhP751x448},
 	CurveP256:          {genNist, deriveNist},
 	CurveP384:          {genNist, deriveNist},
 	CurveP521:          {genNist, deriveNist},
+	X448:               {genX448, deriveX448},
+	X25519:             {genX25519, deriveX25519},
+	sidhP751:           {genSidhP751, deriveSidhP751},
+	SidhP751Curve448:   {genSidhP751x448, deriveSidhP751x448},
+	SidhP751Curve25519: {genSidhP751x25519, deriveSidhP751x25519},
 }
 
 // Ephemeral key generators and derivators
