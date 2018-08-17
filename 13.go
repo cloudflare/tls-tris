@@ -51,10 +51,9 @@ const (
 	SidhP751Curve25519PubKeySize    = x25519SharedSecretSize + P751PubKeySize
 	SidhP751Curve25519PrvKeySize    = x25519SharedSecretSize + P751PrvKeySize
 	SidhP751Curve25519SharedKeySize = x25519SharedSecretSize + P751SharedSecretSize
-
-	SidhP751Curve448PubKeySize    = x448.SharedSecretSize + P751PubKeySize
-	SidhP751Curve448PrvKeySize    = x448.SharedSecretSize + P751PrvKeySize
-	SidhP751Curve448SharedKeySize = x448.SharedSecretSize + P751SharedSecretSize
+	SidhP751Curve448PubKeySize      = x448.SharedSecretSize + P751PubKeySize
+	SidhP751Curve448PrvKeySize      = x448.SharedSecretSize + P751PrvKeySize
+	SidhP751Curve448SharedKeySize   = x448.SharedSecretSize + P751SharedSecretSize
 )
 
 type keySchedule13 struct {
@@ -586,16 +585,16 @@ type dhKeyAgreementCtx struct {
 
 var dhKeyAgreement = map[CurveID]struct {
 	generate func(c *dhKeyAgreementCtx) ([]byte, keyShare, error)
-	derive   func(c *dhKeyAgreementCtx) []byte
+	derive   func(c *dhKeyAgreementCtx, keyShare, key []byte) []byte
 }{
-	X25519:             {genX25519, deriveX25519},
-	X448:               {genX448, deriveX448},
-	sidhP751:           {genSidhP751, deriveSidhP751},
-	SidhP751Curve25519: {genSidhP751x25519, deriveSidhP751x25519},
-	SidhP751Curve448:   {genSidhP751x448, deriveSidhP751x448},
 	CurveP256:          {genNist, deriveNist},
 	CurveP384:          {genNist, deriveNist},
 	CurveP521:          {genNist, deriveNist},
+	X448:               {genX448, deriveX448},
+	X25519:             {genX25519, deriveX25519},
+	sidhP751:           {genSidhP751, deriveSidhP751},
+	SidhP751Curve448:   {genSidhP751x448, deriveSidhP751x448},
+	SidhP751Curve25519: {genSidhP751x25519, deriveSidhP751x25519},
 }
 
 // Ephemeral key generators and derivators
@@ -611,15 +610,15 @@ func genX25519(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
 	return scalar[:], keyShare{group: X25519, data: public[:]}, nil
 }
 
-func deriveX25519(c *dhKeyAgreementCtx) []byte {
+func deriveX25519(c *dhKeyAgreementCtx, keyShare, key []byte) []byte {
 	var theirPublic, sharedKey, scalar [x25519SharedSecretSize]byte
 
-	if len(c.ks.data) != x25519SharedSecretSize {
+	if len(keyShare) != x25519SharedSecretSize {
 		return nil
 	}
 
-	copy(theirPublic[:], c.ks.data)
-	copy(scalar[:], c.key)
+	copy(theirPublic[:], keyShare)
+	copy(scalar[:], key)
 	curve25519.ScalarMult(&sharedKey, &scalar, &theirPublic)
 	return sharedKey[:]
 }
@@ -635,15 +634,15 @@ func genX448(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
 	return scalar[:], keyShare{group: X448, data: public[:]}, nil
 }
 
-func deriveX448(c *dhKeyAgreementCtx) []byte {
+func deriveX448(c *dhKeyAgreementCtx, keyShare, key []byte) []byte {
 	var theirPublic, sharedKey, scalar [x448.SharedSecretSize]byte
 
-	if len(c.ks.data) != x448.SharedSecretSize {
+	if len(keyShare) != x448.SharedSecretSize {
 		return nil
 	}
 
-	copy(theirPublic[:], c.ks.data)
-	copy(scalar[:], c.key)
+	copy(theirPublic[:], keyShare)
+	copy(scalar[:], key)
 	x448.ScalarMult(&sharedKey, &scalar, &theirPublic)
 	return sharedKey[:]
 }
@@ -661,20 +660,20 @@ func genSidhP751(c *dhKeyAgreementCtx) ([]byte, keyShare, error) {
 	return prvKey.Export(), keyShare{group: c.cId, data: pubKey.Export()}, nil
 }
 
-func deriveSidhP751(c *dhKeyAgreementCtx) []byte {
+func deriveSidhP751(c *dhKeyAgreementCtx, keyShare, key []byte) []byte {
 	var prvVariant, pubVariant = getSidhKeyVariant(c.role)
 
-	if len(c.ks.data) != P751PubKeySize || len(c.key) != P751PrvKeySize {
+	if len(keyShare) != P751PubKeySize || len(key) != P751PrvKeySize {
 		return nil
 	}
 
 	prvKey := sidh.NewPrivateKey(sidh.FP_751, prvVariant)
 	pubKey := sidh.NewPublicKey(sidh.FP_751, pubVariant)
 
-	if err := prvKey.Import(c.key[:P751PrvKeySize]); err != nil {
+	if err := prvKey.Import(key); err != nil {
 		return nil
 	}
-	if err := pubKey.Import(c.ks.data[:P751PubKeySize]); err != nil {
+	if err := pubKey.Import(keyShare); err != nil {
 		return nil
 	}
 
@@ -705,18 +704,18 @@ func genSidhP751x25519(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err e
 	return prvHybrid[:], keyShare{group: SidhP751Curve25519, data: pubHybrid[:]}, nil
 }
 
-func deriveSidhP751x25519(c *dhKeyAgreementCtx) (ks []byte) {
+func deriveSidhP751x25519(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	var sharedKey [SidhP751Curve25519SharedKeySize]byte
 
 	// Key agreement for PQ
-	ks = deriveSidhP751(c)
+	ks = deriveSidhP751(c, keyShare[:P751PubKeySize], key[:P751PrvKeySize])
 	if ks == nil {
 		return
 	}
 	copy(sharedKey[:], ks)
 
 	// Key agreement for classic
-	ks = deriveX25519(c)
+	ks = deriveX25519(c, keyShare[P751PubKeySize:], key[P751PrvKeySize:])
 	if ks == nil {
 		return
 	}
@@ -747,18 +746,18 @@ func genSidhP751x448(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err err
 	return prvHybrid[:], keyShare{group: SidhP751Curve448, data: pubHybrid[:]}, nil
 }
 
-func deriveSidhP751x448(c *dhKeyAgreementCtx) (ks []byte) {
+func deriveSidhP751x448(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	var sharedKey [SidhP751Curve448SharedKeySize]byte
 
 	// Key agreement for PQ
-	ks = deriveSidhP751(c)
+	ks = deriveSidhP751(c, keyShare[:P751PubKeySize], key[:P751PrvKeySize])
 	if ks == nil {
 		return
 	}
 	copy(sharedKey[:], ks)
 
 	// Key agreement for classic
-	ks = deriveX448(c)
+	ks = deriveX448(c, keyShare[P751PubKeySize:], key[P751PrvKeySize:])
 	if ks == nil {
 		return
 	}
@@ -779,14 +778,14 @@ func genNist(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
 	return
 }
 
-func deriveNist(c *dhKeyAgreementCtx) (ks []byte) {
+func deriveNist(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	// never fails
 	curve, _ := curveForCurveID(c.cId)
-	x, y := elliptic.Unmarshal(curve, c.ks.data)
+	x, y := elliptic.Unmarshal(curve, keyShare)
 	if x == nil {
 		return nil
 	}
-	x, _ = curve.ScalarMult(x, y, c.key)
+	x, _ = curve.ScalarMult(x, y, key)
 	xBytes := x.Bytes()
 	curveSize := (curve.Params().BitSize + 8 - 1) >> 3
 	if len(xBytes) == curveSize {
@@ -814,11 +813,9 @@ func (c *Config) generateKeyShare(curveID CurveID, role Role) ([]byte, keyShare,
 func deriveECDHESecret(ks keyShare, secretKey []byte, role Role) []byte {
 	var ctx = dhKeyAgreementCtx{
 		role: role,
-		ks:   ks,
-		key:  secretKey,
 	}
 	if val, ok := dhKeyAgreement[ks.group]; ok {
-		return val.derive(&ctx)
+		return val.derive(&ctx, ks.data, secretKey)
 	}
 	return nil
 }
