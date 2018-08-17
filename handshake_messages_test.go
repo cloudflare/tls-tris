@@ -162,7 +162,7 @@ func (*clientHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	m.keyShares = make([]keyShare, rand.Intn(4))
 	for i := range m.keyShares {
 		m.keyShares[i].group = CurveID(rand.Intn(30000))
-		m.keyShares[i].data = randomBytes(rand.Intn(300), rand)
+		m.keyShares[i].data = randomBytes(rand.Intn(300)+1, rand)
 	}
 	m.supportedVersions = make([]uint16, rand.Intn(5))
 	for i := range m.supportedVersions {
@@ -211,7 +211,7 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 
 	if rand.Intn(10) > 5 {
 		m.keyShare.group = CurveID(rand.Intn(30000))
-		m.keyShare.data = randomBytes(rand.Intn(300), rand)
+		m.keyShare.data = randomBytes(rand.Intn(300)+1, rand)
 	}
 	if rand.Intn(10) > 5 {
 		m.psk = true
