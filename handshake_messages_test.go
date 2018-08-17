@@ -210,7 +210,7 @@ func (*serverHelloMsg) Generate(rand *rand.Rand, size int) reflect.Value {
 	}
 
 	if rand.Intn(10) > 5 {
-		m.keyShare.group = CurveID(rand.Intn(30000))
+		m.keyShare.group = CurveID(rand.Intn(30000) + 1)
 		m.keyShare.data = randomBytes(rand.Intn(300)+1, rand)
 	}
 	if rand.Intn(10) > 5 {
