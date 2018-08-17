@@ -744,7 +744,7 @@ func genSidhP751x448(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err err
 	}
 	copy(pubHybrid[P751PubKeySize:], ks.data)
 	copy(prvHybrid[P751PrvKeySize:], private)
-	return prvHybrid[:], keyShare{group: SidhP751Curve25519, data: pubHybrid[:]}, nil
+	return prvHybrid[:], keyShare{group: SidhP751Curve448, data: pubHybrid[:]}, nil
 }
 
 func deriveSidhP751x448(c *dhKeyAgreementCtx) (ks []byte) {
