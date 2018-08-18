@@ -820,12 +820,7 @@ func (m *serverHelloMsg) marshal() []byte {
 		return m.raw
 	}
 
-	oldTLS13Draft := m.vers >= VersionTLS13Draft18 && m.vers <= VersionTLS13Draft21
 	length := 38 + len(m.sessionId)
-	if oldTLS13Draft {
-		// no compression method, no session ID.
-		length = 36
-	}
 	numExtensions := 0
 	extensionsLength := 0
 
@@ -896,20 +891,13 @@ func (m *serverHelloMsg) marshal() []byte {
 	}
 	copy(x[6:38], m.random)
 	z := x[38:]
-	if !oldTLS13Draft {
-		x[38] = uint8(len(m.sessionId))
-		copy(x[39:39+len(m.sessionId)], m.sessionId)
-		z = x[39+len(m.sessionId):]
-	}
+	x[38] = uint8(len(m.sessionId))
+	copy(x[39:39+len(m.sessionId)], m.sessionId)
+	z = x[39+len(m.sessionId):]
 	z[0] = uint8(m.cipherSuite >> 8)
 	z[1] = uint8(m.cipherSuite)
-	if oldTLS13Draft {
-		// no compression method in older TLS 1.3 drafts.
-		z = z[2:]
-	} else {
-		z[2] = m.compressionMethod
-		z = z[3:]
-	}
+	z[2] = m.compressionMethod
+	z = z[3:]
 
 	if numExtensions > 0 {
 		z[0] = byte(extensionsLength >> 8)
@@ -1028,29 +1016,19 @@ func (m *serverHelloMsg) unmarshal(data []byte) alert {
 	}
 	m.raw = data
 	m.vers = uint16(data[4])<<8 | uint16(data[5])
-	oldTLS13Draft := m.vers >= VersionTLS13Draft18 && m.vers <= VersionTLS13Draft21
 	m.random = data[6:38]
-	if !oldTLS13Draft {
-		sessionIdLen := int(data[38])
-		if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
-			return alertDecodeError
-		}
-		m.sessionId = data[39 : 39+sessionIdLen]
-		data = data[39+sessionIdLen:]
-	} else {
-		data = data[38:]
+	sessionIdLen := int(data[38])
+	if sessionIdLen > 32 || len(data) < 39+sessionIdLen {
+		return alertDecodeError
 	}
+	m.sessionId = data[39 : 39+sessionIdLen]
+	data = data[39+sessionIdLen:]
 	if len(data) < 3 {
 		return alertDecodeError
 	}
 	m.cipherSuite = uint16(data[0])<<8 | uint16(data[1])
-	if oldTLS13Draft {
-		// no compression method in older TLS 1.3 drafts.
-		data = data[2:]
-	} else {
-		m.compressionMethod = data[2]
-		data = data[3:]
-	}
+	m.compressionMethod = data[2]
+	data = data[3:]
 
 	m.nextProtoNeg = false
 	m.nextProtos = nil
