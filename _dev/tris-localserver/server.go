@@ -39,10 +39,6 @@ var tlsVersionToName = map[uint16]string{
 	tls.VersionTLS11:        "1.1",
 	tls.VersionTLS12:        "1.2",
 	tls.VersionTLS13:        "1.3",
-	tls.VersionTLS13Draft18: "1.3 (draft 18)",
-	tls.VersionTLS13Draft21: "1.3 (draft 21)",
-	tls.VersionTLS13Draft22: "1.3 (draft 22)",
-	tls.VersionTLS13Draft23: "1.3 (draft 23)",
 	tls.VersionTLS13Draft28: "1.3 (draft 28)",
 }
 
