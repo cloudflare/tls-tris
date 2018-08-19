@@ -4,11 +4,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -22,15 +25,9 @@ const (
 	ZeroRTT_Accept           = 1 << 1
 )
 
-const (
-	PubKeyRSA PubKeyAlgo_t = iota
-	PubKeyECDSA
-)
-
 type server struct {
 	Address string
 	ZeroRTT ZeroRTT_t
-	PubKey  PubKeyAlgo_t
 	TLS     tls.Config
 }
 
@@ -64,14 +61,7 @@ func NewServer() *server {
 }
 
 func (s *server) start() {
-	cert, err := tls.X509KeyPair([]byte(ecdsaCert), []byte(ecdsaKey))
-	if s.PubKey == PubKeyRSA {
-		cert, err = tls.X509KeyPair([]byte(rsaCert), []byte(rsaKey))
-	}
-	s.TLS.Certificates = []tls.Certificate{cert}
-	if err != nil {
-		log.Fatal(err)
-	}
+	var err error
 	if (s.ZeroRTT & ZeroRTT_Offer) == ZeroRTT_Offer {
 		s.TLS.Max0RTTDataSize = 100 * 1024
 	}
@@ -101,12 +91,66 @@ func enableQR(s *server) {
 	s.TLS.CurvePreferences = append(defaultCurvePreferences, sidhCurves...)
 }
 
+// setServerCertificateFromArgs sets server certificate from an argument provided by the caller. Possible values
+// for arg_cert:
+// * "rsa": sets hardcoded RSA keypair
+// * "ecdsa": sets hardcoded ECDSA keypair
+// * FILE1:FILE2: Uses private key from FILE1 and public key from FILE2. Both must be in PEM format. FILE2 can
+//   be single certificate or certificate chain.
+// * nil: fallbacks to "rsa"
+//
+// Function generate a panic in case certificate can't be correctly set
+func (s *server) setServerCertificateFromArgs(arg_cert *string) {
+	var certStr, keyStr []byte
+	var cert tls.Certificate
+	var err error
+
+	if arg_cert == nil {
+		// set rsa by default
+		certStr, keyStr = []byte(rsaCert), []byte(rsaKey)
+	} else {
+		switch *arg_cert {
+		case "rsa":
+			certStr, keyStr = []byte(rsaCert), []byte(rsaKey)
+		case "ecdsa":
+			certStr, keyStr = []byte(ecdsaCert), []byte(ecdsaKey)
+		default:
+			files := strings.Split(*arg_cert, ":")
+			if len(files) != 2 {
+				err = errors.New("Wrong format provided after -cert.")
+				goto err
+			}
+			keyStr, err = ioutil.ReadFile(files[0])
+			if err != nil {
+				goto err
+			}
+			certStr, err = ioutil.ReadFile(files[1])
+			if err != nil {
+				goto err
+			}
+		}
+	}
+
+	cert, err = tls.X509KeyPair(certStr, keyStr)
+	if err != nil {
+		goto err
+	}
+
+	s.TLS.Certificates = []tls.Certificate{cert}
+err:
+	if err != nil {
+		// Not possible to proceed really
+		log.Fatal(err)
+		panic(err)
+	}
+}
+
 func main() {
 
 	s := NewServer()
 
 	arg_addr := flag.String("b", "0.0.0.0:443", "Address:port used for binding")
-	arg_palg := flag.String("palg", "rsa", "Public algorithm to use: rsa or ecdsa")
+	arg_cert := flag.String("cert", "rsa", "Public algorithm to use:\nOptions [rsa, ecdsa, PrivateKeyFile:CertificateChainFile]")
 	arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
 	arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
 	arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
@@ -115,9 +159,7 @@ func main() {
 
 	s.Address = *arg_addr
 
-	if *arg_palg == "ecdsa" {
-		s.PubKey = PubKeyECDSA
-	}
+	s.setServerCertificateFromArgs(arg_cert)
 
 	if *arg_zerortt == "a" {
 		s.ZeroRTT = ZeroRTT_Accept
