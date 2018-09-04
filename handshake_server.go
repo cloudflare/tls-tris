@@ -16,10 +16,6 @@ import (
 	"sync/atomic"
 )
 
-type Committer interface {
-	Commit() error
-}
-
 // serverHandshakeState contains details of a server handshake in progress.
 // It's discarded once the handshake has completed.
 type serverHandshakeState struct {
