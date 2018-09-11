@@ -103,8 +103,7 @@ func setQrAlgo(qr string, client *Client) {
 	case "SIDH-P751-X448":
 		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve448}
 	case "SIDH-P503-X25519":
-		//client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP503Curve25519}
-		panic("UNSUPPORTED")
+		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP503Curve25519}
 	case "SIDH-P751-X25519":
 		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve25519}
 	}
