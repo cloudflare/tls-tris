@@ -821,7 +821,6 @@ func deriveSidhP503x25519(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte
 		return
 	}
 	copy(sharedKey[P503SharedSecretSize:], ks)
-
 	return sharedKey[:]
 }
 

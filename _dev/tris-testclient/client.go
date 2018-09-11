@@ -85,8 +85,7 @@ func (c *Client) run() {
 		failed++
 		return
 	}
-	fmt.Printf("Read %d bytes\n", n)
-
+	fmt.Printf("[TLS: %s] Read %d bytes\n", tlsVersionToName[con.ConnectionState().Version], n)
 	fmt.Println("OK\n")
 }
 
