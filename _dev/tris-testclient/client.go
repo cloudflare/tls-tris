@@ -85,8 +85,7 @@ func (c *Client) run() {
 		failed++
 		return
 	}
-	fmt.Printf("Read %d bytes\n", n)
-
+	fmt.Printf("[TLS: %s] Read %d bytes\n", tlsVersionToName[con.ConnectionState().Version], n)
 	fmt.Println("OK\n")
 }
 
@@ -103,8 +102,7 @@ func setQrAlgo(qr string, client *Client) {
 	case "SIDH-P751-X448":
 		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve448}
 	case "SIDH-P503-X25519":
-		//client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP503Curve25519}
-		panic("UNSUPPORTED")
+		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP503Curve25519}
 	case "SIDH-P751-X25519":
 		client.TLS.CurvePreferences = []tls.CurveID{tls.SidhP751Curve25519}
 	}

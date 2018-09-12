@@ -90,7 +90,7 @@ func main() {
 	flag.BoolVar(&enable_rsa, "rsa", false, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", false, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
-	flag.StringVar(&enable_sidh, "sidh", "", "Whether to use SIDH. Argumens: X25519 or X448")
+	flag.StringVar(&enable_sidh, "sidh", "", "Whether to use SIDH. Argumens: X25519-P503, X25519-P751 or X448")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -138,7 +138,9 @@ func main() {
 
 	if enable_sidh != "" {
 		switch enable_sidh {
-		case "X25519":
+		case "X25519-P503":
+			client.preferedCurves = []tls.CurveID{tls.SidhP503Curve25519}
+		case "X25519-P751":
 			client.preferedCurves = []tls.CurveID{tls.SidhP751Curve25519}
 		case "X448":
 			client.preferedCurves = []tls.CurveID{tls.SidhP751Curve448}
