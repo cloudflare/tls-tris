@@ -44,7 +44,7 @@ const (
 
 // OZAPTF: better index by AlgID
 const (
-	x25519SharedSecretSize = 32
+	x25519SharedSecretSize = 32 // Same for public key size
 
 	P751PubKeySize                  = 564
 	P751PrvKeySize                  = 48 // OZAPTF: This is true for Bob, for Alice is one less
@@ -730,56 +730,48 @@ func deriveSidhP503(c *dhKeyAgreementCtx, keyShare, key []byte) []byte {
 func genSidhP751x25519(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
 	var pubHybrid [SidhP751Curve25519PubKeySize]byte
 	var prvHybrid [SidhP751Curve25519PrvKeySize]byte
-	var privateKeyLen = P751PrvKeySize
 	var prvHybridLen = SidhP751Curve25519PrvKeySize
 
 	// Private key is 47 bytes long in case of A
 	prvVariant, _ := getSidhKeyVariant(c.role)
 	if prvVariant == sidh.KeyVariant_SIDH_A {
-		privateKeyLen--
 		prvHybridLen--
 	}
+
+	// Generate public key X25519
+	private, ks, err = genX25519(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[:], ks.data)
+	copy(prvHybrid[:], private)
 
 	// Generate PQ
 	private, ks, err = genSidhP751(c)
 	if err != nil {
 		return
 	}
-	copy(pubHybrid[:], ks.data[:])
-	copy(prvHybrid[:], private)
-
-	// Generate classic
-	private, ks, err = genX25519(c)
-	if err != nil {
-		return
-	}
-	copy(pubHybrid[P751PubKeySize:], ks.data)
-	copy(prvHybrid[privateKeyLen:], private)
+	copy(pubHybrid[x25519SharedSecretSize:], ks.data)
+	copy(prvHybrid[x25519SharedSecretSize:], private)
 	return prvHybrid[:prvHybridLen], keyShare{group: SidhP751Curve25519, data: pubHybrid[:]}, nil
 }
 
 func deriveSidhP751x25519(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	var sharedKey [SidhP751Curve25519SharedKeySize]byte
-	var privateKeyLen = P751PrvKeySize
 
-	// Private key is 47 bytes long in case of A
-	prvVariant, _ := getSidhKeyVariant(c.role)
-	if prvVariant == sidh.KeyVariant_SIDH_A {
-		privateKeyLen--
-	}
-
-	// Key agreement for PQ
-	ks = deriveSidhP751(c, keyShare[:P751PubKeySize], key[:privateKeyLen])
+	// Key agreement for classic
+	ks = deriveX25519(c, keyShare[:x25519SharedSecretSize], key[:x25519SharedSecretSize])
 	if ks == nil {
 		return
 	}
 	copy(sharedKey[:], ks)
-	// Key agreement for classic
-	ks = deriveX25519(c, keyShare[P751PubKeySize:], key[privateKeyLen:])
+
+	// Key agreement for PQ
+	ks = deriveSidhP751(c, keyShare[x25519SharedSecretSize:], key[x25519SharedSecretSize:])
 	if ks == nil {
 		return
 	}
-	copy(sharedKey[P751SharedSecretSize:], ks)
+	copy(sharedKey[x25519SharedSecretSize:], ks)
 	return sharedKey[:]
 }
 
@@ -787,96 +779,88 @@ func genSidhP503x25519(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err e
 	var pubHybrid [SidhP503Curve25519PubKeySize]byte
 	var prvHybrid [SidhP503Curve25519PrvKeySize]byte
 
+	// Generate x25519
+	private, ks, err = genX25519(c)
+	if err != nil {
+		return
+	}
+	copy(prvHybrid[:], private)
+	copy(pubHybrid[:], ks.data)
+
 	// Generate PQ
 	private, ks, err = genSidhP503(c)
 	if err != nil {
 		return
 	}
-	copy(pubHybrid[:], ks.data[:])
-	copy(prvHybrid[:], private)
-
-	// Generate classic
-	private, ks, err = genX25519(c)
-	if err != nil {
-		return
-	}
-	copy(pubHybrid[P503PubKeySize:], ks.data)
-	copy(prvHybrid[P503PrvKeySize:], private)
+	copy(prvHybrid[x25519SharedSecretSize:], private)
+	copy(pubHybrid[x25519SharedSecretSize:], ks.data)
 	return prvHybrid[:], keyShare{group: SidhP503Curve25519, data: pubHybrid[:]}, nil
 }
 
 func deriveSidhP503x25519(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	var sharedKey [SidhP503Curve25519SharedKeySize]byte
 
-	// Key agreement for PQ
-	ks = deriveSidhP503(c, keyShare[:P503PubKeySize], key[:P503PrvKeySize])
+	// Key agreement for classic
+	ks = deriveX25519(c, keyShare[:x25519SharedSecretSize], key[:x25519SharedSecretSize])
 	if ks == nil {
 		return
 	}
 	copy(sharedKey[:], ks)
 
-	// Key agreement for classic
-	ks = deriveX25519(c, keyShare[P503PubKeySize:], key[P503PrvKeySize:])
+	// Key agreement for PQ
+	ks = deriveSidhP503(c, keyShare[x25519SharedSecretSize:], key[x25519SharedSecretSize:])
 	if ks == nil {
 		return
 	}
-	copy(sharedKey[P503SharedSecretSize:], ks)
+	copy(sharedKey[x25519SharedSecretSize:], ks)
 	return sharedKey[:]
 }
 
 func genSidhP751x448(c *dhKeyAgreementCtx) (private []byte, ks keyShare, err error) {
 	var pubHybrid [SidhP751Curve448PubKeySize]byte
 	var prvHybrid [SidhP751Curve448PrvKeySize]byte
-	var privateKeyLen = P751PrvKeySize
 	var prvHybridLen = SidhP751Curve448PrvKeySize
 
-	// Generate PQ
 	// Private key is 47 bytes long in case of A
 	prvVariant, _ := getSidhKeyVariant(c.role)
 	if prvVariant == sidh.KeyVariant_SIDH_A {
-		privateKeyLen--
 		prvHybridLen--
 	}
+
+	// Generate X448 key pair
+	private, ks, err = genX448(c)
+	if err != nil {
+		return
+	}
+	copy(pubHybrid[:], ks.data)
+	copy(prvHybrid[:], private)
 
 	private, ks, err = genSidhP751(c)
 	if err != nil {
 		return
 	}
-	copy(pubHybrid[:], ks.data[:])
-	copy(prvHybrid[:], private)
+	copy(pubHybrid[x448.SharedSecretSize:], ks.data)
+	copy(prvHybrid[x448.SharedSecretSize:], private)
 
-	// Generate classic
-	private, ks, err = genX448(c)
-	if err != nil {
-		return
-	}
-	copy(pubHybrid[P751PubKeySize:], ks.data)
-	copy(prvHybrid[privateKeyLen:], private)
 	return prvHybrid[:prvHybridLen], keyShare{group: SidhP751Curve448, data: pubHybrid[:]}, nil
 }
 
 func deriveSidhP751x448(c *dhKeyAgreementCtx, keyShare, key []byte) (ks []byte) {
 	var sharedKey [SidhP751Curve448SharedKeySize]byte
-	var privateKeyLen = P751PrvKeySize
 
-	prvVariant, _ := getSidhKeyVariant(c.role)
-	if prvVariant == sidh.KeyVariant_SIDH_A {
-		privateKeyLen--
-	}
-
-	// Key agreement for PQ
-	ks = deriveSidhP751(c, keyShare[:P751PubKeySize], key[:privateKeyLen])
+	// Key agreement for classic
+	ks = deriveX448(c, keyShare[:x448.SharedSecretSize], key[:x448.SharedSecretSize])
 	if ks == nil {
 		return
 	}
 	copy(sharedKey[:], ks)
 
-	// Key agreement for classic
-	ks = deriveX448(c, keyShare[P751PubKeySize:], key[privateKeyLen:])
+	// Key agreement for PQ
+	ks = deriveSidhP751(c, keyShare[x448.SharedSecretSize:], key[x448.SharedSecretSize:])
 	if ks == nil {
 		return
 	}
-	copy(sharedKey[P751SharedSecretSize:], ks)
+	copy(sharedKey[x448.SharedSecretSize:], ks)
 	return sharedKey[:]
 }
 
