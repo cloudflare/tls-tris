@@ -276,10 +276,10 @@ Curves:
 
 	if len(hs.clientHello.alpnProtocols) > 0 {
 		if selectedProto, fallback := mutualProtocol(hs.clientHello.alpnProtocols, c.config.NextProtos); !fallback {
-			if hs.hello != nil {
-				hs.hello.alpnProtocol = selectedProto
-			} else {
+			if hs.hello13Enc != nil {
 				hs.hello13Enc.alpnProtocol = selectedProto
+			} else {
+				hs.hello.alpnProtocol = selectedProto
 			}
 			c.clientProtocol = selectedProto
 		}
