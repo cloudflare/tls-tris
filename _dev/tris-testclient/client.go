@@ -12,11 +12,10 @@ import (
 )
 
 var tlsVersionToName = map[uint16]string{
-	tls.VersionTLS10:        "1.0",
-	tls.VersionTLS11:        "1.1",
-	tls.VersionTLS12:        "1.2",
-	tls.VersionTLS13:        "1.3",
-	tls.VersionTLS13Draft28: "1.3 (draft 28)",
+	tls.VersionTLS10: "1.0",
+	tls.VersionTLS11: "1.1",
+	tls.VersionTLS12: "1.2",
+	tls.VersionTLS13: "1.3",
 }
 
 var cipherSuiteIdToName = map[uint16]string{
