@@ -15,6 +15,8 @@ RE_PATTERN_HELLO_TLS_13_RESUME   = "Hello TLS 1.3 \[resumed\] _o/"
 RE_PATTERN_HELLO_0RTT            = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o/$"
 # Checks if 0-RTT was used and confirmed
 RE_PATTERN_HELLO_0RTT_CONFIRMED  = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
+# ALPN
+RE_PATTERN_ALPN = "ALPN protocol: npn_proto$"
 
 class Docker(object):
     ''' Utility class used for starting/stoping servers and clients during tests'''
@@ -205,12 +207,20 @@ class InteropClient(object):
 # Actual test definition
 
 # TRIS as a server
-class InteropServer_BoringSSL(
-        InteropServer,
-        ServerNominalMixin,
-        ServerClientAuthMixin,
-        unittest.TestCase
-    ): CLIENT_NAME = "tls-tris:boring"
+class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAuthMixin, unittest.TestCase):
+
+    CLIENT_NAME = "tls-tris:boring"
+
+    def test_ALPN(self):
+        '''
+        Checks wether ALPN is sent back by tris server in EncryptedExtensions in case of TLS 1.3. The
+        ALPN protocol is set to 'npn_proto', which is hardcoded in TRIS test server.
+        '''
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":1443 "+'-alpn-protos npn_proto -debug')
+        print(res[1])
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(re.search(RE_PATTERN_ALPN, res[1], re.MULTILINE))
+
 
 # PicoTLS doesn't seem to implement draft-23 correctly. It will
 # be enabled when draft-28 is implemented.
