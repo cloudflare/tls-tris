@@ -22,16 +22,11 @@ import (
 )
 
 const (
-	VersionSSL30        = 0x0300
-	VersionTLS10        = 0x0301
-	VersionTLS11        = 0x0302
-	VersionTLS12        = 0x0303
-	VersionTLS13        = 0x0304
-	VersionTLS13Draft18 = 0x7f00 | 18
-	VersionTLS13Draft21 = 0x7f00 | 21
-	VersionTLS13Draft22 = 0x7f00 | 22
-	VersionTLS13Draft23 = 0x7f00 | 23
-	VersionTLS13Draft28 = 0x7f00 | 28
+	VersionSSL30 = 0x0300
+	VersionTLS10 = 0x0301
+	VersionTLS11 = 0x0302
+	VersionTLS12 = 0x0303
+	VersionTLS13 = 0x0304
 )
 
 const (
@@ -42,7 +37,7 @@ const (
 	maxWarnAlertCount = 5            // maximum number of consecutive warning alerts
 
 	minVersion = VersionTLS12
-	maxVersion = VersionTLS13Draft28
+	maxVersion = VersionTLS13
 )
 
 // TLS record types.
@@ -873,12 +868,6 @@ func (c *Config) pickVersion(peerSupportedVersions []uint16) (uint16, bool) {
 // configSuppVersArray is the backing array of Config.getSupportedVersions
 var configSuppVersArray = [...]uint16{VersionTLS13, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
 
-// tls13DraftSuppVersArray is the backing array of Config.getSupportedVersions
-// with TLS 1.3 draft versions included.
-//
-// TODO: remove once TLS 1.3 is finalised.
-var tls13DraftSuppVersArray = [...]uint16{VersionTLS13Draft28, VersionTLS12, VersionTLS11, VersionTLS10, VersionSSL30}
-
 // getSupportedVersions returns the protocol versions that are supported by the
 // current configuration.
 func (c *Config) getSupportedVersions() []uint16 {
@@ -893,10 +882,6 @@ func (c *Config) getSupportedVersions() []uint16 {
 	}
 	if maxVersion < minVersion {
 		return nil
-	}
-	// TODO: remove once TLS 1.3 is finalised.
-	if maxVersion == VersionTLS13 {
-		return tls13DraftSuppVersArray[:len(tls13DraftSuppVersArray)-int(minVersion-VersionSSL30)]
 	}
 	return configSuppVersArray[VersionTLS13-maxVersion : VersionTLS13-minVersion+1]
 }

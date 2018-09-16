@@ -50,8 +50,8 @@ RUN mkdir boringssl/build
 # Draft 28
 # ARG REVISION=861f384d7bc59241a9df1634ae938d8e75be2d30
 
-# Latest
-ARG REVISION=03de6813d8992a649092b4874ef0ebc022e2f58a
+# TLS 1.3
+ARG REVISION=d451453067cd665a5c38830fbbaac9e599234a5e
 
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
