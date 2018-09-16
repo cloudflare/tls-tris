@@ -72,6 +72,7 @@ func (s *server) start() {
 	s.TLS.ClientCAs = x509.NewCertPool()
 	s.TLS.ClientCAs.AppendCertsFromPEM([]byte(rsaCa_client))
 	s.TLS.Accept0RTTData = ((s.ZeroRTT & ZeroRTT_Accept) == ZeroRTT_Accept)
+	s.TLS.NextProtos = []string{"npn_proto"}
 
 	httpServer := &http.Server{
 		Addr:      s.Address,
