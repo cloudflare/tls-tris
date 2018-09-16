@@ -69,61 +69,6 @@ type dcTestDC struct {
 	PrivateKey []byte
 }
 
-// Test data used for testing the TLS handshake with the delegated credential
-// extension. The PEM block encodes a DER encoded slice of dcTestDCs.
-
-// Use with maxVersion == VersionTLS13Draft28.
-//
-// TODO(henrydcase): Remove this when we drop support for draft28.
-const DcTestDataDraft28PEM = `-----BEGIN DC TEST DATA-----
-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
-1MBFxcFr
------END DC TEST DATA-----
-`
-
 // Use with maxVersion == VersionTLS13.
 const DcTestDataTLS13PEM = `-----BEGIN DC TEST DATA-----
 MIIIQzCCAUMTCXRsczEzcDI1NgICAwQCAgQDBIGyAAk6gAQDAwQAAFswWTATBgcq
@@ -222,14 +167,11 @@ var dcTestNow time.Time
 func init() {
 	// Load the DC test data.
 	var testData []byte
-	switch maxVersion {
-	case VersionTLS13Draft28:
-		testData = []byte(DcTestDataDraft28PEM)
-	case 0x0304: // TODO(henrydcase): Fix once the final version is implemented
-		testData = []byte(DcTestDataTLS13PEM)
-	default:
+	if maxVersion != 0x0304 {
 		panic(fmt.Errorf("no test data for version %04x", maxVersion))
 	}
+	testData = []byte(DcTestDataTLS13PEM)
+
 	err := dcLoadTestData(testData, &dcTestDCs)
 	if err != nil {
 		panic(err)

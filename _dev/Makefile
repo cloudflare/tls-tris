@@ -23,7 +23,7 @@ INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
 TARGET_TEST_COMPAT=boring picotls tstclnt
 
 # Some target-specific constants
-BORINGSSL_REVISION=03de6813d8992a649092b4874ef0ebc022e2f58a
+BORINGSSL_REVISION=d451453067cd665a5c38830fbbaac9e599234a5e
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 ###############
