@@ -349,11 +349,11 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 	}
 
 	// client authentication
-	if certMsg, ok := msg.(*certificateMsg13); ok {
-
-		// (4.4.2) Client MUST send certificate msg if requested by server
-		if c.config.ClientAuth < RequestClientCert {
-			c.sendAlert(alertUnexpectedMessage)
+	// (4.4.2) Client MUST send certificate msg if requested by server
+	if c.config.ClientAuth >= RequestClientCert && !c.didResume {
+		certMsg, ok := msg.(*certificateMsg13)
+		if !ok {
+			c.sendAlert(alertCertificateRequired)
 			return unexpectedMessageError(certMsg, msg)
 		}
 
@@ -364,39 +364,37 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 			return err
 		}
 
-		// 4.4.3: CertificateVerify MUST appear immediately after Certificate msg
-		msg, err = c.readHandshake()
-		if err != nil {
-			return err
-		}
+		if len(certs) > 0 {
+			// 4.4.3: CertificateVerify MUST appear immediately after Certificate msg
+			msg, err = c.readHandshake()
+			if err != nil {
+				return err
+			}
 
-		certVerify, ok := msg.(*certificateVerifyMsg)
-		if !ok {
-			c.sendAlert(alertUnexpectedMessage)
-			return unexpectedMessageError(certVerify, msg)
-		}
+			certVerify, ok := msg.(*certificateVerifyMsg)
+			if !ok {
+				c.sendAlert(alertUnexpectedMessage)
+				return unexpectedMessageError(certVerify, msg)
+			}
 
-		err, alertCode := verifyPeerHandshakeSignature(
-			certVerify,
-			pubKey,
-			supportedSignatureAlgorithms13,
-			hs.keySchedule.transcriptHash.Sum(nil),
-			"TLS 1.3, client CertificateVerify")
-		if err != nil {
-			c.sendAlert(alertCode)
-			return err
+			err, alertCode := verifyPeerHandshakeSignature(
+				certVerify,
+				pubKey,
+				supportedSignatureAlgorithms13,
+				hs.keySchedule.transcriptHash.Sum(nil),
+				"TLS 1.3, client CertificateVerify")
+			if err != nil {
+				c.sendAlert(alertCode)
+				return err
+			}
+			hs.keySchedule.write(certVerify.marshal())
 		}
-		hs.keySchedule.write(certVerify.marshal())
 
 		// Read next chunk
 		msg, err = c.readHandshake()
 		if err != nil {
 			return err
 		}
-
-	} else if (c.config.ClientAuth >= RequestClientCert) && !c.didResume {
-		c.sendAlert(alertCertificateRequired)
-		return unexpectedMessageError(certMsg, msg)
 	}
 
 	clientFinished, ok := msg.(*finishedMsg)
