@@ -51,6 +51,17 @@ func (c *Client) setMinMaxTLS(ver uint16) {
 	c.TLS.MaxVersion = ver
 }
 
+func getQrAlgoId(qr string) tls.CurveID {
+	switch qr {
+	case "SIDH-P503-X25519":
+		return tls.HybridSidhP503Curve25519
+	case "SIDH-P751-X448":
+		return tls.HybridSidhP751Curve448
+	default:
+		return 0
+	}
+}
+
 func (c *Client) run() {
 	fmt.Printf("TLS %s with %s\n", tlsVersionToName[c.TLS.MinVersion], cipherSuiteIdToName[c.TLS.CipherSuites[0]])
 
@@ -78,8 +89,7 @@ func (c *Client) run() {
 		failed++
 		return
 	}
-	fmt.Printf("Read %d bytes\n", n)
-
+	fmt.Printf("[TLS: %s] Read %d bytes\n", tlsVersionToName[con.ConnectionState().Version], n)
 	fmt.Println("OK\n")
 }
 
@@ -93,13 +103,14 @@ func result() {
 
 // Usage client args host:port
 func main() {
-	var keylog_file string
+	var keylog_file, qrAlgoName string
 	var enable_rsa, enable_ecdsa, client_auth bool
 
 	flag.StringVar(&keylog_file, "keylogfile", "", "Secrets will be logged here")
 	flag.BoolVar(&enable_rsa, "rsa", true, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", true, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
+	flag.StringVar(&qrAlgoName, "qr", "", "Specifies qr algorithm from following list:\n[SIDH-P503-X25519, SIDH-P751-X448]")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -124,6 +135,21 @@ func main() {
 		log.Println("Enabled keylog")
 	}
 
+	if len(qrAlgoName) > 0 {
+		id := getQrAlgoId(qrAlgoName)
+		if id == 0 {
+			log.Fatalf("Unknown QR algorithm: %s", qrAlgoName)
+			return
+		}
+
+		client.TLS.CipherSuites = []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
+		client.TLS.CurvePreferences = []tls.CurveID{id}
+		client.setMinMaxTLS(tls.VersionTLS13)
+		client.run()
+		result()
+		return
+	}
+
 	if client_auth {
 		var err error
 		client_cert, err := tls.X509KeyPair([]byte(client_crt), []byte(client_key))
@@ -145,6 +171,7 @@ func main() {
 		c.setMinMaxTLS(tls.VersionTLS12)
 		c.run()
 	}
+
 	if enable_ecdsa {
 		// Sane cipher suite for TLS 1.2 with an ECDSA cert (as used by boringssl)
 		c := client.clone()

@@ -55,6 +55,15 @@ func NewServer() *server {
 	return s
 }
 
+func enableQR(s *server, enableDefault bool) {
+	var sidhCurves = []tls.CurveID{tls.HybridSidhP503Curve25519}
+	if enableDefault {
+		var defaultCurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521}
+		s.TLS.CurvePreferences = append(s.TLS.CurvePreferences, defaultCurvePreferences...)
+	}
+	s.TLS.CurvePreferences = append(s.TLS.CurvePreferences, sidhCurves...)
+}
+
 func (s *server) start() {
 	var err error
 	if (s.ZeroRTT & ZeroRTT_Offer) == ZeroRTT_Offer {
@@ -144,6 +153,7 @@ func main() {
 	arg_zerortt := flag.String("rtt0", "n", `0-RTT, accepts following values [n: None, a: Accept, o: Offer, oa: Offer and Accept]`)
 	arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
 	arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
+	arg_qr := flag.String("qr", "", "Enable quantum-resistant algorithms [c: Support classical and Quantum-Resistant, q: Enable Quantum-Resistant only]")
 	flag.Parse()
 
 	s.Address = *arg_addr
@@ -160,6 +170,12 @@ func main() {
 
 	if *arg_clientauth {
 		s.TLS.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	if *arg_qr == "c" {
+		enableQR(s, true)
+	} else if *arg_qr == "q" {
+		enableQR(s, false)
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -15,7 +15,7 @@ OS          ?= $(shell $(GO) env GOHOSTOS)
 ARCH        ?= $(shell $(GO) env GOHOSTARCH)
 OS_ARCH     := $(OS)_$(ARCH)
 VER_OS_ARCH := $(shell $(GO) version | cut -d' ' -f 3)_$(OS)_$(ARCH)
-GOROOT_ENV  := $(shell $(GO) env GOROOT)
+GOROOT_ENV  ?= $(shell $(GO) env GOROOT)
 GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
 # Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
 INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
@@ -30,8 +30,10 @@ BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 # SIDH repository (TODO: change path)
 SIDH_REPO  ?= https://github.com/cloudflare/sidh.git
+SIDH_REPO_TAG ?= 25c0d9f15d5e5bd5652b9741aeb50d9eb37154dc
 # NOBS repo (SIKE depends on SHA3)
 NOBS_REPO  ?= https://github.com/henrydcase/nobscrypto.git
+NOBS_REPO_TAG ?= 597f68906e981e61160b8c959b326596c0b240be
 
 ###############
 #
@@ -57,11 +59,13 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Vendor NOBS library
 	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
+	cd $(TMP_DIR)/nobs; $(GIT) checkout $(NOBS_REPO_TAG)
 	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
 	cp -rf $(TMP_DIR)/nobs/tls_vendor/* $(GOROOT_LOCAL)/src/vendor/
 
 # Vendor SIDH library
 	$(GIT) clone $(SIDH_REPO) $(TMP_DIR)/sidh
+	cd $(TMP_DIR)/sidh; $(GIT) checkout $(SIDH_REPO_TAG)
 	cd $(TMP_DIR)/sidh; make vendor
 	cp -rf $(TMP_DIR)/sidh/build/vendor/* $(GOROOT_LOCAL)/src/vendor/
 

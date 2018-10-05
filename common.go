@@ -116,10 +116,6 @@ const (
 type CurveID uint16
 
 const (
-	// Unexported
-	sidhP503 CurveID = 0
-	sidhP751 CurveID = 1
-
 	// Exported IDs
 	CurveP256 CurveID = 23
 	CurveP384 CurveID = 24
@@ -127,8 +123,12 @@ const (
 	X25519    CurveID = 29
 
 	// Experimental KEX
-	HybridSidhP503Curve25519 CurveID = 0x0105 + sidhP503 // HybridSIDH: X25519 + P503
-	HybridSidhP751Curve448   CurveID = 0x0105 + sidhP751 // HybridSIDH: X448   + P751
+	HybridSidhP503Curve25519 CurveID = 0x0105 + (sidhP503 & 0xFF) // HybridSIDH: X25519 + P503
+	HybridSidhP751Curve448   CurveID = 0x0105 + (sidhP751 & 0xFF) // HybridSIDH: X448   + P751
+
+	// Internal usage. Deliberately not exported
+	sidhP503 CurveID = 0xFE00
+	sidhP751 CurveID = 0xFE01
 )
 
 // TLS 1.3 Key Share
