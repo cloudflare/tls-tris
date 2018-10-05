@@ -29,6 +29,12 @@ import (
 const numSessionTickets = 2
 
 type secretLabel int
+type role uint8
+
+const (
+	kRole_Server = iota
+	kRole_Client
+)
 
 const (
 	secretResumptionPskBinder secretLabel = iota
