@@ -116,10 +116,19 @@ const (
 type CurveID uint16
 
 const (
+	// Unexported
+	sidhP503 CurveID = 0
+	sidhP751 CurveID = 1
+
+	// Exported IDs
 	CurveP256 CurveID = 23
 	CurveP384 CurveID = 24
 	CurveP521 CurveID = 25
 	X25519    CurveID = 29
+
+	// Experimental KEX
+	HybridSidhP503Curve25519 CurveID = 0x0105 + sidhP503 // HybridSIDH: X25519 + P503
+	HybridSidhP751Curve448   CurveID = 0x0105 + sidhP751 // HybridSIDH: X448   + P751
 )
 
 // TLS 1.3 Key Share
