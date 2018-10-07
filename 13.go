@@ -152,7 +152,7 @@ CurvePreferenceLoop:
 		return errors.New("tls: HelloRetryRequest not implemented") // TODO(filippo)
 	}
 
-	privateKey, serverKS, err := config.generateKeyShare(ks.group)
+	privateKey, serverKS, err := c.generateKeyShare(ks.group)
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err
@@ -180,7 +180,7 @@ CurvePreferenceLoop:
 
 	earlyClientCipher, _ := hs.keySchedule.prepareCipher(secretEarlyClient)
 
-	ecdheSecret := deriveECDHESecret(ks, privateKey)
+	ecdheSecret := c.deriveECDHESecret(ks, privateKey)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE client share")
@@ -545,10 +545,10 @@ func prepareDigitallySigned(hash crypto.Hash, context string, data []byte) []byt
 	return h.Sum(nil)
 }
 
-func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
+func (c *Conn) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	if curveID == X25519 {
 		var scalar, public [32]byte
-		if _, err := io.ReadFull(c.rand(), scalar[:]); err != nil {
+		if _, err := io.ReadFull(c.config.rand(), scalar[:]); err != nil {
 			return nil, keyShare{}, err
 		}
 
@@ -561,7 +561,7 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 		return nil, keyShare{}, errors.New("tls: preferredCurves includes unsupported curve")
 	}
 
-	privateKey, x, y, err := elliptic.GenerateKey(curve, c.rand())
+	privateKey, x, y, err := elliptic.GenerateKey(curve, c.config.rand())
 	if err != nil {
 		return nil, keyShare{}, err
 	}
@@ -570,7 +570,7 @@ func (c *Config) generateKeyShare(curveID CurveID) ([]byte, keyShare, error) {
 	return privateKey, keyShare{group: curveID, data: ecdhePublic}, nil
 }
 
-func deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
+func (c *Conn) deriveECDHESecret(ks keyShare, secretKey []byte) []byte {
 	if ks.group == X25519 {
 		if len(ks.data) != 32 {
 			return nil
@@ -975,7 +975,7 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 
 	// 0-RTT is not supported yet, so use an empty PSK.
 	hs.keySchedule.setSecret(nil)
-	ecdheSecret := deriveECDHESecret(serverHello.keyShare, hs.privateKey)
+	ecdheSecret := c.deriveECDHESecret(serverHello.keyShare, hs.privateKey)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
 		return errors.New("tls: bad ECDHE server share")
