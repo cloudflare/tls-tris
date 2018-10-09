@@ -364,29 +364,31 @@ func (hs *serverHandshakeState) readClientFinished13(hasConfirmLock bool) error 
 			return err
 		}
 
-		// 4.4.3: CertificateVerify MUST appear immediately after Certificate msg
-		msg, err = c.readHandshake()
-		if err != nil {
-			return err
-		}
+		if len(certMsg.certificates) > 0 {
+			// 4.4.3: CertificateVerify MUST appear immediately after Certificate msg
+			msg, err = c.readHandshake()
+			if err != nil {
+				return err
+			}
 
-		certVerify, ok := msg.(*certificateVerifyMsg)
-		if !ok {
-			c.sendAlert(alertUnexpectedMessage)
-			return unexpectedMessageError(certVerify, msg)
-		}
+			certVerify, ok := msg.(*certificateVerifyMsg)
+			if !ok {
+				c.sendAlert(alertUnexpectedMessage)
+				return unexpectedMessageError(certVerify, msg)
+			}
 
-		err, alertCode := verifyPeerHandshakeSignature(
-			certVerify,
-			pubKey,
-			supportedSignatureAlgorithms13,
-			hs.keySchedule.transcriptHash.Sum(nil),
-			"TLS 1.3, client CertificateVerify")
-		if err != nil {
-			c.sendAlert(alertCode)
-			return err
+			err, alertCode := verifyPeerHandshakeSignature(
+				certVerify,
+				pubKey,
+				supportedSignatureAlgorithms13,
+				hs.keySchedule.transcriptHash.Sum(nil),
+				"TLS 1.3, client CertificateVerify")
+			if err != nil {
+				c.sendAlert(alertCode)
+				return err
+			}
+			hs.keySchedule.write(certVerify.marshal())
 		}
-		hs.keySchedule.write(certVerify.marshal())
 
 		// Read next chunk
 		msg, err = c.readHandshake()
