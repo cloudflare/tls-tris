@@ -124,7 +124,7 @@ const (
 
 	// Experimental KEX
 	HybridSidhP503Curve25519 CurveID = 0x0105 + (sidhP503 & 0xFF) // HybridSIDH: X25519 + P503
-	HybridSidhP751Curve448   CurveID = 0x0105 + (sidhP751 & 0xFF) // HybridSIDH: X448   + P751
+	// HybridSidhP751Curve448   CurveID = 0x0105 + (sidhP751 & 0xFF) // HybridSIDH: X448   + P751
 
 	// Internal usage. Deliberately not exported
 	sidhP503 CurveID = 0xFE00
