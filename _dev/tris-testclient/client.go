@@ -55,8 +55,8 @@ func getQrAlgoId(qr string) tls.CurveID {
 	switch qr {
 	case "SIDH-P503-X25519":
 		return tls.HybridSidhP503Curve25519
-	case "SIDH-P751-X448":
-		return tls.HybridSidhP751Curve448
+	//case "SIDH-P751-X448":
+	//	return tls.HybridSidhP751Curve448
 	default:
 		return 0
 	}
