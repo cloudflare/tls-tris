@@ -30,7 +30,7 @@ BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 # SIDH repository (TODO: change path)
 SIDH_REPO  ?= https://github.com/cloudflare/sidh.git
-SIDH_REPO_TAG ?= 25c0d9f15d5e5bd5652b9741aeb50d9eb37154dc
+SIDH_REPO_TAG ?= 7b83e32ecdd210f9ceeeb17ed6afbce4e375e44b
 # NOBS repo (SIKE depends on SHA3)
 NOBS_REPO  ?= https://github.com/henrydcase/nobscrypto.git
 NOBS_REPO_TAG ?= 597f68906e981e61160b8c959b326596c0b240be
