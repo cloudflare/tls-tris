@@ -28,7 +28,7 @@ TARGET_TEST_COMPAT=boring picotls tstclnt
 BORINGSSL_REVISION=d451453067cd665a5c38830fbbaac9e599234a5e
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
-# SIDH repository (TODO: change path)
+# SIDH repository
 SIDH_REPO  ?= https://github.com/cloudflare/sidh.git
 SIDH_REPO_TAG ?= 137b47345fe8f36df1f822a206eb97339356b21a
 # NOBS repo (SIKE depends on SHA3)

@@ -21,4 +21,12 @@ bssl server \
     -accept 6443 -loop -www \
     -require-any-client-cert -debug 2>&1 &
 
+# ECDSA and SIDH/P503-X25519
+bssl server \
+    -key ecdsa.pem \
+    -curves x25519sidh503 \
+    -min-version tls1.3 -max-version tls1.3 \
+    -accept 7443 -loop -www \
+    -debug 2>&1 &
+
 wait
