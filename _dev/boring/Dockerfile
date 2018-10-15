@@ -3,6 +3,7 @@ FROM alpine
 RUN apk add --update \
     git \
     cmake \
+    patch \
     perl \
     python \
     build-base \
@@ -53,9 +54,12 @@ RUN mkdir boringssl/build
 # TLS 1.3
 ARG REVISION=d451453067cd665a5c38830fbbaac9e599234a5e
 
+ADD sidh_$REVISION.patch /
+
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
-RUN cd boringssl/build && cmake -GNinja ..
+RUN cd boringssl && patch -p1 < /sidh_$REVISION.patch
+RUN cd boringssl/build && cmake -DEXP_SIDH=1 -GNinja ..
 RUN cd boringssl && ninja -C build
 
 ADD httpreq.txt /httpreq.txt
