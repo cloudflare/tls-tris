@@ -17,6 +17,10 @@ RE_PATTERN_HELLO_0RTT            = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o/
 RE_PATTERN_HELLO_0RTT_CONFIRMED  = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
 # ALPN
 RE_PATTERN_ALPN = "ALPN protocol: npn_proto$"
+# Successful TLS establishement from TRIS
+RE_TRIS_ALL_PASSED = ".*All handshakes passed.*"
+# TLS handshake from BoringSSL with SIDH/P503-X25519
+RE_BORINGSSL_P503 = "ECDHE curve: x25519sidh503"
 
 class Docker(object):
     ''' Utility class used for starting/stoping servers and clients during tests'''
@@ -55,7 +59,6 @@ class RegexSelfTest(unittest.TestCase):
     LINE_HELLO_TLS_12   ="\nsomestuff\nHello TLS 1.2 (draft 23) [resumed] _o/\nsomestuff"
     LINE_HELLO_TLS_13_0RTT="\nsomestuff\nHello TLS 1.3 (draft 23) [resumed] [0-RTT] _o/\nsomestuff"
     LINE_HELLO_TLS_13_0RTT_CONFIRMED="\nsomestuff\nHello TLS 1.3 (draft 23) [resumed] [0-RTT confirmed] _o/\nsomestuff"
-
     def test_regexes(self):
         self.assertIsNotNone(
             re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, RegexSelfTest.LINE_HELLO_TLS, re.MULTILINE))
@@ -192,7 +195,7 @@ class InteropClient(object):
         self.d = Docker()
         self.server = self.d.run_server(
                             self.SERVER_NAME,
-                            ports={ '1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443},
+                            ports={ '1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443, '7443/tcp': 7443},
                             entrypoint="/server.sh")
 
     @classmethod
@@ -206,7 +209,7 @@ class InteropClient(object):
 
 # Actual test definition
 
-# TRIS as a server
+# TRIS as a server, BoringSSL as a client
 class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAuthMixin, unittest.TestCase):
 
     CLIENT_NAME = "tls-tris:boring"
@@ -219,6 +222,15 @@ class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAut
         res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":1443 "+'-alpn-protos npn_proto')
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_PATTERN_ALPN, res[1], re.MULTILINE))
+
+    def test_SIDH(self):
+        '''
+        Connects to TRIS server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
+        '''
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":7443 "+'-curves x25519sidh503')
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(re.search(RE_BORINGSSL_P503, res[1], re.MULTILINE))
+        self.assertIsNotNone(re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
 
 # PicoTLS doesn't seem to implement draft-23 correctly. It will
 # be enabled when draft-28 is implemented.
@@ -236,13 +248,18 @@ class InteropServer_NSS(
         unittest.TestCase
     ): CLIENT_NAME = "tls-tris:tstclnt"
 
-# TRIS as a client
-class InteropClient_BoringSSL(
-        InteropClient,
-        ClientNominalMixin,
-        ClientClientAuthMixin,
-        unittest.TestCase
-    ): SERVER_NAME = "boring-localserver"
+# TRIS as a client, BoringSSL as a server
+class InteropClient_BoringSSL(InteropClient, ClientNominalMixin, ClientClientAuthMixin, unittest.TestCase):
+
+    SERVER_NAME = "boring-localserver"
+
+    def test_SIDH(self):
+        '''
+        Connects to BoringSSL server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
+        '''
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P503-X25519 ' + self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+        self.assertIsNotNone(re.search(RE_TRIS_ALL_PASSED, res[1], re.MULTILINE))
 
 class InteropClient_NSS(
         InteropClient,
@@ -260,11 +277,11 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=false -cliauth '+self.server_ip+":6443")
         self.assertEqual(res[0], 0)
 
-    def test_qr(self):
+    def test_SIDH(self):
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P503-X25519 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
-    def test_qrServerDoesntSupportSIDH(self):
+    def test_server_doesnt_support_SIDH(self):
         '''
         Client advertises HybridSIDH and ECDH. Server supports ECDH only. Checks weather
         TLS session can still be established.
