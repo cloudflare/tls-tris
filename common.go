@@ -173,9 +173,10 @@ const (
 	// Rest of these are reserved by the TLS spec
 )
 
-// Signature algorithms for TLS 1.2 (See RFC 5246, section A.4.1)
+// Signature algorithms (for internal signaling use). Starting at 16 to avoid overlap with
+// TLS 1.2 codepoints (RFC 5246, section A.4.1), with which these have nothing to do.
 const (
-	signaturePKCS1v15 uint8 = iota + 1
+	signaturePKCS1v15 uint8 = iota + 16
 	signatureECDSA
 	signatureRSAPSS
 )
