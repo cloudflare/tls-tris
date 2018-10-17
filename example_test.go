@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"time"
 )
 
 // zeroSource is an io.Reader that returns an unlimited number of zero bytes.
@@ -159,4 +160,76 @@ func ExampleConfig_keyLogWriter_TLS13() {
 	// SERVER_HANDSHAKE_TRAFFIC_SECRET 0000000000000000000000000000000000000000000000000000000000000000 b6c44e95e34cb2616ff2e9a1163577aa1aa5cb3af8df16d0fdbbbaf15f415c8e
 	// SERVER_TRAFFIC_SECRET_0 0000000000000000000000000000000000000000000000000000000000000000 cbecc42509a124ae517f6c9aaae1961d755ab4268548b40b0c7840a9643240e8
 	// CLIENT_TRAFFIC_SECRET_0 0000000000000000000000000000000000000000000000000000000000000000 8f6dd1476706ea8147d829347937694496a7d62d6d01de0a1b4820140d01cad0
+}
+
+func ExampleLoadX509KeyPair() {
+	cert, err := tls.LoadX509KeyPair("testdata/example-cert.pem", "testdata/example-key.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	listener, err := tls.Listen("tcp", ":2000", cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = listener
+}
+
+func ExampleX509KeyPair() {
+	certPem := []byte(`-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----`)
+	keyPem := []byte(`-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIIrYSSNQFaA2Hwf1duRSxKtLYX5CB04fSeQ6tF1aY/PuoAoGCCqGSM49
+AwEHoUQDQgAEPR3tU2Fta9ktY+6P9G0cWO+0kETA6SFs38GecTyudlHz6xvCdz8q
+EKTcWGekdmdDPsHloRNtsiCa697B2O9IFA==
+-----END EC PRIVATE KEY-----`)
+	cert, err := tls.X509KeyPair(certPem, keyPem)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	listener, err := tls.Listen("tcp", ":2000", cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = listener
+}
+
+func ExampleX509KeyPair_httpServer() {
+	certPem := []byte(`-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----`)
+	keyPem := []byte(`-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIIrYSSNQFaA2Hwf1duRSxKtLYX5CB04fSeQ6tF1aY/PuoAoGCCqGSM49
+AwEHoUQDQgAEPR3tU2Fta9ktY+6P9G0cWO+0kETA6SFs38GecTyudlHz6xvCdz8q
+EKTcWGekdmdDPsHloRNtsiCa697B2O9IFA==
+-----END EC PRIVATE KEY-----`)
+	cert, err := tls.X509KeyPair(certPem, keyPem)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv := &http.Server{
+		TLSConfig:    cfg,
+		ReadTimeout:  time.Minute,
+		WriteTimeout: time.Minute,
+	}
+	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
