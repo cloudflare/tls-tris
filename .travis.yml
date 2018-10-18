@@ -1,6 +1,10 @@
 sudo: required
 language: go
 
+env:
+  - ARCH=x86
+  - ARCH=arm64
+
 services:
   - docker
 
