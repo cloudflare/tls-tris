@@ -1,10 +1,6 @@
 sudo: required
 language: go
 
-env:
-  - ARCH=x86
-  - ARCH=arm64
-
 services:
   - docker
 
@@ -12,9 +8,12 @@ go:
   - 1.11.x
 
 env:
+  - ARCH=x86
+  - ARCH=arm64
   - TEST_SUITE=test-unit
   - TEST_SUITE=test-bogo
   - TEST_SUITE=test-interop
+
 
 matrix:
   fast_finish: true
