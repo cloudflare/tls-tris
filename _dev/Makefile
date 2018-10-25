@@ -30,10 +30,10 @@ BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 # SIDH repository
 SIDH_REPO  ?= https://github.com/cloudflare/sidh.git
-SIDH_REPO_TAG ?= 137b47345fe8f36df1f822a206eb97339356b21a
+SIDH_REPO_TAG ?= Release_1.0
 # NOBS repo (SIKE depends on SHA3)
 NOBS_REPO  ?= https://github.com/henrydcase/nobscrypto.git
-NOBS_REPO_TAG ?= 597f68906e981e61160b8c959b326596c0b240be
+NOBS_REPO_TAG ?= Release_0.1
 
 ###############
 #
@@ -59,13 +59,13 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Vendor NOBS library
 	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
-	cd $(TMP_DIR)/nobs; $(GIT) checkout $(NOBS_REPO_TAG)
+	cd $(TMP_DIR)/nobs; $(GIT) checkout tags/$(NOBS_REPO_TAG)
 	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
 	cp -rf $(TMP_DIR)/nobs/tls_vendor/* $(GOROOT_LOCAL)/src/vendor/
 
 # Vendor SIDH library
 	$(GIT) clone $(SIDH_REPO) $(TMP_DIR)/sidh
-	cd $(TMP_DIR)/sidh; $(GIT) checkout $(SIDH_REPO_TAG)
+	cd $(TMP_DIR)/sidh; $(GIT) checkout tags/$(SIDH_REPO_TAG)
 	cd $(TMP_DIR)/sidh; make vendor
 	cp -rf $(TMP_DIR)/sidh/build/vendor/* $(GOROOT_LOCAL)/src/vendor/
 
