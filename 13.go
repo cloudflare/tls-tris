@@ -230,6 +230,9 @@ CurvePreferenceLoop:
 	}
 
 	hs.keySchedule.write(hs.clientHello.marshal())
+	// Compute the early export secret based on the early secret
+	// and the client hello. See: https://tools.ietf.org/html/rfc8446#section-7.1
+	c.earlyExportMasterSecret = hkdfExpandLabel(hash, hs.keySchedule.secret, hs.keySchedule.transcriptHash.Sum(nil), "e exp master", hashSize)
 
 	earlyClientCipher, _ := hs.keySchedule.prepareCipher(secretEarlyClient)
 
@@ -296,6 +299,11 @@ CurvePreferenceLoop:
 	hs.keySchedule.setSecret(nil) // derive master secret
 	hs.appClientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
 	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
+
+	// Computes the export master secret based on the master secret and the
+	// transcript from client hello to server finished. See: https://tools.ietf.org/html/rfc8446#section-7.1
+	c.exportMasterSecret = hkdfExpandLabel(hash, hs.keySchedule.secret, hs.keySchedule.transcriptHash.Sum(nil), "exp master", hashSize)
+
 	c.out.setCipher(c.vers, serverCipher)
 
 	if c.hand.Len() > 0 {
@@ -987,6 +995,15 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 
 	// 0-RTT is not supported yet, so use an empty PSK.
 	hs.keySchedule.setSecret(nil)
+
+	// We need a new instance of the transcript hash b/c at this point in
+	// time the transcript hash already contains the server hello. However,
+	// the key schedule secret was just set so we have to compute the early
+	// export secret here.
+	transcriptHash := hash.New()
+	transcriptHash.Write(hs.hello.marshal())
+	c.earlyExportMasterSecret = hkdfExpandLabel(hash, hs.keySchedule.secret, transcriptHash.Sum(nil), "e exp master", hashSize)
+
 	ecdheSecret := c.deriveDHESecret(serverHello.keyShare, hs.privateKey)
 	if ecdheSecret == nil {
 		c.sendAlert(alertIllegalParameter)
@@ -1124,6 +1141,11 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	hs.keySchedule.setSecret(nil) // derive master secret
 	appServerCipher, _ := hs.keySchedule.prepareCipher(secretApplicationServer)
 	appClientCipher, _ := hs.keySchedule.prepareCipher(secretApplicationClient)
+
+	// Computes the export master secret based on the master secret and the
+	// transcript from client hello to server finished. See: https://tools.ietf.org/html/rfc8446#section-7.1
+	c.exportMasterSecret = hkdfExpandLabel(hash, hs.keySchedule.secret, hs.keySchedule.transcriptHash.Sum(nil), "exp master", hashSize)
+
 	// TODO store initial traffic secret key for KeyUpdate GH #85
 
 	// Change outbound handshake cipher for final step

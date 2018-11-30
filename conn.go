@@ -8,6 +8,7 @@ package tls
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
@@ -129,6 +130,21 @@ type Conn struct {
 	// binder is the value of the PSK binder that was validated to
 	// accept the 0-RTT data. Exposed as ConnectionState.Unique0RTTToken.
 	binder []byte
+
+	// The hash function negotiated by the handshake protocol.
+	// Currently only set if version == TLS 1.3and only
+	// available after handshake complete.
+	hash crypto.Hash
+
+	// The early export master secret derived during the handshake.
+	// Currently only set if version == TLS 1.3and only
+	// available after handshake complete.
+	earlyExportMasterSecret []byte
+
+	// The export master secret derived during the handshake.
+	// Currently only set if version == TLS 1.3 and only
+	// available after handshake complete.
+	exportMasterSecret []byte
 
 	tmp [16]byte
 }
@@ -1728,4 +1744,47 @@ func (c *Conn) VerifyHostname(host string) error {
 		return errors.New("tls: handshake did not verify certificate chain")
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
+}
+
+// ExportSecret derives and exports a secret of secretLen bytes bound to the
+// specified context from the TLS master secret. The label string should
+// follow: https://tools.ietf.org/html/rfc5705#section-4
+// It returns an error if no handshake has been performed.
+func (c *Conn) ExportSecret(secretLen int, label string, context []byte) ([]byte, error) {
+	return c.exportSecretTLS13(c.exportMasterSecret, secretLen, label, context)
+}
+
+// ExportSecret derives and exports a secret of secretLen bytes bound to the
+// specified context from the TLS early master secret. The label string should
+// follow: https://tools.ietf.org/html/rfc5705#section-4
+// The exported early secret is designed for applications requiring an exported
+// secret in case of 0-RTT. It returns an error if no handshake has been performed.
+//
+// See: https://tools.ietf.org/html/rfc8446#section-7.5 for more details.
+func (c *Conn) ExportEarlySecret(secretLen int, label string, context []byte) ([]byte, error) {
+	return c.exportSecretTLS13(c.earlyExportMasterSecret, secretLen, label, context)
+}
+
+// exportSecret computes the either the early export master secret or
+// the export master secret depending on the masterSecret value as
+// specified at https://tools.ietf.org/html/rfc8446#section-7.5
+//
+// TODO: Implement TLS exporters for < TLS 1.3
+func (c *Conn) exportSecretTLS13(masterSecret []byte, secretLen int, label string, context []byte) ([]byte, error) {
+	c.handshakeMutex.Lock()
+	defer c.handshakeMutex.Unlock()
+
+	if !c.handshakeComplete {
+		return nil, errors.New("tls: handshake has not yet been performed")
+	}
+	if c.vers >= VersionTLS13 {
+		secret := hkdfExpandLabel(c.hash, masterSecret, c.hash.New().Sum(nil), label, c.hash.Size())
+
+		h := c.hash.New()
+		h.Write(context)
+		contextHash := h.Sum(nil)
+
+		return hkdfExpandLabel(c.hash, secret, contextHash, "exporter", secretLen), nil
+	}
+	panic("tls: key export is not supported")
 }
