@@ -20,7 +20,7 @@ RE_PATTERN_ALPN = "ALPN protocol: npn_proto$"
 # Successful TLS establishement from TRIS
 RE_TRIS_ALL_PASSED = ".*All handshakes passed.*"
 # TLS handshake from BoringSSL with SIDH/P503-X25519
-RE_BORINGSSL_P503 = "ECDHE curve: x25519sidh503"
+RE_BORINGSSL_P503 = "ECDHE curve: X25519-SIDHp503"
 
 class Docker(object):
     ''' Utility class used for starting/stoping servers and clients during tests'''
@@ -227,7 +227,7 @@ class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAut
         '''
         Connects to TRIS server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
         '''
-        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":7443 "+'-curves x25519sidh503')
+        res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":7443 "+'-curves X25519-SIDHp503')
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_BORINGSSL_P503, res[1], re.MULTILINE))
         self.assertIsNotNone(re.search(RE_PATTERN_HELLO_TLS_13_NORESUME, res[1], re.MULTILINE))
@@ -257,7 +257,7 @@ class InteropClient_BoringSSL(InteropClient, ClientNominalMixin, ClientClientAut
         '''
         Connects to BoringSSL server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
         '''
-        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P503-X25519 ' + self.server_ip+":7443")
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr X25519-SIDHp503 ' + self.server_ip+":7443")
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_TRIS_ALL_PASSED, res[1], re.MULTILINE))
 
@@ -278,7 +278,7 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         self.assertEqual(res[0], 0)
 
     def test_SIDH(self):
-        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr SIDH-P503-X25519 '+self.server_ip+":7443")
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr X25519-SIDHp503 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
     def test_server_doesnt_support_SIDH(self):

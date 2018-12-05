@@ -53,10 +53,8 @@ func (c *Client) setMinMaxTLS(ver uint16) {
 
 func getQrAlgoId(qr string) tls.CurveID {
 	switch qr {
-	case "SIDH-P503-X25519":
-		return tls.HybridSidhP503Curve25519
-	//case "SIDH-P751-X448":
-	//	return tls.HybridSidhP751Curve448
+	case "X25519-SIDHp503":
+		return tls.HybridSIDHp503Curve25519
 	default:
 		return 0
 	}
@@ -110,7 +108,7 @@ func main() {
 	flag.BoolVar(&enable_rsa, "rsa", true, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", true, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
-	flag.StringVar(&qrAlgoName, "qr", "", "Specifies qr algorithm from following list:\n[SIDH-P503-X25519, SIDH-P751-X448]")
+	flag.StringVar(&qrAlgoName, "qr", "", "Specifies qr algorithm from following list:\n[X25519-SIDHp503]")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
