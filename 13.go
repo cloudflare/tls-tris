@@ -37,9 +37,9 @@ const (
 	P503PubKeySz                  = 378
 	P503PrvKeySz                  = 32
 	P503SharedSecretSz            = 126
-	SidhP503Curve25519PubKeySz    = x25519SharedSecretSz + P503PubKeySz
-	SidhP503Curve25519PrvKeySz    = x25519SharedSecretSz + P503PrvKeySz
-	SidhP503Curve25519SharedKeySz = x25519SharedSecretSz + P503SharedSecretSz
+	SIDHp503Curve25519PubKeySz    = x25519SharedSecretSz + P503PubKeySz
+	SIDHp503Curve25519PrvKeySz    = x25519SharedSecretSz + P503PrvKeySz
+	SIDHp503Curve25519SharedKeySz = x25519SharedSecretSz + P503SharedSecretSz
 )
 
 const (
@@ -78,10 +78,13 @@ type dhKex interface {
 }
 
 // Key Exchange strategies per curve type
-type kexNist struct{}                 // Used by NIST curves; P-256, P-384, P-512
-type kexX25519 struct{}               // Used by X25519
-type kexSidhP503 struct{}             // Used by SIDH/P503
-type kexHybridSidhP503X25519 struct{} // Used by SIDH-ECDH hybrid scheme
+type kexNist struct{}     // Used by NIST curves; P-256, P-384, P-512
+type kexX25519 struct{}   // Used by X25519
+type kexSIDHp503 struct{} // Used by SIDH/P503
+type kexHybridSIDHp503X25519 struct {
+	classicKEX kexX25519
+	pqKEX      kexSIDHp503
+} // Used by SIDH-ECDH hybrid scheme
 
 // Routing map for key exchange strategies
 var dhKexStrat = map[CurveID]dhKex{
@@ -89,8 +92,7 @@ var dhKexStrat = map[CurveID]dhKex{
 	CurveP384:                &kexNist{},
 	CurveP521:                &kexNist{},
 	X25519:                   &kexX25519{},
-	sidhP503:                 &kexSidhP503{},
-	HybridSidhP503Curve25519: &kexHybridSidhP503X25519{},
+	HybridSIDHp503Curve25519: &kexHybridSIDHp503X25519{},
 }
 
 func newKeySchedule13(suite *cipherSuite, config *Config, clientRandom []byte) *keySchedule13 {
@@ -1222,17 +1224,17 @@ func (kexX25519) derive(c *Conn, ks keyShare, secretKey []byte) []byte {
 }
 
 // KEX: SIDH/503
-func (kexSidhP503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
+func (kexSIDHp503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
 	var variant, _ = getSidhKeyVariant(c.isClient)
 	var prvKey = sidh.NewPrivateKey(sidh.FP_503, variant)
 	if prvKey.Generate(c.config.rand()) != nil {
 		return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
 	}
 	pubKey := prvKey.GeneratePublicKey()
-	return prvKey.Export(), keyShare{group: sidhP503, data: pubKey.Export()}, nil
+	return prvKey.Export(), keyShare{group: 0, data: pubKey.Export()}, nil
 }
 
-func (kexSidhP503) derive(c *Conn, ks keyShare, key []byte) []byte {
+func (kexSIDHp503) derive(c *Conn, ks keyShare, key []byte) []byte {
 	var prvVariant, pubVariant = getSidhKeyVariant(c.isClient)
 	var prvKeySize = P503PrvKeySz
 
@@ -1256,12 +1258,12 @@ func (kexSidhP503) derive(c *Conn, ks keyShare, key []byte) []byte {
 }
 
 // KEX Hybrid SIDH/503-X25519
-func (kexHybridSidhP503X25519) generate(c *Conn, groupId CurveID) (private []byte, ks keyShare, err error) {
-	var pubHybrid [SidhP503Curve25519PubKeySz]byte
-	var prvHybrid [SidhP503Curve25519PrvKeySz]byte
+func (kex *kexHybridSIDHp503X25519) generate(c *Conn, groupId CurveID) (private []byte, ks keyShare, err error) {
+	var pubHybrid [SIDHp503Curve25519PubKeySz]byte
+	var prvHybrid [SIDHp503Curve25519PrvKeySz]byte
 
 	// Generate ephemeral key for classic x25519
-	private, ks, err = dhKexStrat[X25519].generate(c, groupId)
+	private, ks, err = kex.classicKEX.generate(c, groupId)
 	if err != nil {
 		return
 	}
@@ -1269,33 +1271,33 @@ func (kexHybridSidhP503X25519) generate(c *Conn, groupId CurveID) (private []byt
 	copy(pubHybrid[:], ks.data)
 
 	// Generate PQ ephemeral key for SIDH
-	private, ks, err = dhKexStrat[sidhP503].generate(c, groupId)
+	private, ks, err = kex.pqKEX.generate(c, groupId)
 	if err != nil {
 		return
 	}
 	copy(prvHybrid[x25519SharedSecretSz:], private)
 	copy(pubHybrid[x25519SharedSecretSz:], ks.data)
-	return prvHybrid[:], keyShare{group: HybridSidhP503Curve25519, data: pubHybrid[:]}, nil
+	return prvHybrid[:], keyShare{group: HybridSIDHp503Curve25519, data: pubHybrid[:]}, nil
 }
 
-func (kexHybridSidhP503X25519) derive(c *Conn, ks keyShare, key []byte) []byte {
-	var sharedKey [SidhP503Curve25519SharedKeySz]byte
+func (kex *kexHybridSIDHp503X25519) derive(c *Conn, ks keyShare, key []byte) []byte {
+	var sharedKey [SIDHp503Curve25519SharedKeySz]byte
 	var ret []byte
 	var tmpKs keyShare
 
 	// Key agreement for classic
 	tmpKs.group = X25519
 	tmpKs.data = ks.data[:x25519SharedSecretSz]
-	ret = dhKexStrat[X25519].derive(c, tmpKs, key[:x25519SharedSecretSz])
+	ret = kex.classicKEX.derive(c, tmpKs, key[:x25519SharedSecretSz])
 	if ret == nil {
 		return nil
 	}
 	copy(sharedKey[:], ret)
 
 	// Key agreement for PQ
-	tmpKs.group = sidhP503
+	tmpKs.group = 0
 	tmpKs.data = ks.data[x25519SharedSecretSz:]
-	ret = dhKexStrat[sidhP503].derive(c, tmpKs, key[x25519SharedSecretSz:])
+	ret = kex.pqKEX.derive(c, tmpKs, key[x25519SharedSecretSz:])
 	if ret == nil {
 		return nil
 	}

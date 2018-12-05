@@ -56,7 +56,7 @@ func NewServer() *server {
 }
 
 func enableQR(s *server, enableDefault bool) {
-	var sidhCurves = []tls.CurveID{tls.HybridSidhP503Curve25519}
+	var sidhCurves = []tls.CurveID{tls.HybridSIDHp503Curve25519}
 	if enableDefault {
 		var defaultCurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521}
 		s.TLS.CurvePreferences = append(s.TLS.CurvePreferences, defaultCurvePreferences...)

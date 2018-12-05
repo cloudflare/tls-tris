@@ -1,0 +1,5176 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bfde5d588..a0f0da3b2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -520,6 +520,7 @@ add_subdirectory(ssl/test)
+ add_subdirectory(fipstools)
+ add_subdirectory(tool)
+ add_subdirectory(decrepit)
++add_subdirectory(third_party/sidh)
+ 
+ if(FUZZ)
+   add_subdirectory(fuzz)
+diff --git a/crypto/CMakeLists.txt b/crypto/CMakeLists.txt
+index b1ca70e15..7135f55fc 100644
+--- a/crypto/CMakeLists.txt
++++ b/crypto/CMakeLists.txt
+@@ -396,6 +396,7 @@ add_library(
+   ../third_party/fiat/curve25519.c
+ 
+   $<TARGET_OBJECTS:fipsmodule>
++  $<TARGET_OBJECTS:sidh>
+ 
+   ${CRYPTO_ARCH_SOURCES}
+   ${CRYPTO_FIPS_OBJECTS}
+diff --git a/include/openssl/nid.h b/include/openssl/nid.h
+index afeb2dea4..effe19205 100644
+--- a/include/openssl/nid.h
++++ b/include/openssl/nid.h
+@@ -4234,6 +4234,12 @@ extern "C" {
+ #define LN_auth_any "auth-any"
+ #define NID_auth_any 958
+ 
++#define SN_X25519_SIDHp503 "X25519-SIDHp503"
++/* This ID is only needed by kNamedGroups (ssl_key_share.c). It isn't
++   used in kObjects array (obj_dat.h). It can't be smaller than than
++   NUM_NID (obj_dat.h)
++*/
++#define NID_X25519_SIDHp503 960
+ 
+ #if defined(__cplusplus)
+ } /* extern C */
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 17c559259..9cbf536e1 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -2177,6 +2177,7 @@ OPENSSL_EXPORT int SSL_set1_curves_list(SSL *ssl, const char *curves);
+ #define SSL_CURVE_SECP384R1 24
+ #define SSL_CURVE_SECP521R1 25
+ #define SSL_CURVE_X25519 29
++#define SSL_CURVE_X25519_SIDHp503 0xFE30
+ 
+ // SSL_get_curve_id returns the ID of the curve used by |ssl|'s most recently
+ // completed handshake or 0 if not applicable.
+diff --git a/ssl/CMakeLists.txt b/ssl/CMakeLists.txt
+index d6c1294f1..8d7cfa14f 100644
+--- a/ssl/CMakeLists.txt
++++ b/ssl/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-include_directories(../include)
++include_directories(../include ../third_party/sidh/include)
+ 
+ add_library(
+   ssl
+diff --git a/ssl/handshake_client.cc b/ssl/handshake_client.cc
+index c1d54bd8f..d141cc399 100644
+--- a/ssl/handshake_client.cc
++++ b/ssl/handshake_client.cc
+@@ -1011,6 +1011,7 @@ static enum ssl_hs_wait_t do_read_server_key_exchange(SSL_HANDSHAKE *hs) {
+         !hs->peer_key.CopyFrom(point)) {
+       return ssl_hs_error;
+     }
++    hs->key_share->SetInitiator(true);
+   } else if (!(alg_k & SSL_kPSK)) {
+     OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_MESSAGE);
+     ssl_send_alert(ssl, SSL3_AL_FATAL, SSL_AD_UNEXPECTED_MESSAGE);
+diff --git a/ssl/handshake_server.cc b/ssl/handshake_server.cc
+index c4f3b75e5..1c93fd16d 100644
+--- a/ssl/handshake_server.cc
++++ b/ssl/handshake_server.cc
+@@ -932,7 +932,10 @@ static enum ssl_hs_wait_t do_send_server_certificate(SSL_HANDSHAKE *hs) {
+       hs->new_session->group_id = group_id;
+ 
+       // Set up ECDH, generate a key, and emit the public half.
+-      hs->key_share = SSLKeyShare::Create(group_id);
++      if ((hs->key_share = SSLKeyShare::Create(group_id)) == nullptr) {
++        return ssl_hs_error;
++      }
++      hs->key_share->SetInitiator(false);
+       if (!hs->key_share ||
+           !CBB_add_u8(cbb.get(), NAMED_CURVE_TYPE) ||
+           !CBB_add_u16(cbb.get(), group_id) ||
+diff --git a/ssl/internal.h b/ssl/internal.h
+index f8a2ea70a..ddd6bb397 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -998,12 +998,20 @@ class SSLKeyShare {
+   // Deserialize initializes the state of the key exchange from |in|, returning
+   // true if successful and false otherwise.  It is called by |Create|.
+   virtual bool Deserialize(CBS *in) { return false; }
++
++  // Sets flag indicating role of the key share owner. True for initiator of the
++  // handshake, false for responder.
++  void SetInitiator(bool flag) { is_initiator_ = flag; }
++
++ protected:
++  bool is_initiator_ = false;
+ };
+ 
+ struct NamedGroup {
+   int nid;
+   uint16_t group_id;
+-  const char name[8], alias[11];
++  const char name[16], alias[15];
++  uint16_t min_protocol_ver;
+ };
+ 
+ // NamedGroups returns all supported groups.
+@@ -1019,6 +1027,10 @@ bool ssl_nid_to_group_id(uint16_t *out_group_id, int nid);
+ // true. Otherwise, it returns false.
+ bool ssl_name_to_group_id(uint16_t *out_group_id, const char *name, size_t len);
+ 
++// ssl_get_protocol_ver_for_group looks up the minimal version of a TLS that
++// supports |group_id|. In case |group_id| is not a valid ID of a group function
++// returns 0.
++uint16_t ssl_get_protocol_ver_for_group(uint16_t group_id);
+ 
+ // Handshake messages.
+ 
+diff --git a/ssl/ssl_key_share.cc b/ssl/ssl_key_share.cc
+index 55c74633c..f36e33bb5 100644
+--- a/ssl/ssl_key_share.cc
++++ b/ssl/ssl_key_share.cc
+@@ -30,6 +30,8 @@
+ #include "internal.h"
+ #include "../crypto/internal.h"
+ 
++#include "sidh/def_p503.h"
++#include "sidh/P503_api.h"
+ 
+ BSSL_NAMESPACE_BEGIN
+ 
+@@ -207,12 +209,88 @@ class X25519KeyShare : public SSLKeyShare {
+   uint8_t private_key_[32];
+ };
+ 
++class SIDHp503X25519KeyShare : public SSLKeyShare {
++public:
++  ~SIDHp503X25519KeyShare() override {
++    OPENSSL_cleanse(private_x25519_, sizeof(private_x25519_));
++    OPENSSL_cleanse(private_SIDH_, sizeof(private_SIDH_));
++  }
++
++  uint16_t GroupID() const override {
++    return SSL_CURVE_X25519_SIDHp503;
++  }
++
++  bool Offer(CBB *out) override {
++    uint8_t public_x25519[32] = {0};
++    uint8_t public_SIDH[SIDHp503_PUB_BYTESZ] = {0};
++
++    X25519_keypair(public_x25519, private_x25519_);
++    if (EphemeralKeyPair_SIDHp503(private_SIDH_, public_SIDH, is_initiator_)) {
++      return false;
++    }
++
++    return
++      CBB_add_bytes(out, public_x25519, sizeof(public_x25519)) &&
++      CBB_add_bytes(out, public_SIDH, sizeof(public_SIDH));
++  }
++
++  bool Finish(Array<uint8_t> *out_secret, uint8_t *out_alert,
++              Span<const uint8_t> peer_key) override {
++    *out_alert = SSL_AD_INTERNAL_ERROR;
++
++    Array<uint8_t> secret;
++    if (!secret.Init(sizeof(private_x25519_) + SIDHp503_SS_BYTESZ)) {
++      OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
++      return false;
++    }
++
++    if (peer_key.size() != (32 + SIDHp503_PUB_BYTESZ) ||
++        !X25519(secret.data(), private_x25519_, peer_key.data())) {
++      *out_alert = SSL_AD_DECODE_ERROR;
++      OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_ECPOINT);
++      return false;
++    }
++
++    if (is_initiator_) {
++      // Never fails
++      (void)EphemeralSecretAgreement_A_SIDHp503(private_SIDH_, peer_key.data() + 32, secret.data() + sizeof(private_x25519_));
++    } else {
++      (void)EphemeralSecretAgreement_B_SIDHp503(private_SIDH_, peer_key.data() + 32, secret.data() + sizeof(private_x25519_));
++    }
++
++    *out_secret = std::move(secret);
++    return true;
++  }
++
++  bool Serialize(CBB *out) override {
++    return (CBB_add_asn1_uint64(out, GroupID()) &&
++            CBB_add_asn1_octet_string(out, private_x25519_, sizeof(private_x25519_)) &&
++            CBB_add_asn1_octet_string(out, private_SIDH_, sizeof(private_SIDH_)));
++  }
++
++  bool Deserialize(CBS *in) override {
++    CBS key;
++    if (!CBS_get_asn1(in, &key, CBS_ASN1_OCTETSTRING) ||
++        CBS_len(&key) != (sizeof(private_x25519_) + sizeof(private_SIDH_)) ||
++        !CBS_copy_bytes(&key, private_x25519_, sizeof(private_x25519_)) ||
++        !CBS_copy_bytes(&key, private_SIDH_, sizeof(private_SIDH_))) {
++      return false;
++    }
++    return true;
++  }
++
++private:
++  uint8_t private_x25519_[32];
++  uint8_t private_SIDH_[SIDHp503_PRV_KEY_BYTESZ_MAX];
++};
++
+ CONSTEXPR_ARRAY NamedGroup kNamedGroups[] = {
+-    {NID_secp224r1, SSL_CURVE_SECP224R1, "P-224", "secp224r1"},
+-    {NID_X9_62_prime256v1, SSL_CURVE_SECP256R1, "P-256", "prime256v1"},
+-    {NID_secp384r1, SSL_CURVE_SECP384R1, "P-384", "secp384r1"},
+-    {NID_secp521r1, SSL_CURVE_SECP521R1, "P-521", "secp521r1"},
+-    {NID_X25519, SSL_CURVE_X25519, "X25519", "x25519"},
++    {NID_secp224r1, SSL_CURVE_SECP224R1, "P-224", "secp224r1", TLS1_VERSION},
++    {NID_X9_62_prime256v1, SSL_CURVE_SECP256R1, "P-256", "prime256v1", TLS1_VERSION},
++    {NID_secp384r1, SSL_CURVE_SECP384R1, "P-384", "secp384r1", TLS1_VERSION},
++    {NID_secp521r1, SSL_CURVE_SECP521R1, "P-521", "secp521r1", TLS1_VERSION},
++    {NID_X25519, SSL_CURVE_X25519, "X25519", "x25519", TLS1_VERSION},
++    {NID_X25519_SIDHp503, SSL_CURVE_X25519_SIDHp503, "X25519-SIDHp503", "x25519sidhp503", TLS1_3_VERSION},
+ };
+ 
+ }  // namespace
+@@ -237,6 +315,8 @@ UniquePtr<SSLKeyShare> SSLKeyShare::Create(uint16_t group_id) {
+           New<ECKeyShare>(NID_secp521r1, SSL_CURVE_SECP521R1));
+     case SSL_CURVE_X25519:
+       return UniquePtr<SSLKeyShare>(New<X25519KeyShare>());
++    case SSL_CURVE_X25519_SIDHp503:
++      return UniquePtr<SSLKeyShare>(New<SIDHp503X25519KeyShare>());
+     default:
+       return nullptr;
+   }
+@@ -288,6 +368,15 @@ bool ssl_name_to_group_id(uint16_t *out_group_id, const char *name, size_t len)
+   return false;
+ }
+ 
++uint16_t ssl_get_protocol_ver_for_group(uint16_t group_id)  {
++  for (const auto &group : kNamedGroups) {
++    if (group.group_id == group_id) {
++      return group.min_protocol_ver;
++    }
++  }
++  return 0;
++}
++
+ BSSL_NAMESPACE_END
+ 
+ using namespace bssl;
+diff --git a/ssl/t1_lib.cc b/ssl/t1_lib.cc
+index 678e4a3b7..6bfd21c82 100644
+--- a/ssl/t1_lib.cc
++++ b/ssl/t1_lib.cc
+@@ -324,7 +324,8 @@ bool tls1_get_shared_group(SSL_HANDSHAKE *hs, uint16_t *out_group_id) {
+ 
+   for (uint16_t pref_group : pref) {
+     for (uint16_t supp_group : supp) {
+-      if (pref_group == supp_group) {
++      if ((pref_group == supp_group) &&
++          (ssl_get_protocol_ver_for_group(pref_group)<=ssl_protocol_version(ssl))) {
+         *out_group_id = pref_group;
+         return true;
+       }
+@@ -2177,7 +2178,10 @@ static bool ext_key_share_add_clienthello(SSL_HANDSHAKE *hs, CBB *out) {
+     group_id = groups[0];
+   }
+ 
+-  hs->key_share = SSLKeyShare::Create(group_id);
++  if ((hs->key_share = SSLKeyShare::Create(group_id)) == nullptr) {
++    return false;
++  }
++  hs->key_share->SetInitiator(true);
+   CBB key_exchange;
+   if (!hs->key_share ||
+       !CBB_add_u16(&kse_bytes, group_id) ||
+diff --git a/third_party/sidh/CMakeLists.txt b/third_party/sidh/CMakeLists.txt
+new file mode 100644
+index 000000000..6befbfe47
+--- /dev/null
++++ b/third_party/sidh/CMakeLists.txt
+@@ -0,0 +1,54 @@
++cmake_minimum_required(VERSION 2.8.11)
++include_directories(../../include)
++
++set(ASM_EXT S)
++enable_language(ASM)
++add_definitions(-pedantic)
++
++# Compile to object files, we will link them with libssl
++add_library(
++    sidh
++
++    OBJECT
++
++    src/ec_isogeny.c
++    src/fpx.c
++    src/P503.c
++    src/sidh.c
++)
++
++# Architecture specific settings
++if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
++    add_definitions(-lrt)
++endif()
++
++# Platform specific sources
++if(OPENSSL_NO_ASM)
++    target_sources(
++        sidh
++        PRIVATE
++        src/generic/fp_generic.c
++    )
++elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
++    target_sources(
++        sidh
++
++        PRIVATE
++
++        src/AMD64/fp_x64.c
++        src/AMD64/fp_x64_asm.${ASM_EXT}
++    )
++elseif(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64" OR ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
++    target_sources(
++        sidh
++
++        PRIVATE
++
++        src/ARM64/fp_arm64.c
++        src/ARM64/fp_arm64_asm.${ASM_EXT}
++    )
++endif()
++
++target_include_directories(sidh PUBLIC
++  include
++)
+diff --git a/third_party/sidh/LICENSE b/third_party/sidh/LICENSE
+new file mode 100644
+index 000000000..d76bde897
+--- /dev/null
++++ b/third_party/sidh/LICENSE
+@@ -0,0 +1,56 @@
++MIT License
++
++Copyright (c) Microsoft Corporation. All rights reserved.
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE
++
++========================================================================
++
++Performance improvements and aligning the code to nicely fit to
++BoringSSL was done by Cloudflare and is licensed under BSD3 licence.
++
++========================================================================
++
++Copyright (c) 2018 Cloudflare. All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++   * Redistributions of source code must retain the above copyright
++notice, this list of conditions and the following disclaimer.
++   * Redistributions in binary form must reproduce the above
++copyright notice, this list of conditions and the following disclaimer
++in the documentation and/or other materials provided with the
++distribution.
++   * Neither the name of Cloudflare nor the names of its
++contributors may be used to endorse or promote products derived from
++this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+diff --git a/third_party/sidh/include/sidh/P503_api.h b/third_party/sidh/include/sidh/P503_api.h
+new file mode 100644
+index 000000000..6b25196a5
+--- /dev/null
++++ b/third_party/sidh/include/sidh/P503_api.h
+@@ -0,0 +1,65 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: API header file for P503
++*********************************************************************************************/
++
++#ifndef P503_API_H__
++#define P503_API_H__
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/*********************** Ephemeral key exchange API ***********************/
++
++// Encoding of keys for KEX-based isogeny system "SIDHp503" (wire format):
++// ----------------------------------------------------------------------
++// Elements over GF(p503) are encoded in 63 octets in little endian format (i.e., the least significant octet is located in the lowest memory address).
++// Elements (a+b*i) over GF(p503^2), where a and b are defined over GF(p503), are encoded as {a, b}, with a in the lowest memory portion.
++//
++// Private keys PrivateKeyA and PrivateKeyB can have values in the range [0, 2^250-1] and [0, 2^252-1], resp. In the SIDH API, private keys are encoded
++// in 32 octets in little endian format.
++// Public keys PublicKeyA and PublicKeyB consist of 3 elements in GF(p503^2). In the SIDH API, they are encoded in 378 octets.
++// Shared keys SharedSecretA and SharedSecretB consist of one element in GF(p503^2). In the SIDH API, they are encoded in 126 octets.
++
++// SECURITY NOTE: SIDH supports ephemeral Diffie-Hellman key exchange. It is NOT secure to use it with static keys.
++// See "On the Security of Supersingular Isogeny Cryptosystems", S.D. Galbraith, C. Petit, B. Shani and Y.B. Ti, in ASIACRYPT 2016, 2016.
++// Extended version available at: http://eprint.iacr.org/2016/859
++
++// Alice's ephemeral public key generation
++// Input:  a private key PrivateKeyA in the range [0, 2^250 - 1], stored in 32 bytes.
++// Output: the public key PublicKeyA consisting of 3 GF(p503^2) elements encoded in 378 bytes.
++int EphemeralKeyGeneration_A_SIDHp503(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA);
++
++// Bob's ephemeral key-pair generation
++// It produces a private key PrivateKeyB and computes the public key PublicKeyB.
++// The private key is an integer in the range [0, 2^Floor(Log(2,3^159)) - 1], stored in 32 bytes.
++// The public key consists of 3 GF(p503^2) elements encoded in 378 bytes.
++int EphemeralKeyGeneration_B_SIDHp503(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB);
++
++// Alice's ephemeral shared secret computation
++// It produces a shared secret key SharedSecretA using her secret key PrivateKeyA and Bob's public key PublicKeyB
++// Inputs: Alice's PrivateKeyA is an integer in the range [0, 2^250 - 1], stored in 32 bytes.
++//         Bob's PublicKeyB consists of 3 GF(p503^2) elements encoded in 378 bytes.
++// Output: a shared secret SharedSecretA that consists of one element in GF(p503^2) encoded in 126 bytes.
++int EphemeralSecretAgreement_A_SIDHp503(const unsigned char* PrivateKeyA, const unsigned char* PublicKeyB, unsigned char* SharedSecretA);
++
++// Bob's ephemeral shared secret computation
++// It produces a shared secret key SharedSecretB using his secret key PrivateKeyB and Alice's public key PublicKeyA
++// Inputs: Bob's PrivateKeyB is an integer in the range [0, 2^Floor(Log(2,3^159)) - 1], stored in 32 bytes.
++//         Alice's PublicKeyA consists of 3 GF(p503^2) elements encoded in 378 bytes.
++// Output: a shared secret SharedSecretB that consists of one element in GF(p503^2) encoded in 126 bytes.
++int EphemeralSecretAgreement_B_SIDHp503(const unsigned char* PrivateKeyB, const unsigned char* PublicKeyA, unsigned char* SharedSecretB);
++
++// Generates SIDH/P503 key pair. Internally uses BN_rand() for a entropy source.
++// Input: IsInitiator: 1 for generating public key type A, 0 for type B.
++// Output: the private (PrivateKey) stored in 32 bytes, public key (PublicKey) stored in 378 bytes
++// Returns: 0 on succes, -1 in case of failure
++int EphemeralKeyPair_SIDHp503(unsigned char* PrivateKey, unsigned char* PublicKey, int IsInitiator);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/third_party/sidh/include/sidh/def_p503.h b/third_party/sidh/include/sidh/def_p503.h
+new file mode 100644
+index 000000000..1f39f5988
+--- /dev/null
++++ b/third_party/sidh/include/sidh/def_p503.h
+@@ -0,0 +1,70 @@
++#ifndef DEF_P503_H_
++#define DEF_P503_H_
++
++#include <stdint.h>
++#include "openssl/base.h"
++#include "../crypto/internal.h"
++#include "sidh/P503_api.h"
++
++// Basic constants
++#define SIDHp503_PRV_A_BITSZ    250 // Bit size of SIDH private key (type A)
++#define SIDHp503_PRV_B_BITSZ    252 // Bit size of SIDH private key (type B)
++#define SIDHp503_PUB_BYTESZ     378 // Byte size of SIDH public key
++#define SIDHp503_SS_BYTESZ      126 // Shared secret byte size
++#define SIDHp503_PRV_KEY_BYTESZ_MAX (((SIDHp503_PRV_A_BITSZ>SIDHp503_PRV_B_BITSZ?SIDHp503_PRV_B_BITSZ:SIDHp503_PRV_B_BITSZ)+7)/8)
++#define NBITS_FIELD             503
++#define NBITS_ORDER             256
++#define NWORDS_ORDER            ((NBITS_ORDER+RADIX-1)/RADIX)       // Number of words of oA and oB, where oA and oB are the subgroup orders of Alice and Bob, resp.
++#define NWORDS64_FIELD          ((NBITS_FIELD+63)/64)               // Number of 64-bit words of a 503-bit field element
++#define NWORDS64_ORDER          ((NBITS_ORDER+63)/64)               // Number of 64-bit words of a 256-bit element
++#define MAX_Alice               125
++#define MAX_Bob                 159
++#define RADIX64             64
++
++#if defined(OPENSSL_64_BIT)
++    #define NWORDS_FIELD    8               // Number of words of a 503-bit field element
++    #define p503_ZERO_WORDS 3               // Number of "0" digits in the least significant part of p503 + 1
++    #define RADIX           64
++    #define LOG2RADIX       6
++    typedef uint64_t        digit_t;        // Unsigned 64-bit digit
++#else
++    #define NWORDS_FIELD    16
++    #define p503_ZERO_WORDS 7
++    #define RADIX           32
++    #define LOG2RADIX       5
++    typedef uint32_t        digit_t;        // Unsigned 32-bit digit
++#endif
++
++// Extended datatype support
++#if !defined(BORINGSSL_HAS_UINT128)
++    typedef uint64_t uint128_t[2];
++#endif
++
++struct params_t {
++    const uint64_t prime[NWORDS64_FIELD];
++    const uint64_t primeP1[NWORDS64_FIELD];
++    const uint64_t primeX2[NWORDS64_FIELD];
++    // Order of Alice's subgroup
++    const uint64_t Alice_order[NWORDS64_ORDER];
++    // Order of Bob's subgroup
++    const uint64_t Bob_order[NWORDS64_ORDER];
++    // Alice's generator values {XPA0 + XPA1*i, XQA0, XRA0 + XRA1*i} in GF(p503^2), expressed in Montgomery representation
++    const uint64_t A_gen[5*NWORDS64_FIELD];
++    // Bob's generator values {XPB0 + XPB1*i, XQB0, XRB0 + XRB1*i} in GF(p503^2), expressed in Montgomery representation
++    const uint64_t B_gen[5*NWORDS64_FIELD];
++    // Montgomery constant Montgomery_R2 = (2^512)^2 mod p503
++    const uint64_t Montgomery_R2[NWORDS64_FIELD];
++    // Value one in Montgomery representation
++    const uint64_t Montgomery_one[NWORDS64_FIELD];
++    // Value (2^256)^2 mod 3^159
++    const uint64_t Montgomery_Rprime[NWORDS64_ORDER];
++    // Value -(3^159)^-1 mod 2^256
++    const uint64_t Montgomery_rprime[NWORDS64_ORDER];
++    // Value order_Bob/3 mod p503
++    const uint64_t Border_div3[NWORDS_ORDER];
++    // Fixed parameters for isogeny tree computation
++    const unsigned int strat_Alice[MAX_Alice-1];
++    const unsigned int strat_Bob[MAX_Bob-1];
++};
++
++#endif // DEF_P503_H_
+diff --git a/third_party/sidh/src/AMD64/fp_x64.c b/third_party/sidh/src/AMD64/fp_x64.c
+new file mode 100644
+index 000000000..62bb9692e
+--- /dev/null
++++ b/third_party/sidh/src/AMD64/fp_x64.c
+@@ -0,0 +1,88 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: modular arithmetic optimized for x64 platforms for P503
++*********************************************************************************************/
++
++#include "../internal.h"
++#include "../P503_internal.h"
++
++// Global constants
++extern const struct params_t kP503Params;
++
++inline void fpadd503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular addition, c = a+b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++
++    fpadd503_asm(a, b, c);
++}
++
++
++inline void fpsub503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular subtraction, c = a-b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    fpsub503_asm(a, b, c);
++}
++
++
++inline void fpneg503(digit_t* a)
++{ // Modular negation, a = -a mod p503.
++  // Input/output: a in [0, 2*p503-1]
++    unsigned int i, borrow = 0;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, ((digit_t*)kP503Params.primeX2)[i], a[i], borrow, a[i]);
++    }
++}
++
++
++void fpdiv2_503(const digit_t* a, digit_t* c)
++{ // Modular division by two, c = a/2 mod p503.
++  // Input : a in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    unsigned int i, carry = 0;
++    digit_t mask;
++
++    mask = 0 - (digit_t)(a[0] & 1);    // If a is odd compute a+p503
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(carry, a[i], ((digit_t*)kP503Params.prime)[i] & mask, carry, c[i]);
++    }
++
++    mp_shiftr1(c, NWORDS_FIELD);
++}
++
++
++void fpcorrection503(digit_t* a)
++{ // Modular correction to reduce field element a in [0, 2*p503-1] to [0, p503-1].
++    unsigned int i, borrow = 0;
++    digit_t mask;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, a[i], ((digit_t*)kP503Params.prime)[i], borrow, a[i]);
++    }
++    mask = 0 - (digit_t)borrow;
++
++    borrow = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(borrow, a[i], ((digit_t*)kP503Params.prime)[i] & mask, borrow, a[i]);
++    }
++}
++
++
++void mp_mul(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords)
++{ // Multiprecision multiply, c = a*b, where lng(a) = lng(b) = nwords.
++
++    UNREFERENCED_PARAMETER(nwords);
++    mul503_asm(a, b, c);
++}
++
++
++void rdc_mont(const digit_t* ma, digit_t* mc)
++{ // Montgomery reduction exploiting special form of the prime.
++  // mc = ma*R^-1 mod primeX2, where R = 2^512.
++  // If ma < 2^512*p503, the output mc is in the range [0, 2*p503-1].
++  // ma is assumed to be in Montgomery representation.
++    rdc503_asm(ma, mc);
++}
+diff --git a/third_party/sidh/src/AMD64/fp_x64_asm.S b/third_party/sidh/src/AMD64/fp_x64_asm.S
+new file mode 100644
+index 000000000..4e8f3147a
+--- /dev/null
++++ b/third_party/sidh/src/AMD64/fp_x64_asm.S
+@@ -0,0 +1,1640 @@
++//*******************************************************************************************
++// SIDH: an efficient supersingular isogeny cryptography library
++//
++// Abstract: field arithmetic in x64 assembly for P503 on Linux
++//*******************************************************************************************
++
++.intel_syntax noprefix
++
++// Registers that are used for parameter passing:
++#define reg_p1  rdi
++#define reg_p2  rsi
++#define reg_p3  rdx
++
++// p503 + 1
++#define p503p1_3   0xAC00000000000000
++#define p503p1_4   0x13085BDA2211E7A0
++#define p503p1_5   0x1B9BF6C87B7E7DAF
++#define p503p1_6   0x6045C6BDDA77A4D0
++#define p503p1_7   0x004066F541811E1E
++// p503 x 2
++#define p503x2_0   0xFFFFFFFFFFFFFFFE
++#define p503x2_1   0xFFFFFFFFFFFFFFFF
++#define p503x2_3   0x57FFFFFFFFFFFFFF
++#define p503x2_4   0x2610B7B44423CF41
++#define p503x2_5   0x3737ED90F6FCFB5E
++#define p503x2_6   0xC08B8D7BB4EF49A0
++#define p503x2_7   0x0080CDEA83023C3C
++
++.text
++
++.extern OPENSSL_ia32cap_P
++.hidden OPENSSL_ia32cap_P
++
++p503p1_nz:
++.quad    0xAC00000000000000
++.quad    0x13085BDA2211E7A0
++.quad    0x1B9BF6C87B7E7DAF
++.quad    0x6045C6BDDA77A4D0
++.quad    0x004066F541811E1E
++
++.macro CSWAP16 IDX, M1, M2
++  movdqu   xmm0, [\M1+\IDX*16]
++  movdqu   xmm1, [\M2+\IDX*16]
++  movdqa   xmm2, xmm1
++  pxor     xmm2, xmm0
++  pand     xmm2, xmm15
++  pxor     xmm0, xmm2
++  pxor     xmm1, xmm2
++  movdqu   [\M1+\IDX*16], xmm0
++  movdqu   [\M2+\IDX*16], xmm1
++.endm
++
++.global cswap503_asm
++cswap503_asm:
++  // Fill xmm15. After this step first half of XMM15 is
++  // just zeros and second half is whatever in RDX
++  movq    xmm15, rdx
++
++  // Copy lower double word everywhere else. So that
++  // XMM15=RDX|RDX. As RDX has either all bits set
++  // or non result will be that XMM15 has also either
++  // all bits set or non of them. 68 = 01000100b
++  pshufd xmm15, xmm15, 68
++
++  // P[0].X with Q[0].X
++  CSWAP16  0, rdi, rsi
++  CSWAP16  1, rdi, rsi
++  CSWAP16  2, rdi, rsi
++  CSWAP16  3, rdi, rsi
++
++  // P[0].Z with Q[0].Z
++  CSWAP16  4, rdi, rsi
++  CSWAP16  5, rdi, rsi
++  CSWAP16  6, rdi, rsi
++  CSWAP16  7, rdi, rsi
++
++  // P[1].X with Q[1].X
++  CSWAP16  8, rdi, rsi
++  CSWAP16  9, rdi, rsi
++  CSWAP16 10, rdi, rsi
++  CSWAP16 11, rdi, rsi
++
++  // P[1].Z with Q[1].Z
++  CSWAP16 12, rdi, rsi
++  CSWAP16 13, rdi, rsi
++  CSWAP16 14, rdi, rsi
++  CSWAP16 15, rdi, rsi
++
++  ret
++
++//***********************************************************************
++//  Field addition
++//  Operation: c [reg_p3] = a [reg_p1] + b [reg_p2]
++//***********************************************************************
++.global fpadd503_asm
++fpadd503_asm:
++  push   r12
++  push   r13
++  push   r14
++  push   r15
++
++  xor    rax, rax
++  mov    r8, [reg_p1]
++  mov    r9, [reg_p1+8]
++  mov    r10, [reg_p1+16]
++  mov    r11, [reg_p1+24]
++  mov    r12, [reg_p1+32]
++  mov    r13, [reg_p1+40]
++  mov    r14, [reg_p1+48]
++  mov    r15, [reg_p1+56]
++  add    r8, [reg_p2]
++  adc    r9, [reg_p2+8]
++  adc    r10, [reg_p2+16]
++  adc    r11, [reg_p2+24]
++  adc    r12, [reg_p2+32]
++  adc    r13, [reg_p2+40]
++  adc    r14, [reg_p2+48]
++  adc    r15, [reg_p2+56]
++
++  mov    rcx, p503x2_0
++  sub    r8, rcx
++  mov    rcx, p503x2_1
++  sbb    r9, rcx
++  sbb    r10, rcx
++  mov    rcx, p503x2_3
++  sbb    r11, rcx
++  mov    rcx, p503x2_4
++  sbb    r12, rcx
++  mov    rcx, p503x2_5
++  sbb    r13, rcx
++  mov    rcx, p503x2_6
++  sbb    r14, rcx
++  mov    rcx, p503x2_7
++  sbb    r15, rcx
++  sbb    rax, 0
++
++  mov    rdi, p503x2_0
++  and    rdi, rax
++  mov    rsi, p503x2_1
++  and    rsi, rax
++  mov    rcx, p503x2_3
++  and    rcx, rax
++
++  add    r8, rdi
++  adc    r9, rsi
++  adc    r10, rsi
++  adc    r11, rcx
++  mov    [reg_p3], r8
++  mov    [reg_p3+8], r9
++  mov    [reg_p3+16], r10
++  mov    [reg_p3+24], r11
++  setc   cl
++
++  mov    r8, p503x2_4
++  and    r8, rax
++  mov    r9, p503x2_5
++  and    r9, rax
++  mov    r10, p503x2_6
++  and    r10, rax
++  mov    r11, p503x2_7
++  and    r11, rax
++
++  bt     rcx, 0
++  adc    r12, r8
++  adc    r13, r9
++  adc    r14, r10
++  adc    r15, r11
++  mov    [reg_p3+32], r12
++  mov    [reg_p3+40], r13
++  mov    [reg_p3+48], r14
++  mov    [reg_p3+56], r15
++
++  pop    r15
++  pop    r14
++  pop    r13
++  pop    r12
++  ret
++
++
++//***********************************************************************
++//  Field subtraction
++//  Operation: c [reg_p3] = a [reg_p1] - b [reg_p2]
++//***********************************************************************
++.global fpsub503_asm
++fpsub503_asm:
++  push   r12
++  push   r13
++  push   r14
++  push   r15
++
++  xor    rax, rax
++  mov    r8, [reg_p1]
++  mov    r9, [reg_p1+8]
++  mov    r10, [reg_p1+16]
++  mov    r11, [reg_p1+24]
++  mov    r12, [reg_p1+32]
++  mov    r13, [reg_p1+40]
++  mov    r14, [reg_p1+48]
++  mov    r15, [reg_p1+56]
++  sub    r8, [reg_p2]
++  sbb    r9, [reg_p2+8]
++  sbb    r10, [reg_p2+16]
++  sbb    r11, [reg_p2+24]
++  sbb    r12, [reg_p2+32]
++  sbb    r13, [reg_p2+40]
++  sbb    r14, [reg_p2+48]
++  sbb    r15, [reg_p2+56]
++  sbb    rax, 0
++
++  mov    rdi, p503x2_0
++  and    rdi, rax
++  mov    rsi, p503x2_1
++  and    rsi, rax
++  mov    rcx, p503x2_3
++  and    rcx, rax
++
++  add    r8, rdi
++  adc    r9, rsi
++  adc    r10, rsi
++  adc    r11, rcx
++  mov    [reg_p3], r8
++  mov    [reg_p3+8], r9
++  mov    [reg_p3+16], r10
++  mov    [reg_p3+24], r11
++  setc   cl
++
++  mov    r8, p503x2_4
++  and    r8, rax
++  mov    r9, p503x2_5
++  and    r9, rax
++  mov    r10, p503x2_6
++  and    r10, rax
++  mov    r11, p503x2_7
++  and    r11, rax
++
++  bt     rcx, 0
++  adc    r12, r8
++  adc    r13, r9
++  adc    r14, r10
++  adc    r15, r11
++  mov    [reg_p3+32], r12
++  mov    [reg_p3+40], r13
++  mov    [reg_p3+48], r14
++  mov    [reg_p3+56], r15
++
++  pop    r15
++  pop    r14
++  pop    r13
++  pop    r12
++  ret
++
++
++///////////////////////////////////////////////////////////////// MACRO
++// Schoolbook integer multiplication, a full row at a time
++// Inputs:  memory pointers M0 and M1
++// Outputs: memory pointer C
++// Temps:   regs T0:T9
++/////////////////////////////////////////////////////////////////
++
++.macro MUL256_SCHOOL M0, M1, C, T0, T1, T2, T3, T4, T5, T6, T7, T8, T9
++    mov    rdx, \M0
++    mulx   \T0, \T1, \M1     // T0:T1 = A0*B0
++    mov    \C, \T1           // C0_final
++    mulx   \T1, \T2, 8\M1    // T1:T2 = A0*B1
++    xor    rax, rax
++    adox   \T0, \T2
++    mulx   \T2, \T3, 16\M1   // T2:T3 = A0*B2
++    adox   \T1, \T3
++    mulx   \T3, \T4, 24\M1   // T3:T4 = A0*B3
++    adox   \T2, \T4
++
++    mov    rdx, 8\M0
++    mulx   \T5, \T4, \M1     // T5:T4 = A1*B0
++    adox   \T3, rax
++    xor    rax, rax
++    mulx   \T6, \T7, 8\M1    // T6:T7 = A1*B1
++    adox   \T4, \T0
++    mov    8\C, \T4          // C1_final
++    adcx   \T5, \T7
++    mulx   \T7, \T8, 16\M1   // T7:T8 = A1*B2
++    adcx   \T6, \T8
++    adox   \T5, \T1
++    mulx   \T8, \T9, 24\M1   // T8:T9 = A1*B3
++    adcx   \T7, \T9
++    adcx   \T8, rax
++    adox   \T6, \T2
++
++    mov    rdx, 16\M0
++    mulx   \T1, \T0, \M1     // T1:T0 = A2*B0
++    adox   \T7, \T3
++    adox   \T8, rax
++    xor    rax, rax
++    mulx   \T2, \T3, 8\M1    // T2:T3 = A2*B1
++    adox   \T0, \T5
++    mov    16\C, \T0         // C2_final
++    adcx   \T1, \T3
++    mulx   \T3, \T4, 16\M1   // T3:T4 = A2*B2
++    adcx   \T2, \T4
++    adox   \T1, \T6
++    mulx   \T4,\T9, 24\M1    // T3:T4 = A2*B3
++    adcx   \T3, \T9
++    mov    rdx, 24\M0
++    adcx   \T4, rax
++
++    adox   \T2, \T7
++    adox   \T3, \T8
++    adox   \T4, rax
++
++    mulx   \T5, \T0, \M1     // T5:T0 = A3*B0
++    xor    rax, rax
++    mulx   \T6, \T7, 8\M1    // T6:T7 = A3*B1
++    adcx   \T5, \T7
++    adox   \T1, \T0
++    mulx   \T7, \T8, 16\M1   // T7:T8 = A3*B2
++    adcx   \T6, \T8
++    adox   \T2, \T5
++    mulx   \T8, \T9, 24\M1   // T8:T9 = A3*B3
++    adcx   \T7, \T9
++    adcx   \T8, rax
++
++    adox   \T3, \T6
++    adox   \T4, \T7
++    adox   \T8, rax
++    mov    24\C, \T1         // C3_final
++    mov    32\C, \T2         // C4_final
++    mov    40\C, \T3         // C5_final
++    mov    48\C, \T4         // C6_final
++    mov    56\C, \T8         // C7_final
++.endm
++
++//*****************************************************************************
++//  503-bit multiplication using Karatsuba (one level), schoolbook (one level)
++//*****************************************************************************
++mul503_mulx_asm:
++    push   r12
++    push   r13
++    push   r14
++    push   r15
++    mov    rcx, reg_p3
++
++    // r8-r11 <- AH + AL, rax <- mask
++    xor    rax, rax
++    mov    r8, [reg_p1]
++    mov    r9, [reg_p1+8]
++    mov    r10, [reg_p1+16]
++    mov    r11, [reg_p1+24]
++    push   rbx
++    push   rbp
++    sub    rsp, 96
++    add    r8, [reg_p1+32]
++    adc    r9, [reg_p1+40]
++    adc    r10, [reg_p1+48]
++    adc    r11, [reg_p1+56]
++    sbb    rax, 0
++    mov    [rsp], r8
++    mov    [rsp+8], r9
++    mov    [rsp+16], r10
++    mov    [rsp+24], r11
++
++    // r12-r15 <- BH + BL, rbx <- mask
++    xor    rbx, rbx
++    mov    r12, [reg_p2]
++    mov    r13, [reg_p2+8]
++    mov    r14, [reg_p2+16]
++    mov    r15, [reg_p2+24]
++    add    r12, [reg_p2+32]
++    adc    r13, [reg_p2+40]
++    adc    r14, [reg_p2+48]
++    adc    r15, [reg_p2+56]
++    sbb    rbx, 0
++    mov    [rsp+32], r12
++    mov    [rsp+40], r13
++    mov    [rsp+48], r14
++    mov    [rsp+56], r15
++
++    // r12-r15 <- masked (BH + BL)
++    and    r12, rax
++    and    r13, rax
++    and    r14, rax
++    and    r15, rax
++
++    // r8-r11 <- masked (AH + AL)
++    and    r8, rbx
++    and    r9, rbx
++    and    r10, rbx
++    and    r11, rbx
++
++    // r8-r11 <- masked (AH + AL) + masked (AH + AL)
++    add    r8, r12
++    adc    r9, r13
++    adc    r10, r14
++    adc    r11, r15
++    mov    [rsp+64], r8
++    mov    [rsp+72], r9
++    mov    [rsp+80], r10
++    mov    [rsp+88], r11
++
++    // [rcx+64] <- (AH+AL) x (BH+BL), low part
++    MUL256_SCHOOL  [rsp], [rsp+32], [rcx+64], r8, r9, r10, r11, r12, r13, r14, r15, rbx, rbp
++
++    // [rcx] <- AL x BL
++    MUL256_SCHOOL  [reg_p1], [reg_p2], [rcx], r8, r9, r10, r11, r12, r13, r14, r15, rbx, rbp     // Result C0-C3
++
++    // [rsp] <- AH x BH
++    MUL256_SCHOOL  [reg_p1+32], [reg_p2+32], [rsp], r8, r9, r10, r11, r12, r13, r14, r15, rbx, rbp
++
++    // r8-r11 <- (AH+AL) x (BH+BL), final step
++    mov    r8, [rsp+64]
++    mov    r9, [rsp+72]
++    mov    r10, [rsp+80]
++    mov    r11, [rsp+88]
++    mov    rax, [rcx+96]
++    add    r8, rax
++    mov    rax, [rcx+104]
++    adc    r9, rax
++    mov    rax, [rcx+112]
++    adc    r10, rax
++    mov    rax, [rcx+120]
++    adc    r11, rax
++
++    // [rcx+64], x3-x5 <- (AH+AL) x (BH+BL) - ALxBL
++    mov    r12, [rcx+64]
++    mov    r13, [rcx+72]
++    mov    r14, [rcx+80]
++    mov    r15, [rcx+88]
++    sub    r12, [rcx]
++    sbb    r13, [rcx+8]
++    sbb    r14, [rcx+16]
++    sbb    r15, [rcx+24]
++    sbb    r8, [rcx+32]
++    sbb    r9, [rcx+40]
++    sbb    r10, [rcx+48]
++    sbb    r11, [rcx+56]
++
++    // r8-r15 <- (AH+AL) x (BH+BL) - ALxBL - AHxBH
++    sub    r12, [rsp]
++    sbb    r13, [rsp+8]
++    sbb    r14, [rsp+16]
++    sbb    r15, [rsp+24]
++    sbb    r8, [rsp+32]
++    sbb    r9, [rsp+40]
++    sbb    r10, [rsp+48]
++    sbb    r11, [rsp+56]
++
++    add    r12, [rcx+32]
++    mov    [rcx+32], r12    // Result C4-C7
++    adc    r13, [rcx+40]
++    mov    [rcx+40], r13
++    adc    r14, [rcx+48]
++    mov    [rcx+48], r14
++    adc    r15, [rcx+56]
++    mov    [rcx+56], r15
++    mov    rax, [rsp]
++    adc    r8, rax
++    mov    [rcx+64], r8    // Result C8-C15
++    mov    rax, [rsp+8]
++    adc    r9, rax
++    mov    [rcx+72], r9
++    mov    rax, [rsp+16]
++    adc    r10, rax
++    mov    [rcx+80], r10
++    mov    rax, [rsp+24]
++    adc    r11, rax
++    mov    [rcx+88], r11
++    mov    r12, [rsp+32]
++    adc    r12, 0
++    mov    [rcx+96], r12
++    mov    r13, [rsp+40]
++    adc    r13, 0
++    mov    [rcx+104], r13
++    mov    r14, [rsp+48]
++    adc    r14, 0
++    mov    [rcx+112], r14
++    mov    r15, [rsp+56]
++    adc    r15, 0
++    mov    [rcx+120], r15
++
++    add    rsp, 96
++    pop    rbp
++    pop    rbx
++    pop    r15
++    pop    r14
++    pop    r13
++    pop    r12
++    ret
++
++//***********************************************************************
++//  Integer multiplication
++//  Based on Karatsuba method
++//  Operation: c [reg_p3] = a [reg_p1] * b [reg_p2]
++//  NOTE: a=c or b=c are not allowed
++//***********************************************************************
++.global mul503_asm
++mul503_asm:
++  mov    ecx, [rip+OPENSSL_ia32cap_P+8]
++  and    ecx, 0x80100
++  cmp    ecx, 0x80100
++  je     mul503_mulx_asm
++
++  push   r12
++  push   r13
++  push   r14
++  mov    rcx, reg_p3
++
++  // rcx[0-3] <- AH+AL
++  xor    rax, rax
++  mov    r8, [reg_p1+32]
++  mov    r9, [reg_p1+40]
++  mov    r10, [reg_p1+48]
++  mov    r11, [reg_p1+56]
++  add    r8, [reg_p1]
++  adc    r9, [reg_p1+8]
++  adc    r10, [reg_p1+16]
++  adc    r11, [reg_p1+24]
++  push   r15
++  mov    [rcx], r8
++  mov    [rcx+8], r9
++  mov    [rcx+16], r10
++  mov    [rcx+24], r11
++  sbb    rax, 0
++  sub    rsp, 80           // Allocating space in stack
++
++  // r12-r15 <- BH+BL
++  xor    rdx, rdx
++  mov    r12, [reg_p2+32]
++  mov    r13, [reg_p2+40]
++  mov    r14, [reg_p2+48]
++  mov    r15, [reg_p2+56]
++  add    r12, [reg_p2]
++  adc    r13, [reg_p2+8]
++  adc    r14, [reg_p2+16]
++  adc    r15, [reg_p2+24]
++  sbb    rdx, 0
++  mov    [rsp+64], rax
++  mov    [rsp+72], rdx
++
++  // (rsp[0-3],r8,r9,r10,r11) <- (AH+AL)*(BH+BL)
++  mov    rax, [rcx]
++  mul    r12
++  mov    [rsp], rax        // c0
++  mov    r8, rdx
++
++  xor    r9, r9
++  mov    rax, [rcx]
++  mul    r13
++  add    r8, rax
++  adc    r9, rdx
++
++  xor    r10, r10
++  mov    rax, [rcx+8]
++  mul    r12
++  add    r8, rax
++  mov    [rsp+8], r8       // c1
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, [rcx]
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [rcx+16]
++  mul    r12
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [rcx+8]
++  mul    r13
++  add    r9, rax
++  mov    [rsp+16], r9      // c2
++  adc    r10, rdx
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, [rcx]
++  mul    r15
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [rcx+24]
++  mul    r12
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [rcx+8]
++  mul    r14
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [rcx+16]
++  mul    r13
++  add    r10, rax
++  mov    [rsp+24], r10     // c3
++  adc    r8, rdx
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, [rcx+8]
++  mul    r15
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [rcx+24]
++  mul    r13
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [rcx+16]
++  mul    r14
++  add    r8, rax
++  mov    [rsp+32], r8      // c4
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r11, r11
++  mov    rax, [rcx+16]
++  mul    r15
++  add    r9, rax
++  adc    r10, rdx
++  adc    r11, 0
++
++  mov    rax, [rcx+24]
++  mul    r14
++  add    r9, rax          // c5
++  adc    r10, rdx
++  adc    r11, 0
++
++  mov    rax, [rcx+24]
++  mul    r15
++  add    r10, rax         // c6
++  adc    r11, rdx         // c7
++
++  mov    rax, [rsp+64]
++  and    r12, rax
++  and    r13, rax
++  and    r14, rax
++  and    r15, rax
++  add    r12, r8
++  adc    r13, r9
++  adc    r14, r10
++  adc    r15, r11
++
++  mov    rax, [rsp+72]
++  mov    r8, [rcx]
++  mov    r9, [rcx+8]
++  mov    r10, [rcx+16]
++  mov    r11, [rcx+24]
++  and    r8, rax
++  and    r9, rax
++  and    r10, rax
++  and    r11, rax
++  add    r8, r12
++  adc    r9, r13
++  adc    r10, r14
++  adc    r11, r15
++  mov    [rsp+32], r8
++  mov    [rsp+40], r9
++  mov    [rsp+48], r10
++  mov    [rsp+56], r11
++
++  // rcx[0-7] <- AL*BL
++  mov    r11, [reg_p1]
++  mov    rax, [reg_p2]
++  mul    r11
++  xor    r9, r9
++  mov    [rcx], rax        // c0
++  mov    r8, rdx
++
++  mov    r14, [reg_p1+16]
++  mov    rax, [reg_p2+8]
++  mul    r11
++  xor    r10, r10
++  add    r8, rax
++  adc    r9, rdx
++
++  mov    r12, [reg_p1+8]
++  mov    rax, [reg_p2]
++  mul    r12
++  add    r8, rax
++  mov    [rcx+8], r8       // c1
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, [reg_p2+16]
++  mul    r11
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    r13, [reg_p2]
++  mov    rax, r14
++  mul    r13
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+8]
++  mul    r12
++  add    r9, rax
++  mov    [rcx+16], r9      // c2
++  adc    r10, rdx
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, [reg_p2+24]
++  mul    r11
++  mov    r15, [reg_p1+24]
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, r15
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [reg_p2+16]
++  mul    r12
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [reg_p2+8]
++  mul    r14
++  add    r10, rax
++  mov    [rcx+24], r10     // c3
++  adc    r8, rdx
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, [reg_p2+24]
++  mul    r12
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [reg_p2+8]
++  mul    r15
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [reg_p2+16]
++  mul    r14
++  add    r8, rax
++  mov    [rcx+32], r8     // c4
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, [reg_p2+24]
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+16]
++  mul    r15
++  add    r9, rax
++  mov    [rcx+40], r9      // c5
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+24]
++  mul    r15
++  add    r10, rax
++  mov    [rcx+48], r10     // c6
++  adc    r8, rdx
++  mov    [rcx+56], r8      // c7
++
++  // rcx[8-15] <- AH*BH
++  mov    r11, [reg_p1+32]
++  mov    rax, [reg_p2+32]
++  mul    r11
++  xor    r9, r9
++  mov    [rcx+64], rax     // c0
++  mov    r8, rdx
++
++  mov    r14, [reg_p1+48]
++  mov    rax, [reg_p2+40]
++  mul    r11
++  xor    r10, r10
++  add    r8, rax
++  adc    r9, rdx
++
++  mov    r12, [reg_p1+40]
++  mov    rax, [reg_p2+32]
++  mul    r12
++  add    r8, rax
++  mov    [rcx+72], r8      // c1
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, [reg_p2+48]
++  mul    r11
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    r13, [reg_p2+32]
++  mov    rax, r14
++  mul    r13
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+40]
++  mul    r12
++  add    r9, rax
++  mov    [rcx+80], r9      // c2
++  adc    r10, rdx
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, [reg_p2+56]
++  mul    r11
++  mov    r15, [reg_p1+56]
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, r15
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [reg_p2+48]
++  mul    r12
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, [reg_p2+40]
++  mul    r14
++  add    r10, rax
++  mov    [rcx+88], r10     // c3
++  adc    r8, rdx
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, [reg_p2+56]
++  mul    r12
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [reg_p2+40]
++  mul    r15
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, [reg_p2+48]
++  mul    r14
++  add    r8, rax
++  mov    [rcx+96], r8      // c4
++  adc    r9, rdx
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, [reg_p2+56]
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+48]
++  mul    r15
++  add    r9, rax
++  mov    [rcx+104], r9     // c5
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, [reg_p2+56]
++  mul    r15
++  add    r10, rax
++  mov    [rcx+112], r10    // c6
++  adc    r8, rdx
++  mov    [rcx+120], r8     // c7
++
++  // [r8-r15] <- (AH+AL)*(BH+BL) - AL*BL
++  mov    r8,  [rsp]
++  sub    r8,  [rcx]
++  mov    r9,  [rsp+8]
++  sbb    r9,  [rcx+8]
++  mov    r10, [rsp+16]
++  sbb    r10, [rcx+16]
++  mov    r11, [rsp+24]
++  sbb    r11, [rcx+24]
++  mov    r12, [rsp+32]
++  sbb    r12, [rcx+32]
++  mov    r13, [rsp+40]
++  sbb    r13, [rcx+40]
++  mov    r14, [rsp+48]
++  sbb    r14, [rcx+48]
++  mov    r15, [rsp+56]
++  sbb    r15, [rcx+56]
++
++  // [r8-r15] <- (AH+AL)*(BH+BL) - AL*BL - AH*BH
++  mov    rax, [rcx+64]
++  sub    r8,  rax
++  mov    rax, [rcx+72]
++  sbb    r9,  rax
++  mov    rax, [rcx+80]
++  sbb    r10, rax
++  mov    rax, [rcx+88]
++  sbb    r11, rax
++  mov    rax, [rcx+96]
++  sbb    r12, rax
++  mov    rdx, [rcx+104]
++  sbb    r13, rdx
++  mov    rdi, [rcx+112]
++  sbb    r14, rdi
++  mov    rsi, [rcx+120]
++  sbb    r15, rsi
++
++  // Final result
++  add    r8,  [rcx+32]
++  mov    [rcx+32], r8
++  adc    r9,  [rcx+40]
++  mov    [rcx+40], r9
++  adc    r10, [rcx+48]
++  mov    [rcx+48], r10
++  adc    r11, [rcx+56]
++  mov    [rcx+56], r11
++  adc    r12, [rcx+64]
++  mov    [rcx+64], r12
++  adc    r13, [rcx+72]
++  mov    [rcx+72], r13
++  adc    r14, [rcx+80]
++  mov    [rcx+80], r14
++  adc    r15, [rcx+88]
++  mov    [rcx+88], r15
++  adc    rax, 0
++  mov    [rcx+96], rax
++  adc    rdx, 0
++  mov    [rcx+104], rdx
++  adc    rdi, 0
++  mov    [rcx+112], rdi
++  adc    rsi, 0
++  mov    [rcx+120], rsi
++
++  add    rsp, 80           // Restoring space in stack
++  pop    r15
++  pop    r14
++  pop    r13
++  pop    r12
++  ret
++
++///////////////////////////////////////////////////////////////// MACRO
++// Schoolbook integer multiplication
++// Inputs:  memory pointers M0 and M1
++// Outputs: regs T0:T6
++// Temps:   regs T7:T9
++/////////////////////////////////////////////////////////////////
++.macro MUL128x320_SCHOOL M0, M1, T0, T1, T2, T3, T4, T5, T6, T7, T8, T9
++    mov    rdx, \M0
++    mulx   \T1, \T0, \M1       // T0 <- C0_final
++    mulx   \T2, \T4, 8\M1
++    xor    rax, rax
++
++    mulx   \T3, \T5, 16\M1
++    adox   \T1, \T4
++    adox   \T2, \T5
++    mulx   \T4, \T7, 24\M1
++    adox   \T3, \T7
++    mulx   \T5, \T6, 32\M1
++    adox   \T4, \T6
++    adox   \T5, rax
++
++    mov    rdx, 8\M0
++    mulx   \T7, \T6, \M1
++    adcx   \T1, \T6            // T1 <- C1_final
++    adcx   \T2, \T7
++    mulx   \T6, \T8, 8\M1
++    adcx   \T3, \T6
++    mulx   \T9, \T7, 16\M1
++    adcx   \T4, \T9
++    mulx   \T6, \T9, 24\M1
++    adcx   \T5, \T6
++    mulx   \T6, rdx, 32\M1
++    adcx   \T6, rax
++
++    xor    rax, rax
++    adox   \T2, \T8
++    adox   \T3, \T7
++    adox   \T4, \T9
++    adox   \T5, rdx
++    adox   \T6, rax
++.endm
++
++
++//**************************************************************************************
++//  Montgomery reduction
++//  Based on method described in Faz-Hernandez et al. https://eprint.iacr.org/2017/1015
++//  Operation: c [reg_p2] = a [reg_p1]
++//  NOTE: a=c is not allowed
++//**************************************************************************************
++rdc503_mulx_asm:
++    push   rbx
++    push   r12
++    push   r13
++    push   r14
++    push   r15
++
++    // a[0-1] x p503p1_nz --> result: r8:r14
++    MUL128x320_SCHOOL [reg_p1], [rip+p503p1_nz], r8, r9, r10, r11, r12, r13, r14, rbx, rcx, r15
++
++    xor    r15, r15
++    add    r8, [reg_p1+24]
++    adc    r9, [reg_p1+32]
++    adc    r10, [reg_p1+40]
++    adc    r11, [reg_p1+48]
++    adc    r12, [reg_p1+56]
++    adc    r13, [reg_p1+64]
++    adc    r14, [reg_p1+72]
++    adc    r15, [reg_p1+80]
++    mov    [reg_p1+24], r8
++    mov    [reg_p1+32], r9
++    mov    [reg_p1+40], r10
++    mov    [reg_p1+48], r11
++    mov    [reg_p1+56], r12
++    mov    [reg_p1+64], r13
++    mov    [reg_p1+72], r14
++    mov    [reg_p1+80], r15
++    mov    r8, [reg_p1+88]
++    mov    r9, [reg_p1+96]
++    mov    r10, [reg_p1+104]
++    mov    r11, [reg_p1+112]
++    mov    r12, [reg_p1+120]
++    adc    r8, 0
++    adc    r9, 0
++    adc    r10, 0
++    adc    r11, 0
++    adc    r12, 0
++    mov    [reg_p1+88], r8
++    mov    [reg_p1+96], r9
++    mov    [reg_p1+104], r10
++    mov    [reg_p1+112], r11
++    mov    [reg_p1+120], r12
++
++    // a[2-3] x p503p1_nz --> result: r8:r14
++    MUL128x320_SCHOOL [reg_p1+16], [rip+p503p1_nz], r8, r9, r10, r11, r12, r13, r14, rbx, rcx, r15
++
++    xor    r15, r15
++    add    r8, [reg_p1+40]
++    adc    r9, [reg_p1+48]
++    adc    r10, [reg_p1+56]
++    adc    r11, [reg_p1+64]
++    adc    r12, [reg_p1+72]
++    adc    r13, [reg_p1+80]
++    adc    r14, [reg_p1+88]
++    adc    r15, [reg_p1+96]
++    mov    [reg_p1+40], r8
++    mov    [reg_p1+48], r9
++    mov    [reg_p1+56], r10
++    mov    [reg_p1+64], r11
++    mov    [reg_p1+72], r12
++    mov    [reg_p1+80], r13
++    mov    [reg_p1+88], r14
++    mov    [reg_p1+96], r15
++    mov    r8, [reg_p1+104]
++    mov    r9, [reg_p1+112]
++    mov    r10, [reg_p1+120]
++    adc    r8, 0
++    adc    r9, 0
++    adc    r10, 0
++    mov    [reg_p1+104], r8
++    mov    [reg_p1+112], r9
++    mov    [reg_p1+120], r10
++
++    // a[4-5] x p503p1_nz --> result: r8:r14
++    MUL128x320_SCHOOL [reg_p1+32], [rip+p503p1_nz], r8, r9, r10, r11, r12, r13, r14, rbx, rcx, r15
++
++    xor    r15, r15
++    xor    rbx, rbx
++    add    r8, [reg_p1+56]
++    adc    r9, [reg_p1+64]
++    adc    r10, [reg_p1+72]
++    adc    r11, [reg_p1+80]
++    adc    r12, [reg_p1+88]
++    adc    r13, [reg_p1+96]
++    adc    r14, [reg_p1+104]
++    adc    r15, [reg_p1+112]
++    adc    rbx, [reg_p1+120]
++    mov    [reg_p1+56], r8
++    mov    [reg_p2], r9       // Final result c0
++    mov    [reg_p1+72], r10
++    mov    [reg_p1+80], r11
++    mov    [reg_p1+88], r12
++    mov    [reg_p1+96], r13
++    mov    [reg_p1+104], r14
++    mov    [reg_p1+112], r15
++    mov    [reg_p1+120], rbx
++
++    // a[6-7] x p503p1_nz --> result: r8:r14
++    MUL128x320_SCHOOL [reg_p1+48], [rip+p503p1_nz], r8, r9, r10, r11, r12, r13, r14, rbx, rcx, r15
++
++    // Final result c1:c7
++    add    r8, [reg_p1+72]
++    adc    r9, [reg_p1+80]
++    adc    r10, [reg_p1+88]
++    adc    r11, [reg_p1+96]
++    adc    r12, [reg_p1+104]
++    adc    r13, [reg_p1+112]
++    adc    r14, [reg_p1+120]
++    mov    [reg_p2+8], r8
++    mov    [reg_p2+16], r9
++    mov    [reg_p2+24], r10
++    mov    [reg_p2+32], r11
++    mov    [reg_p2+40], r12
++    mov    [reg_p2+48], r13
++    mov    [reg_p2+56], r14
++
++    pop    r15
++    pop    r14
++    pop    r13
++    pop    r12
++    pop    rbx
++    ret
++
++//***********************************************************************
++//  Montgomery reduction
++//  Based on comba method
++//  Operation: c [reg_p2] = a [reg_p1]
++//  NOTE: a=c is not allowed
++//***********************************************************************
++.global rdc503_asm
++rdc503_asm:
++  mov    ecx, [rip+OPENSSL_ia32cap_P+8]
++  and    ecx, 0x80100
++  cmp    ecx, 0x80100
++  je     rdc503_mulx_asm
++
++  push   r12
++  push   r13
++  push   r14
++  push   r15
++
++  mov    r11, [reg_p1]
++  mov    rax, p503p1_3
++  mul    r11
++  xor    r8, r8
++  add    rax, [reg_p1+24]
++  mov    [reg_p2+24], rax    // z3
++  adc    r8, rdx
++
++  xor    r9, r9
++  mov    rax, p503p1_4
++  mul    r11
++  xor    r10, r10
++  add    r8, rax
++  adc    r9, rdx
++
++  mov    r12, [reg_p1+8]
++  mov    rax, p503p1_3
++  mul    r12
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++  add    r8, [reg_p1+32]
++  mov    [reg_p2+32], r8    // z4
++  adc    r9, 0
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, p503p1_5
++  mul    r11
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_4
++  mul    r12
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    r13, [reg_p1+16]
++  mov    rax, p503p1_3
++  mul    r13
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++  add    r9, [reg_p1+40]
++  mov    [reg_p2+40], r9    // z5
++  adc    r10, 0
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, p503p1_6
++  mul    r11
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_5
++  mul    r12
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_4
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    r14, [reg_p2+24]
++  mov    rax, p503p1_3
++  mul    r14
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++  add    r10, [reg_p1+48]
++  mov    [reg_p2+48], r10   // z6
++  adc    r8, 0
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, p503p1_7
++  mul    r11
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_6
++  mul    r12
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_5
++  mul    r13
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_4
++  mul    r14
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    r15, [reg_p2+32]
++  mov    rax, p503p1_3
++  mul    r15
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++  add    r8, [reg_p1+56]
++  mov    [reg_p2+56], r8    // z7
++  adc    r9, 0
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, p503p1_7
++  mul    r12
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_6
++  mul    r13
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_5
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_4
++  mul    r15
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rcx, [reg_p2+40]
++  mov    rax, p503p1_3
++  mul    rcx
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++  add    r9, [reg_p1+64]
++  mov    [reg_p2], r9        // z0
++  adc    r10, 0
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, p503p1_7
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_6
++  mul    r14
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_5
++  mul    r15
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_4
++  mul    rcx
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    r13, [reg_p2+48]
++  mov    rax, p503p1_3
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++  add    r10, [reg_p1+72]
++  mov    [reg_p2+8], r10     // z1
++  adc    r8, 0
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, p503p1_7
++  mul    r14
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_6
++  mul    r15
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_5
++  mul    rcx
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_4
++  mul    r13
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    r14, [reg_p2+56]
++  mov    rax, p503p1_3
++  mul    r14
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++  add    r8, [reg_p1+80]
++  mov    [reg_p2+16], r8     // z2
++  adc    r9, 0
++  adc    r10, 0
++
++  xor    r8, r8
++  mov    rax, p503p1_7
++  mul    r15
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_6
++  mul    rcx
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_5
++  mul    r13
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++
++  mov    rax, p503p1_4
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  adc    r8, 0
++  add    r9, [reg_p1+88]
++  mov    [reg_p2+24], r9     // z3
++  adc    r10, 0
++  adc    r8, 0
++
++  xor    r9, r9
++  mov    rax, p503p1_7
++  mul    rcx
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_6
++  mul    r13
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++
++  mov    rax, p503p1_5
++  mul    r14
++  add    r10, rax
++  adc    r8, rdx
++  adc    r9, 0
++  add    r10, [reg_p1+96]
++  mov    [reg_p2+32], r10    // z4
++  adc    r8, 0
++  adc    r9, 0
++
++  xor    r10, r10
++  mov    rax, p503p1_7
++  mul    r13
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++
++  mov    rax, p503p1_6
++  mul    r14
++  add    r8, rax
++  adc    r9, rdx
++  adc    r10, 0
++  add    r8, [reg_p1+104]    // z5
++  mov    [reg_p2+40], r8     // z5
++  adc    r9, 0
++  adc    r10, 0
++
++  mov    rax, p503p1_7
++  mul    r14
++  add    r9, rax
++  adc    r10, rdx
++  add    r9, [reg_p1+112]    // z6
++  mov    [reg_p2+48], r9     // z6
++  adc    r10, 0
++  add    r10, [reg_p1+120]   // z7
++  mov    [reg_p2+56], r10    // z7
++
++  pop    r15
++  pop    r14
++  pop    r13
++  pop    r12
++  ret
++
++//***********************************************************************
++//  503-bit multiprecision addition
++//  Operation: c [reg_p3] = a [reg_p1] + b [reg_p2]
++//***********************************************************************
++.global mp_add503_asm
++mp_add503_asm:
++  mov    r8, [reg_p1]
++  mov    r9, [reg_p1+8]
++  mov    r10, [reg_p1+16]
++  mov    r11, [reg_p1+24]
++  add    r8, [reg_p2]
++  adc    r9, [reg_p2+8]
++  adc    r10, [reg_p2+16]
++  adc    r11, [reg_p2+24]
++  mov    [reg_p3], r8
++  mov    [reg_p3+8], r9
++  mov    [reg_p3+16], r10
++  mov    [reg_p3+24], r11
++
++  mov    r8, [reg_p1+32]
++  mov    r9, [reg_p1+40]
++  mov    r10, [reg_p1+48]
++  mov    r11, [reg_p1+56]
++  adc    r8, [reg_p2+32]
++  adc    r9, [reg_p2+40]
++  adc    r10, [reg_p2+48]
++  adc    r11, [reg_p2+56]
++  mov    [reg_p3+32], r8
++  mov    [reg_p3+40], r9
++  mov    [reg_p3+48], r10
++  mov    [reg_p3+56], r11
++  ret
++
++
++//***********************************************************************
++//  2x503-bit multiprecision subtraction
++//  Operation: c [reg_p3] = a [reg_p1] - b [reg_p2]. Returns borrow mask
++//***********************************************************************
++.global mp_sub503x2_asm
++mp_sub503x2_asm:
++  xor    rax, rax
++  mov    r8, [reg_p1]
++  mov    r9, [reg_p1+8]
++  mov    r10, [reg_p1+16]
++  mov    r11, [reg_p1+24]
++  mov    rcx, [reg_p1+32]
++  sub    r8, [reg_p2]
++  sbb    r9, [reg_p2+8]
++  sbb    r10, [reg_p2+16]
++  sbb    r11, [reg_p2+24]
++  sbb    rcx, [reg_p2+32]
++  mov    [reg_p3], r8
++  mov    [reg_p3+8], r9
++  mov    [reg_p3+16], r10
++  mov    [reg_p3+24], r11
++  mov    [reg_p3+32], rcx
++
++  mov    r8, [reg_p1+40]
++  mov    r9, [reg_p1+48]
++  mov    r10, [reg_p1+56]
++  mov    r11, [reg_p1+64]
++  mov    rcx, [reg_p1+72]
++  sbb    r8, [reg_p2+40]
++  sbb    r9, [reg_p2+48]
++  sbb    r10, [reg_p2+56]
++  sbb    r11, [reg_p2+64]
++  sbb    rcx, [reg_p2+72]
++  mov    [reg_p3+40], r8
++  mov    [reg_p3+48], r9
++  mov    [reg_p3+56], r10
++  mov    [reg_p3+64], r11
++  mov    [reg_p3+72], rcx
++
++  mov    r8, [reg_p1+80]
++  mov    r9, [reg_p1+88]
++  mov    r10, [reg_p1+96]
++  mov    r11, [reg_p1+104]
++  mov    rcx, [reg_p1+112]
++  sbb    r8, [reg_p2+80]
++  sbb    r9, [reg_p2+88]
++  sbb    r10, [reg_p2+96]
++  sbb    r11, [reg_p2+104]
++  sbb    rcx, [reg_p2+112]
++  mov    [reg_p3+80], r8
++  mov    [reg_p3+88], r9
++  mov    [reg_p3+96], r10
++  mov    [reg_p3+104], r11
++  mov    [reg_p3+112], rcx
++
++  mov    r8, [reg_p1+120]
++  sbb    r8, [reg_p2+120]
++  sbb    rax, 0
++  mov    [reg_p3+120], r8
++  ret
++
++
++//***********************************************************************
++//  Double 2x503-bit multiprecision subtraction
++//  Operation: c [reg_p3] = c [reg_p3] - a [reg_p1] - b [reg_p2]
++//***********************************************************************
++.global mp_dblsub503x2_asm
++mp_dblsub503x2_asm:
++  push   r12
++  push   r13
++  push   r14
++
++  xor    rax, rax
++  mov    r8, [reg_p3]
++  mov    r9, [reg_p3+8]
++  mov    r10, [reg_p3+16]
++  mov    r11, [reg_p3+24]
++  mov    r12, [reg_p3+32]
++  mov    r13, [reg_p3+40]
++  mov    r14, [reg_p3+48]
++  mov    rcx, [reg_p3+56]
++  sub    r8, [reg_p1]
++  sbb    r9, [reg_p1+8]
++  sbb    r10, [reg_p1+16]
++  sbb    r11, [reg_p1+24]
++  sbb    r12, [reg_p1+32]
++  sbb    r13, [reg_p1+40]
++  sbb    r14, [reg_p1+48]
++  sbb    rcx, [reg_p1+56]
++  adc    rax, 0
++  sub    r8, [reg_p2]
++  sbb    r9, [reg_p2+8]
++  sbb    r10, [reg_p2+16]
++  sbb    r11, [reg_p2+24]
++  sbb    r12, [reg_p2+32]
++  sbb    r13, [reg_p2+40]
++  sbb    r14, [reg_p2+48]
++  sbb    rcx, [reg_p2+56]
++  adc    rax, 0
++  mov    [reg_p3], r8
++  mov    [reg_p3+8], r9
++  mov    [reg_p3+16], r10
++  mov    [reg_p3+24], r11
++  mov    [reg_p3+32], r12
++  mov    [reg_p3+40], r13
++  mov    [reg_p3+48], r14
++  mov    [reg_p3+56], rcx
++
++  mov    r8, [reg_p3+64]
++  mov    r9, [reg_p3+72]
++  mov    r10, [reg_p3+80]
++  mov    r11, [reg_p3+88]
++  mov    r12, [reg_p3+96]
++  mov    r13, [reg_p3+104]
++  mov    r14, [reg_p3+112]
++  mov    rcx, [reg_p3+120]
++  sub    r8, rax
++  sbb    r8, [reg_p1+64]
++  sbb    r9, [reg_p1+72]
++  sbb    r10, [reg_p1+80]
++  sbb    r11, [reg_p1+88]
++  sbb    r12, [reg_p1+96]
++  sbb    r13, [reg_p1+104]
++  sbb    r14, [reg_p1+112]
++  sbb    rcx, [reg_p1+120]
++  sub    r8, [reg_p2+64]
++  sbb    r9, [reg_p2+72]
++  sbb    r10, [reg_p2+80]
++  sbb    r11, [reg_p2+88]
++  sbb    r12, [reg_p2+96]
++  sbb    r13, [reg_p2+104]
++  sbb    r14, [reg_p2+112]
++  sbb    rcx, [reg_p2+120]
++  mov    [reg_p3+64], r8
++  mov    [reg_p3+72], r9
++  mov    [reg_p3+80], r10
++  mov    [reg_p3+88], r11
++  mov    [reg_p3+96], r12
++  mov    [reg_p3+104], r13
++  mov    [reg_p3+112], r14
++  mov    [reg_p3+120], rcx
++
++  pop    r14
++  pop    r13
++  pop    r12
++  ret
+diff --git a/third_party/sidh/src/ARM64/fp_arm64.c b/third_party/sidh/src/ARM64/fp_arm64.c
+new file mode 100644
+index 000000000..3a99cfc19
+--- /dev/null
++++ b/third_party/sidh/src/ARM64/fp_arm64.c
+@@ -0,0 +1,92 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: modular arithmetic optimized for 64-bit ARMv8 platforms for P503
++*********************************************************************************************/
++
++#include "../internal.h"
++#include "../P503_internal.h"
++
++// Global constants
++extern const struct params_t kP503Params;
++
++inline void fpadd503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular addition, c = a+b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++
++    fpadd503_asm(a, b, c);
++}
++
++
++inline void fpsub503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular subtraction, c = a-b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++
++    fpsub503_asm(a, b, c);
++}
++
++
++inline void fpneg503(digit_t* a)
++{ // Modular negation, a = -a mod p503.
++  // Input/output: a in [0, 2*p503-1]
++    unsigned int i, borrow = 0;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, ((digit_t*)kP503Params.primeX2)[i], a[i], borrow, a[i]);
++    }
++}
++
++
++void fpdiv2_503(const digit_t* a, digit_t* c)
++{ // Modular division by two, c = a/2 mod p503.
++  // Input : a in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    unsigned int i, carry = 0;
++    digit_t mask;
++
++    mask = 0 - (digit_t)(a[0] & 1);    // If a is odd compute a+p521
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(carry, a[i], ((digit_t*)kP503Params.prime)[i] & mask, carry, c[i]);
++    }
++
++    mp_shiftr1(c, NWORDS_FIELD);
++}
++
++
++void fpcorrection503(digit_t* a)
++{ // Modular correction to reduce field element a in [0, 2*p503-1] to [0, p503-1].
++    unsigned int i, borrow = 0;
++    digit_t mask;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, a[i], ((digit_t*)kP503Params.prime)[i], borrow, a[i]);
++    }
++    mask = 0 - (digit_t)borrow;
++
++    borrow = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(borrow, a[i], ((digit_t*)kP503Params.prime)[i] & mask, borrow, a[i]);
++    }
++}
++
++
++void mp_mul(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords)
++{ // Multiprecision multiply, c = a*b, where lng(a) = lng(b) = nwords.
++
++    UNREFERENCED_PARAMETER(nwords);
++
++    mul503_asm(a, b, c);
++}
++
++
++
++void rdc_mont(const digit_t* ma, digit_t* mc)
++{ // Montgomery reduction exploiting special form of the prime.
++  // mc = ma*R^-1 mod p503x2, where R = 2^512.
++  // If ma < 2^512*p503, the output mc is in the range [0, 2*p503-1].
++  // ma is assumed to be in Montgomery representation.
++
++    rdc503_asm(ma, mc);
++}
+diff --git a/third_party/sidh/src/ARM64/fp_arm64_asm.S b/third_party/sidh/src/ARM64/fp_arm64_asm.S
+new file mode 100644
+index 000000000..7f96452c2
+--- /dev/null
++++ b/third_party/sidh/src/ARM64/fp_arm64_asm.S
+@@ -0,0 +1,826 @@
++//*******************************************************************************************
++// SIDH: an efficient supersingular isogeny cryptography library
++//
++// Abstract: field arithmetic in 64-bit ARMv8 assembly for P503 on Linux
++//*******************************************************************************************
++
++// p503 + 1
++p503p1:
++#define P503P1_0 0xAC00000000000000
++#define P503P1_1 0x13085BDA2211E7A0
++#define P503P1_2 0x1B9BF6C87B7E7DAF
++#define P503P1_3 0x6045C6BDDA77A4D0
++#define P503P1_4 0x004066F541811E1E
++
++// 2 * p503
++p503x2:
++#define P503x2_0 0xFFFFFFFFFFFFFFFE
++#define P503x2_1 0xFFFFFFFFFFFFFFFF
++#define P503x2_2 0x57FFFFFFFFFFFFFF
++#define P503x2_3 0x2610B7B44423CF41
++#define P503x2_4 0x3737ED90F6FCFB5E
++#define P503x2_5 0xC08B8D7BB4EF49A0
++#define P503x2_6 0x0080CDEA83023C3C
++
++#define P503P1_NZ_S8_0 0x85BDA2211E7A0AC
++#define P503P1_NZ_S8_1 0x9BF6C87B7E7DAF13
++#define P503P1_NZ_S8_2 0x45C6BDDA77A4D01B
++#define P503P1_NZ_S8_3 0x4066F541811E1E60
++
++
++.text
++//***********************************************************************
++//  Field addition
++//  Operation: c [x2] = a [x0] + b [x1]
++//*********************************************************************** 
++.global fpadd503_asm
++fpadd503_asm:
++    ldp     x3, x4,   [x0,#0]
++    ldp     x5, x6,   [x0,#16]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++
++    // Add a + b
++    adds    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x13
++    adcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#32]
++    ldp     x9, x10,  [x0,#48]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++    adcs    x7, x7, x15
++    adcs    x8, x8, x16
++    adcs    x9, x9, x17
++    adc     x10, x10, x18
++    
++    //  Subtract 2xp503
++    ldr     x11, =P503x2_0
++    ldr     x12, =P503x2_1
++    ldr     x13, =P503x2_2
++    ldr     x14, =P503x2_3
++    subs    x3, x3, x11
++    sbcs    x4, x4, x12
++    sbcs    x5, x5, x12
++    sbcs    x6, x6, x13
++    sbcs    x7, x7, x14
++    ldr     x15, =P503x2_4
++    ldr     x16, =P503x2_5
++    ldr     x17, =P503x2_6
++    sbcs    x8, x8, x15
++    sbcs    x9, x9, x16
++    sbcs    x10, x10, x17
++    sbc     x18, xzr, xzr
++
++    // Add 2xp503 anded with the mask in x18
++    and     x11, x11, x18 
++    and     x12, x12, x18 
++    and     x13, x13, x18 
++    and     x14, x14, x18 
++    and     x15, x15, x18 
++    and     x16, x16, x18
++    and     x17, x17, x18   
++
++    adds    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x12
++    adcs    x6, x6, x13
++    adcs    x7, x7, x14
++    adcs    x8, x8, x15 
++    adcs    x9, x9, x16
++    adc     x10, x10, x17 
++
++    stp     x3, x4,  [x2,#0]
++    stp     x5, x6,  [x2,#16]
++    stp     x7, x8,  [x2,#32]
++    stp     x9, x10, [x2,#48]
++    ret
++
++
++//***********************************************************************
++//  Field subtraction
++//  Operation: c [x2] = a [x0] - b [x1]
++//*********************************************************************** 
++.global fpsub503_asm
++fpsub503_asm:
++    ldp     x3, x4,   [x0,#0]
++    ldp     x5, x6,   [x0,#16]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++
++    // Subtract a - b
++    subs    x3, x3, x11
++    sbcs    x4, x4, x12
++    sbcs    x5, x5, x13
++    sbcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#32]
++    ldp     x9, x10,  [x0,#48]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++    sbcs    x7, x7, x15
++    sbcs    x8, x8, x16
++    sbcs    x9, x9, x17
++    sbcs    x10, x10, x18
++    sbc     x18, xzr, xzr
++    
++    // Add 2xp503 anded with the mask in x18
++    ldr     x11, =P503x2_0
++    ldr     x12, =P503x2_1
++    ldr     x13, =P503x2_2
++    ldr     x14, =P503x2_3
++    and     x11, x11, x18 
++    and     x12, x12, x18 
++    and     x13, x13, x18 
++    and     x14, x14, x18 
++    ldr     x15, =P503x2_4
++    ldr     x16, =P503x2_5
++    ldr     x17, =P503x2_6
++    and     x15, x15, x18 
++    and     x16, x16, x18
++    and     x17, x17, x18   
++
++    adds    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x12
++    adcs    x6, x6, x13
++    adcs    x7, x7, x14
++    adcs    x8, x8, x15 
++    adcs    x9, x9, x16
++    adc     x10, x10, x17 
++
++    stp     x3, x4,  [x2,#0]
++    stp     x5, x6,  [x2,#16]
++    stp     x7, x8,  [x2,#32]
++    stp     x9, x10, [x2,#48]
++    ret
++
++    
++//////////////////////////////////////////// MACRO
++.macro MUL128_COMBA_CUT  A0, A1, B0, B1, C0, C1, C2, C3, T0
++    mul     \A0, \A1, \B0
++    umulh   \B0, \A1, \B0
++    adds    \C1, \C1, \C3
++    adc     \C2, \C2, xzr
++    
++    mul     \T0, \A1, \B1
++    umulh   \B1, \A1, \B1
++    adds    \C1, \C1, \A0
++    adcs    \C2, \C2, \B0
++    adc     \C3, xzr, xzr
++    
++    adds    \C2, \C2, \T0
++    adc     \C3, \C3, \B1
++.endm
++
++
++//////////////////////////////////////////// MACRO
++.macro    MUL256_KARATSUBA_COMBA  M,A0,A1,A2,A3,B0,B1,B2,B3,C0,C1,C2,C3,C4,C5,C6,C7,T0,T1
++
++    // A0-A1 <- AH + AL, T0 <- mask
++    adds    \A0, \A0, \A2
++    adcs    \A1, \A1, \A3
++    adc     \T0, xzr, xzr
++
++    // C6, T1 <- BH + BL, C7 <- mask
++    adds    \C6, \B0, \B2
++    adcs    \T1, \B1, \B3
++    adc     \C7, xzr, xzr
++    
++    // C0-C1 <- masked (BH + BL)
++    sub     \C2, xzr, \T0
++    sub     \C3, xzr, \C7
++    and     \C0, \C6, \C2
++    and     \C1, \T1, \C2
++
++    // C4-C5 <- masked (AH + AL), T0 <- combined carry
++    and     \C4, \A0, \C3
++    and     \C5, \A1, \C3
++    mul     \C2, \A0, \C6
++    mul     \C3, \A0, \T1
++    and     \T0, \T0, \C7
++
++    // C0-C1, T0 <- (AH+AL) x (BH+BL), part 1
++    adds    \C0, \C4, \C0
++    umulh   \C4, \A0, \T1    
++    adcs    \C1, \C5, \C1
++    umulh   \C5, \A0, \C6
++    adc     \T0, \T0, xzr
++
++    // C2-C5 <- (AH+AL) x (BH+BL), low part
++    MUL128_COMBA_CUT  \A0, \A1, \C6, \T1, \C2, \C3, \C4, \C5, \C7
++    ldp     \A0, \A1, [\M,#0]
++    
++    // C2-C5, T0 <- (AH+AL) x (BH+BL), final part
++    adds    \C4, \C0, \C4
++    umulh   \C7, \A0, \B0 
++    umulh   \T1, \A0, \B1 
++    adcs    \C5, \C1, \C5
++    mul     \C0, \A0, \B0
++    mul     \C1, \A0, \B1  
++    adc     \T0, \T0, xzr
++
++    // C0-C1, T1, C7 <- AL x BL
++    MUL128_COMBA_CUT  \A0, \A1, \B0, \B1, \C0, \C1, \T1, \C7, \C6
++    
++    // C2-C5, T0 <- (AH+AL) x (BH+BL) - ALxBL
++    mul     \A0, \A2, \B2
++    umulh   \B0, \A2, \B2
++    subs    \C2, \C2, \C0 
++    sbcs    \C3, \C3, \C1
++    sbcs    \C4, \C4, \T1
++    mul     \A1, \A2, \B3
++    umulh   \C6, \A2, \B3   
++    sbcs    \C5, \C5, \C7
++    sbc     \T0, \T0, xzr
++
++    // A0, A1, C6, B0 <- AH x BH 
++    MUL128_COMBA_CUT  \A2, \A3, \B2, \B3, \A0, \A1, \C6, \B0, \B1
++    
++    // C2-C5, T0 <- (AH+AL) x (BH+BL) - ALxBL - AHxBH
++    subs    \C2, \C2, \A0 
++    sbcs    \C3, \C3, \A1
++    sbcs    \C4, \C4, \C6
++    sbcs    \C5, \C5, \B0
++    sbc     \T0, \T0, xzr
++    
++    adds    \C2, \C2, \T1 
++    adcs    \C3, \C3, \C7
++    adcs    \C4, \C4, \A0
++    adcs    \C5, \C5, \A1
++    adcs    \C6, \T0, \C6
++    adc     \C7, \B0, xzr
++.endm
++
++
++//***********************************************************************************
++//  512-bit integer multiplication using Karatsuba (two levels), Comba (lower level)
++//  Operation: c [x2] = a [x0] * b [x1]
++//*********************************************************************************** 
++.global mul503_asm
++mul503_asm:
++    sub     sp, sp, #96
++    stp     x19, x20, [sp,#0]
++    stp     x21, x22, [sp,#16]
++    stp     x23, x24, [sp,#32]
++    stp     x25, x26, [sp,#48]
++    stp     x27, x28, [sp,#64]
++    str     x29, [sp, #80]
++
++    ldp     x3, x4, [x0]
++    ldp     x5, x6, [x0,#16]
++    ldp     x7, x8, [x0,#32]
++    ldp     x9, x10, [x0,#48]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++
++    // x26-x29 <- AH + AL, x7 <- mask
++    adds    x26, x3, x7
++    adcs    x27, x4, x8
++    adcs    x28, x5, x9
++    adcs    x29, x6, x10
++    adc     x7, xzr, xzr
++
++    // x11-x14 <- BH + BL, x8 <- mask
++    adds    x11, x11, x15
++    adcs    x12, x12, x16
++    adcs    x13, x13, x17
++    adcs    x14, x14, x18
++    adc     x8, xzr, xzr
++    
++    // x15-x18 <- masked (BH + BL)
++    sub     x9, xzr, x7
++    sub     x10, xzr, x8
++    and     x15, x11, x9
++    and     x16, x12, x9
++    and     x17, x13, x9
++    and     x18, x14, x9
++
++    // x19-x22 <- masked (AH + AL), x7 <- combined carry
++    and     x19, x26, x10
++    and     x20, x27, x10
++    and     x21, x28, x10
++    and     x22, x29, x10
++    and     x7, x7, x8
++
++    // x15-x18, x7 <- masked (AH+AL) + masked (BH+BL), step 1
++    adds    x15, x15, x19
++    adcs    x16, x16, x20
++    adcs    x17, x17, x21
++    adcs    x18, x18, x22
++    adc     x7, x7, xzr
++    
++    // x8-x10,x19-x23 <- (AH+AL) x (BH+BL), low part
++    stp     x26, x27, [x2,#0]
++    MUL256_KARATSUBA_COMBA  x2, x26, x27, x28, x29, x11, x12, x13, x14, x8, x9, x10, x19, x20, x21, x22, x23, x24, x25  
++    
++    // x15-x18, x7 <- (AH+AL) x (BH+BL), final step
++    adds    x15, x15, x20
++    adcs    x16, x16, x21
++    adcs    x17, x17, x22
++    adcs    x18, x18, x23
++    adc     x7, x7, xzr
++
++    // x20-x27 <- AL x BL
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++    MUL256_KARATSUBA_COMBA  x0, x3, x4, x5, x6, x11, x12, x13, x14, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29
++    
++    // x13-x14, x3-x5 <- (AH+AL) x (BH+BL) - ALxBL
++    subs    x8, x8, x20 
++    sbcs    x9, x9, x21
++    sbcs    x10, x10, x22
++    sbcs    x19, x19, x23
++    sbcs    x15, x15, x24
++    sbcs    x16, x16, x25
++    sbcs    x17, x17, x26
++    sbcs    x18, x18, x27
++    sbc     x7, x7, xzr
++
++    stp     x20, x21, [x2]
++    stp     x22, x23, [x2,#16]
++
++    ldp     x3, x4, [x0,#32]
++    ldp     x5, x6, [x0,#48]
++    ldp     x11, x12, [x1,#32]
++    ldp     x13, x14, [x1,#48]
++
++    adds    x8, x8, x24 
++    adcs    x9, x9, x25
++    adcs    x10, x10, x26
++    adcs    x19, x19, x27
++    adc     x1, xzr, xzr
++
++    // x20-x27 <- AH x BH
++    add     x0, x0, #32
++    MUL256_KARATSUBA_COMBA  x0, x3, x4, x5, x6, x11, x12, x13, x14, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29
++    neg     x1, x1
++    
++    // x13-x14, x3-x5 <- (AH+AL) x (BH+BL) - ALxBL - AHxBH
++    subs    x8, x8, x20 
++    sbcs    x9, x9, x21
++    sbcs    x10, x10, x22
++    sbcs    x19, x19, x23
++    sbcs    x15, x15, x24
++    sbcs    x16, x16, x25
++    sbcs    x17, x17, x26
++    sbcs    x18, x18, x27
++    sbc     x7, x7, xzr
++
++    stp     x8, x9, [x2,#32]
++    stp     x10, x19, [x2,#48]
++    
++    adds    x1, x1, #1
++    adcs    x15, x15, x20          
++    adcs    x16, x16, x21
++    adcs    x17, x17, x22
++    adcs    x18, x18, x23
++    adcs    x24, x7, x24
++    adcs    x25, x25, xzr
++    adcs    x26, x26, xzr
++    adc     x27, x27, xzr
++
++    stp     x15, x16, [x2,#64]
++    stp     x17, x18, [x2,#80] 
++    stp     x24, x25, [x2,#96] 
++    stp     x26, x27, [x2,#112]    
++    
++    ldp     x19, x20, [sp,#0]
++    ldp     x21, x22, [sp,#16]
++    ldp     x23, x24, [sp,#32]
++    ldp     x25, x26, [sp,#48]
++    ldp     x27, x28, [sp,#64]
++    ldr     x29, [sp,#80]
++    add     sp, sp, #96
++    ret
++    
++        
++//////////////////////////////////////////// MACRO
++.macro MUL128x256_COMBA_CUT  A0, A1, B0, B1, B2, B3, C0, C1, C2, C3, C4, C5, T0, T1, T2, T3
++    mul     \T0, \A1, \B0
++    umulh   \T1, \A1, \B0 
++    adds    \C1, \C1, \C3
++    adc     \C2, \C2, xzr 
++
++    mul     \T2, \A0, \B2
++    umulh   \T3, \A0, \B2 
++    adds    \C1, \C1, \T0
++    adcs    \C2, \C2, \T1
++    adc     \C3, xzr, xzr
++    
++    mul     \T0, \A1, \B1
++    umulh   \T1, \A1, \B1    
++    adds    \C2, \C2, \T2
++    adcs    \C3, \C3, \T3
++    adc     \C4, xzr, xzr
++    
++    mul     \T2, \A0, \B3
++    umulh   \T3, \A0, \B3 
++    adds    \C2, \C2, \T0
++    adcs    \C3, \C3, \T1
++    adc     \C4, \C4, xzr
++    
++    mul     \T0, \A1, \B2
++    umulh   \T1, \A1, \B2 
++    adds    \C3, \C3, \T2
++    adcs    \C4, \C4, \T3
++    adc     \C5, xzr, xzr
++    
++    mul     \T2, \A1, \B3
++    umulh   \T3, \A1, \B3 
++    adds    \C3, \C3, \T0
++    adcs    \C4, \C4, \T1
++    adc     \C5, \C5, xzr
++    adds    \C4, \C4, \T2
++    adc     \C5, \C5, \T3
++.endm
++
++
++//**************************************************************************************
++//  Montgomery reduction
++//  Based on method described in Faz-Hernandez et al. https://eprint.iacr.org/2017/1015  
++//  Operation: mc [x1] = ma [x0]
++//  NOTE: ma=mc is not allowed
++//************************************************************************************** 
++.global rdc503_asm
++rdc503_asm:
++    sub     sp, sp, #96
++    stp     x19, x20, [sp]
++    stp     x21, x22, [sp, #16]
++    stp     x23, x24, [sp, #32]
++    stp     x25, x26, [sp, #48]
++    stp     x27, x28, [sp, #64]
++    stp     x29, x30, [sp, #80]
++
++    ldp     x2, x3, [x0,#0]       // a[0-1]
++
++    // Load the prime constant
++    ldr     x24, =P503P1_NZ_S8_0
++    ldr     x25, =P503P1_NZ_S8_1
++    ldr     x26, =P503P1_NZ_S8_2
++    ldr     x27, =P503P1_NZ_S8_3
++
++    // a[0-1] x p503p1_nz_s8 --> result: x4:x9
++    mul     x4, x2, x24           // a[0] x p503p1_nz_s8[0]
++    umulh   x7, x2, x24           
++    mul     x5, x2, x25           // a[0] x p503p1_nz_s8[1]
++    umulh   x6, x2, x25
++    MUL128x256_COMBA_CUT x2, x3, x24, x25, x26, x27, x4, x5, x6, x7, x8, x9, x28, x29, x30, x10
++    
++    ldp     x3, x11, [x0,#16]     // a[2]
++    ldp     x12, x13, [x0,#32]    
++    ldp     x14, x15, [x0,#48]    
++
++    orr     x10, xzr, x9, lsr #8
++    lsl     x9, x9, #56
++    orr     x9, x9, x8, lsr #8
++    lsl     x8, x8, #56
++    orr     x8, x8, x7, lsr #8
++    lsl     x7, x7, #56
++    orr     x7, x7, x6, lsr #8
++    lsl     x6, x6, #56
++    orr     x6, x6, x5, lsr #8
++    lsl     x5, x5, #56
++    orr     x5, x5, x4, lsr #8
++    lsl     x4, x4, #56
++    
++    adds    x11, x4, x11          // a[3]
++    adcs    x12, x5, x12          // a[4]
++    adcs    x13, x6, x13
++    adcs    x14, x7, x14    
++    adcs    x15, x8, x15
++    ldp     x16, x17, [x0,#64]    
++    ldp     x18, x19, [x0,#80]
++    mul     x4, x3, x24           // a[2] x p503p1_nz_s8[0]
++    umulh   x7, x3, x24
++    adcs    x16, x9, x16
++    adcs    x17, x10, x17
++    adcs    x18, xzr, x18
++    adcs    x19, xzr, x19
++    ldp     x20, x21, [x0,#96]        
++    ldp     x22, x23, [x0,#112]    
++    mul     x5, x3, x25           // a[2] x p503p1_nz_s8[1] 
++    umulh   x6, x3, x25
++    adcs    x20, xzr, x20
++    adcs    x21, xzr, x21
++    adcs    x22, xzr, x22
++    adc     x23, xzr, x23
++
++    // a[2-3] x p503p1_nz_s8 --> result: x4:x9
++    MUL128x256_COMBA_CUT x3, x11, x24, x25, x26, x27, x4, x5, x6, x7, x8, x9, x28, x29, x30, x10
++
++    orr     x10, xzr, x9, lsr #8
++    lsl     x9, x9, #56
++    orr     x9, x9, x8, lsr #8
++    lsl     x8, x8, #56
++    orr     x8, x8, x7, lsr #8
++    lsl     x7, x7, #56
++    orr     x7, x7, x6, lsr #8
++    lsl     x6, x6, #56
++    orr     x6, x6, x5, lsr #8
++    lsl     x5, x5, #56
++    orr     x5, x5, x4, lsr #8
++    lsl     x4, x4, #56
++    
++    adds    x13, x4, x13          // a[5]
++    adcs    x14, x5, x14          // a[6]
++    adcs    x15, x6, x15
++    adcs    x16, x7, x16
++    mul     x4, x12, x24          // a[4] x p503p1_nz_s8[0]
++    umulh   x7, x12, x24
++    adcs    x17, x8, x17
++    adcs    x18, x9, x18
++    adcs    x19, x10, x19
++    adcs    x20, xzr, x20
++    mul     x5, x12, x25          // a[4] x p503p1_nz_s8[1]
++    umulh   x6, x12, x25
++    adcs    x21, xzr, x21
++    adcs    x22, xzr, x22
++    adc     x23, xzr, x23
++
++    // a[4-5] x p503p1_nz_s8 --> result: x4:x9
++    MUL128x256_COMBA_CUT x12, x13, x24, x25, x26, x27, x4, x5, x6, x7, x8, x9, x28, x29, x30, x10    
++
++    orr     x10, xzr, x9, lsr #8
++    lsl     x9, x9, #56
++    orr     x9, x9, x8, lsr #8
++    lsl     x8, x8, #56
++    orr     x8, x8, x7, lsr #8
++    lsl     x7, x7, #56
++    orr     x7, x7, x6, lsr #8
++    lsl     x6, x6, #56
++    orr     x6, x6, x5, lsr #8
++    lsl     x5, x5, #56
++    orr     x5, x5, x4, lsr #8
++    lsl     x4, x4, #56
++    
++    adds    x15, x4, x15          // a[7]
++    adcs    x16, x5, x16          // a[8]
++    adcs    x17, x6, x17
++    adcs    x18, x7, x18
++    mul     x4, x14, x24          // a[6] x p503p1_nz_s8[0]
++    umulh   x7, x14, x24
++    adcs    x19, x8, x19
++    adcs    x20, x9, x20
++    adcs    x21, x10, x21
++    mul     x5, x14, x25          // a[6] x p503p1_nz_s8[1]
++    umulh   x6, x14, x25
++    adcs    x22, xzr, x22
++    adc     x23, xzr, x23
++
++    // a[6-7] x p503p1_nz_s8 --> result: x4:x9
++    MUL128x256_COMBA_CUT x14, x15, x24, x25, x26, x27, x4, x5, x6, x7, x8, x9, x28, x29, x30, x10
++
++    orr     x10, xzr, x9, lsr #8
++    lsl     x9, x9, #56
++    orr     x9, x9, x8, lsr #8
++    lsl     x8, x8, #56
++    orr     x8, x8, x7, lsr #8
++    lsl     x7, x7, #56
++    orr     x7, x7, x6, lsr #8
++    lsl     x6, x6, #56
++    orr     x6, x6, x5, lsr #8
++    lsl     x5, x5, #56
++    orr     x5, x5, x4, lsr #8
++    lsl     x4, x4, #56
++    
++    adds    x17, x4, x17
++    adcs    x18, x5, x18
++    adcs    x19, x6, x19
++    adcs    x20, x7, x20
++    stp     x16, x17, [x1,#0]     // Final result
++    stp     x18, x19, [x1,#16]    
++    adcs    x21, x8, x21
++    adcs    x22, x9, x22
++    adc     x23, x10, x23
++    stp     x20, x21, [x1,#32]
++    stp     x22, x23, [x1,#48]
++    
++    ldp     x19, x20, [sp]
++    ldp     x21, x22, [sp, #16]
++    ldp     x23, x24, [sp, #32]
++    ldp     x25, x26, [sp, #48]
++    ldp     x27, x28, [sp, #64]
++    ldp     x29, x30, [sp, #80]
++    add     sp, sp, #96
++    ret
++
++
++//***********************************************************************
++//  503-bit multiprecision addition
++//  Operation: c [x2] = a [x0] + b [x1]
++//*********************************************************************** 
++.global mp_add503_asm
++mp_add503_asm:
++    ldp     x3, x4,   [x0,#0]
++    ldp     x5, x6,   [x0,#16]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++
++    adds    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x13
++    adcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#32]
++    ldp     x9, x10,  [x0,#48]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++    adcs    x7, x7, x15
++    adcs    x8, x8, x16
++    adcs    x9, x9, x17
++    adc     x10, x10, x18
++
++    stp     x3, x4,   [x2,#0]
++    stp     x5, x6,   [x2,#16]
++    stp     x7, x8,   [x2,#32]
++    stp     x9, x10,  [x2,#48]
++    ret    
++
++
++//***********************************************************************
++//  2x503-bit multiprecision addition
++//  Operation: c [x2] = a [x0] + b [x1]
++//*********************************************************************** 
++.global mp_add503x2_asm
++mp_add503x2_asm:
++    ldp     x3, x4,   [x0,#0]
++    ldp     x5, x6,   [x0,#16]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++    adds    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x13
++    adcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#32]
++    ldp     x9, x10,  [x0,#48]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++    adcs    x7, x7, x15
++    adcs    x8, x8, x16
++    adcs    x9, x9, x17
++    adcs    x10, x10, x18
++
++    stp     x3, x4,   [x2,#0]
++    stp     x5, x6,   [x2,#16]
++    stp     x7, x8,   [x2,#32]
++    stp     x9, x10,  [x2,#48]
++    
++    ldp     x3, x4,   [x0,#64]
++    ldp     x5, x6,   [x0,#80]
++    ldp     x11, x12, [x1,#64]
++    ldp     x13, x14, [x1,#80]
++    adcs    x3, x3, x11
++    adcs    x4, x4, x12
++    adcs    x5, x5, x13
++    adcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#96]
++    ldp     x9, x10,  [x0,#112]
++    ldp     x15, x16, [x1,#96]
++    ldp     x17, x18, [x1,#112]
++    adcs    x7, x7, x15
++    adcs    x8, x8, x16
++    adcs    x9, x9, x17
++    adc     x10, x10, x18
++
++    stp     x3, x4,   [x2,#64]
++    stp     x5, x6,   [x2,#80]
++    stp     x7, x8,   [x2,#96]
++    stp     x9, x10,  [x2,#112]
++    ret   
++
++
++//***********************************************************************
++//  2x503-bit multiprecision subtraction
++//  Operation: c [x2] = a [x0] - b [x1]. Returns borrow mask
++//*********************************************************************** 
++.global mp_sub503x2_asm
++mp_sub503x2_asm:
++    ldp     x3, x4,   [x0,#0]
++    ldp     x5, x6,   [x0,#16]
++    ldp     x11, x12, [x1,#0]
++    ldp     x13, x14, [x1,#16]
++    subs    x3, x3, x11
++    sbcs    x4, x4, x12
++    sbcs    x5, x5, x13
++    sbcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#32]
++    ldp     x9, x10,  [x0,#48]
++    ldp     x15, x16, [x1,#32]
++    ldp     x17, x18, [x1,#48]
++    sbcs    x7, x7, x15
++    sbcs    x8, x8, x16
++    sbcs    x9, x9, x17
++    sbcs    x10, x10, x18
++
++    stp     x3, x4,   [x2,#0]
++    stp     x5, x6,   [x2,#16]
++    stp     x7, x8,   [x2,#32]
++    stp     x9, x10,  [x2,#48]
++    
++    ldp     x3, x4,   [x0,#64]
++    ldp     x5, x6,   [x0,#80]
++    ldp     x11, x12, [x1,#64]
++    ldp     x13, x14, [x1,#80]
++    sbcs    x3, x3, x11
++    sbcs    x4, x4, x12
++    sbcs    x5, x5, x13
++    sbcs    x6, x6, x14
++    ldp     x7, x8,   [x0,#96]
++    ldp     x9, x10,  [x0,#112]
++    ldp     x15, x16, [x1,#96]
++    ldp     x17, x18, [x1,#112]
++    sbcs    x7, x7, x15
++    sbcs    x8, x8, x16
++    sbcs    x9, x9, x17
++    sbcs    x10, x10, x18
++    sbc     x0, xzr, xzr
++
++    stp     x3, x4,   [x2,#64]
++    stp     x5, x6,   [x2,#80]
++    stp     x7, x8,   [x2,#96]
++    stp     x9, x10,  [x2,#112]
++    ret
++
++
++//***********************************************************************
++//  Double 2x503-bit multiprecision subtraction
++//  Operation: c [x2] = c [x2] - a [x0] - b [x1]
++//*********************************************************************** 
++.global mp_dblsub503x2_asm
++mp_dblsub503x2_asm:
++    sub     sp, sp, #32
++    stp     x27, x28, [sp, #0]
++    stp     x29, x30, [sp, #16]
++    ldp     x3, x4,   [x2,#0]
++    ldp     x5, x6,   [x2,#16]
++    ldp     x7, x8,   [x2,#32]
++    ldp     x9, x10,  [x2,#48]
++    ldp     x11, x12, [x2,#64]
++    ldp     x13, x14, [x2,#80]
++    ldp     x15, x16, [x2,#96]
++    ldp     x17, x18, [x2,#112]
++
++    ldp     x27, x28, [x0,#0]
++    ldp     x29, x30, [x0,#16]
++    subs    x3, x3, x27
++    sbcs    x4, x4, x28
++    sbcs    x5, x5, x29
++    sbcs    x6, x6, x30
++    ldp     x27, x28, [x0,#32]
++    ldp     x29, x30, [x0,#48]
++    sbcs    x7, x7, x27
++    sbcs    x8, x8, x28
++    sbcs    x9, x9, x29
++    sbcs    x10, x10, x30
++    ldp     x27, x28, [x0,#64]
++    ldp     x29, x30, [x0,#80]
++    sbcs    x11, x11, x27
++    sbcs    x12, x12, x28
++    sbcs    x13, x13, x29
++    sbcs    x14, x14, x30
++    ldp     x27, x28, [x0,#96]
++    ldp     x29, x30, [x0,#112]
++    sbcs    x15, x15, x27
++    sbcs    x16, x16, x28
++    sbcs    x17, x17, x29
++    sbc     x18, x18, x30
++
++    ldp     x27, x28, [x1,#0]
++    ldp     x29, x30, [x1,#16]
++    subs    x3, x3, x27
++    sbcs    x4, x4, x28
++    sbcs    x5, x5, x29
++    sbcs    x6, x6, x30
++    ldp     x27, x28, [x1,#32]
++    ldp     x29, x30, [x1,#48]
++    sbcs    x7, x7, x27
++    sbcs    x8, x8, x28
++    sbcs    x9, x9, x29
++    sbcs    x10, x10, x30
++    ldp     x27, x28, [x1,#64]
++    ldp     x29, x30, [x1,#80]
++    sbcs    x11, x11, x27
++    sbcs    x12, x12, x28
++    sbcs    x13, x13, x29
++    sbcs    x14, x14, x30
++    ldp     x27, x28, [x1,#96]
++    ldp     x29, x30, [x1,#112]
++    sbcs    x15, x15, x27
++    sbcs    x16, x16, x28
++    sbcs    x17, x17, x29
++    sbc     x18, x18, x30
++
++    stp     x3, x4,   [x2,#0]
++    stp     x5, x6,   [x2,#16]
++    stp     x7, x8,   [x2,#32]
++    stp     x9, x10,  [x2,#48]
++    stp     x11, x12, [x2,#64]
++    stp     x13, x14, [x2,#80]
++    stp     x15, x16, [x2,#96]
++    stp     x17, x18, [x2,#112]
++    
++    ldp     x27, x28, [sp, #0]
++    ldp     x29, x30, [sp, #16]
++    add     sp, sp, #32
++    ret
+diff --git a/third_party/sidh/src/P503.c b/third_party/sidh/src/P503.c
+new file mode 100644
+index 000000000..fab51a38b
+--- /dev/null
++++ b/third_party/sidh/src/P503.c
+@@ -0,0 +1,99 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: supersingular isogeny parameters and generation of functions for P503
++*********************************************************************************************/
++
++#include "sidh/def_p503.h"
++#include "sidh/P503_api.h"
++#include "P503_internal.h"
++
++// Encoding of field elements, elements over Z_order, elements over GF(p^2) and elliptic curve points:
++// --------------------------------------------------------------------------------------------------
++// Elements over GF(p) and Z_order are encoded with the least significant octet (and digit) located at the leftmost position (i.e., little endian format).
++// Elements (a+b*i) over GF(p^2), where a and b are defined over GF(p), are encoded as {a, b}, with a in the least significant position.
++// Elliptic curve points P = (x,y) are encoded as {x, y}, with x in the least significant position.
++// Internally, the number of digits used to represent all these elements is obtained by approximating the number of bits to the immediately greater multiple of 32.
++// For example, a 503-bit field element is represented with Ceil(503 / 64) = 8 64-bit digits or Ceil(503 / 32) = 16 32-bit digits.
++
++//
++// Curve isogeny system "SIDHp503". Base curve: Montgomery curve By^2 = Cx^3 + Ax^2 + Cx defined over GF(p503^2), where A=0, B=1, C=1 and p503 = 2^250*3^159-1
++//
++
++const struct params_t kP503Params = {
++    .prime = {
++        0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xABFFFFFFFFFFFFFF,
++        0x13085BDA2211E7A0, 0x1B9BF6C87B7E7DAF, 0x6045C6BDDA77A4D0, 0x004066F541811E1E
++    },
++
++    .primeP1 = {
++        0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0xAC00000000000000,
++        0x13085BDA2211E7A0, 0x1B9BF6C87B7E7DAF, 0x6045C6BDDA77A4D0, 0x004066F541811E1E
++    },
++    .primeX2 = {
++        0xFFFFFFFFFFFFFFFE, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0x57FFFFFFFFFFFFFF,
++        0x2610B7B44423CF41, 0x3737ED90F6FCFB5E, 0xC08B8D7BB4EF49A0, 0x0080CDEA83023C3C
++    },
++    .Alice_order = {
++        0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0400000000000000
++    },
++    .Bob_order = {
++        0xC216F6888479E82B, 0xE6FDB21EDF9F6BC4, 0x1171AF769DE93406, 0x1019BD5060478798
++    },
++    .A_gen = {
++        0xE7EF4AA786D855AF, 0xED5758F03EB34D3B, 0x09AE172535A86AA9, 0x237B9CC07D622723,
++        0xE3A284CBA4E7932D, 0x27481D9176C5E63F, 0x6A323FF55C6E71BF, 0x002ECC31A6FB8773,   // XPA0
++        0x64D02E4E90A620B8, 0xDAB8128537D4B9F1, 0x4BADF77B8A228F98, 0x0F5DBDF9D1FB7D1B,
++        0xBEC4DB288E1A0DCC, 0xE76A8665E80675DB, 0x6D6F252E12929463, 0x003188BD1463FACC,   // XPA1
++        0xB79D41025DE85D56, 0x0B867DA9DF169686, 0x740E5368021C827D, 0x20615D72157BF25C,
++        0xFF1590013C9B9F5B, 0xC884DCADE8C16CEA, 0xEBD05E53BF724E01, 0x0032FEF8FDA5748C,   // XQA0
++        0x12E2E849AA0A8006, 0x41CF47008635A1E8, 0x9CD720A70798AED7, 0x42A820B42FCF04CF,
++        0x7BF9BAD32AAE88B1, 0xF619127A54090BBE, 0x1CB10D8F56408EAA, 0x001D6B54C3C0EDEB,   // XRA0
++        0x34DB54931CBAAC36, 0x420A18CB8DD5F0C4, 0x32008C1A48C0F44D, 0x3B3BA772B1CFD44D,
++        0xA74B058FDAF13515, 0x095FC9CA7EEC17B4, 0x448E829D28F120F8, 0x00261EC3ED16A489    // XRA1
++    },
++    .B_gen = {
++        0x7EDE37F4FA0BC727, 0xF7F8EC5C8598941C, 0xD15519B516B5F5C8, 0xF6D5AC9B87A36282,
++        0x7B19F105B30E952E, 0x13BD8B2025B4EBEE, 0x7B96D27F4EC579A2, 0x00140850CAB7E5DE,   // XPB0
++        0x7764909DAE7B7B2D, 0x578ABB16284911AB, 0x76E2BFD146A6BF4D, 0x4824044B23AA02F0,
++        0x1105048912A321F3, 0xB8A2E482CF0F10C1, 0x42FF7D0BE2152085, 0x0018E599C5223352,   // XPB1
++        0x4256C520FB388820, 0x744FD7C3BAAF0A13, 0x4B6A2DDDB12CBCB8, 0xE46826E27F427DF8,
++        0xFE4A663CD505A61B, 0xD6B3A1BAF025C695, 0x7C3BB62B8FCC00BD, 0x003AFDDE4A35746C,   // XQB0
++        0x75601CD1E6C0DFCB, 0x1A9007239B58F93E, 0xC1F1BE80C62107AC, 0x7F513B898F29FF08,
++        0xEA0BEDFF43E1F7B2, 0x2C6D94018CBAE6D0, 0x3A430D31BCD84672, 0x000D26892ECCFE83,   // XRB0
++        0x1119D62AEA3007A1, 0xE3702AA4E04BAE1B, 0x9AB96F7D59F990E7, 0xF58440E8B43319C0,
++        0xAF8134BEE1489775, 0xE7F7774E905192AA, 0xF54AE09308E98039, 0x001EF7A041A86112    // XRB1
++    },
++    .Montgomery_R2 = {
++        0x5289A0CF641D011F, 0x9B88257189FED2B9, 0xA3B365D58DC8F17A, 0x5BC57AB6EFF168EC,
++        0x9E51998BD84D4423, 0xBF8999CBAC3B5695, 0x46E9127BCE14CDB6, 0x003F6CFCE8B81771
++    },
++    .Montgomery_one = {
++        0x00000000000003F9, 0x0000000000000000, 0x0000000000000000, 0xB400000000000000,
++        0x63CB1A6EA6DED2B4, 0x51689D8D667EB37D, 0x8ACD77C71AB24142, 0x0026FBAEC60F5953
++    },
++    .Montgomery_Rprime = {
++        0x0C2615CA3C5BAA99, 0x5A4FF3072AB6AA6A, 0xA6AFD4B039AD6AA2, 0x010DA06A26DD05CB
++    },
++    .Montgomery_rprime = {
++        0x49C8A87190C0697D, 0x2EB7968EA0F0A558, 0x944257B696777FA2, 0xBAA4DDCD6139D2B3
++    },
++    .Border_div3 = {
++        0xEB5CFCD82C28A2B9, 0x4CFF3B5F9FDFCE96, 0xB07B3A7CDF4DBC02, 0x055DE9C5756D2D32
++    },
++    .strat_Alice = {
++        61, 32, 16, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 8, 4, 2, 1, 1, 2, 1, 1,
++        4, 2, 1, 1, 2, 1, 1, 16, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 8, 4, 2, 1,
++        1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 29, 16, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1,
++        1, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 13, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2,
++        1, 1, 2, 1, 1, 5, 4, 2, 1, 1, 2, 1, 1, 2, 1, 1, 1
++    },
++    .strat_Bob = {
++        71, 38, 21, 13, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 5, 4, 2, 1, 1, 2, 1,
++        1, 2, 1, 1, 1, 9, 5, 3, 2, 1, 1, 1, 1, 2, 1, 1, 1, 4, 2, 1, 1, 1, 2, 1, 1, 17, 9,
++        5, 3, 2, 1, 1, 1, 1, 2, 1, 1, 1, 4, 2, 1, 1, 1, 2, 1, 1, 8, 4, 2, 1, 1, 1, 2, 1,
++        1, 4, 2, 1, 1, 2, 1, 1, 33, 17, 9, 5, 3, 2, 1, 1, 1, 1, 2, 1, 1, 1, 4, 2, 1, 1, 1,
++        2, 1, 1, 8, 4, 2, 1, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1, 16, 8, 4, 2, 1, 1, 1, 2,
++        1, 1, 4, 2, 1, 1, 2, 1, 1, 8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1
++    }
++};
+diff --git a/third_party/sidh/src/P503_internal.h b/third_party/sidh/src/P503_internal.h
+new file mode 100644
+index 000000000..67aed146c
+--- /dev/null
++++ b/third_party/sidh/src/P503_internal.h
+@@ -0,0 +1,279 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: internal header file for P503
++*********************************************************************************************/
++
++#ifndef P503_INTERNAL_H__
++#define P503_INTERNAL_H__
++
++#include <stdbool.h>
++#include "sidh/def_p503.h"
++
++// Macro definitions
++#define NBITS_TO_NBYTES(nbits)      (((nbits)+7)/8)                                          // Conversion macro from number of bits to number of bytes
++#define NBITS_TO_NWORDS(nbits)      (((nbits)+(sizeof(digit_t)*8)-1)/(sizeof(digit_t)*8))    // Conversion macro from number of bits to number of computer words
++#define NBYTES_TO_NWORDS(nbytes)    (((nbytes)+sizeof(digit_t)-1)/sizeof(digit_t))           // Conversion macro from number of bytes to number of computer words
++
++// Macro to avoid compiler warnings when detecting unreferenced parameters
++#define UNREFERENCED_PARAMETER(PAR) ((void)(PAR))
++
++// SIDH Basic, internally used, constants
++#define MAXBITS_FIELD           512
++#define MAXWORDS_FIELD          ((MAXBITS_FIELD+RADIX-1)/RADIX)     // Max. number of words to represent field elements
++#define MAXBITS_ORDER           NBITS_ORDER
++#define MAXWORDS_ORDER          ((MAXBITS_ORDER+RADIX-1)/RADIX)     // Max. number of words to represent elements in [1, oA-1] or [1, oB].
++#define ALICE                   0
++#define BOB                     1
++#define OALICE_BITS             250
++#define OBOB_BITS               253
++#define OBOB_EXPON              159
++// Fixed parameters for isogeny tree computation
++#define MAX_INT_POINTS_ALICE    7
++#define MAX_INT_POINTS_BOB      8
++#define FP2_ENCODED_BYTES       2*((NBITS_FIELD + 7) / 8)
++
++// Setting up macro defines and including GF(p), GF(p^2), curve, isogeny and kex functions
++#define fpcopy                        fpcopy503
++#define fpzero                        fpzero503
++#define fpadd                         fpadd503
++#define fpsub                         fpsub503
++#define fpneg                         fpneg503
++#define fpdiv2                        fpdiv2_503
++#define fpcorrection                  fpcorrection503
++#define fpmul_mont                    fpmul503_mont
++#define fpsqr_mont                    fpsqr503_mont
++#define fpinv_mont                    fpinv503_mont
++#define fpinv_chain_mont              fpinv503_chain_mont
++#define fpinv_mont_bingcd             fpinv503_mont_bingcd
++#define fp2copy                       fp2copy503
++#define fp2zero                       fp2zero503
++#define fp2add                        fp2add503
++#define fp2sub                        fp2sub503
++#define fp2neg                        fp2neg503
++#define fp2div2                       fp2div2_503
++#define fp2correction                 fp2correction503
++#define fp2mul_mont                   fp2mul503_mont
++#define fp2sqr_mont                   fp2sqr503_mont
++#define fp2inv_mont                   fp2inv503_mont
++#define fp2inv_mont_bingcd            fp2inv503_mont_bingcd
++#define fpequal_non_constant_time     fpequal503_non_constant_time
++#define cswap_asm                     cswap503_asm
++#define mp_add_asm                    mp_add503_asm
++#define mp_subx2_asm                  mp_sub503x2_asm
++#define mp_dblsubx2_asm               mp_dblsub503x2_asm
++#define crypto_kem_keypair            crypto_kem_keypair_SIKEp503
++#define crypto_kem_enc                crypto_kem_enc_SIKEp503
++#define crypto_kem_dec                crypto_kem_dec_SIKEp503
++#define random_mod_order_A            random_mod_order_A_SIDHp503
++#define random_mod_order_B            random_mod_order_B_SIDHp503
++#define EphemeralKeyGeneration_A      EphemeralKeyGeneration_A_SIDHp503
++#define EphemeralKeyGeneration_B      EphemeralKeyGeneration_B_SIDHp503
++#define EphemeralSecretAgreement_A    EphemeralSecretAgreement_A_SIDHp503
++#define EphemeralSecretAgreement_B    EphemeralSecretAgreement_B_SIDHp503
++
++// SIDH's basic element definitions and point representations
++
++typedef digit_t felm_t[NWORDS_FIELD];                                 // Datatype for representing 503-bit field elements (512-bit max.)
++typedef digit_t dfelm_t[2*NWORDS_FIELD];                              // Datatype for representing double-precision 2x503-bit field elements (512-bit max.)
++
++/* An element in F_{p^2}, is composed of two coefficients
++   from F_p, * i.e. Fp2 element = c0 + c1*i in F_{p^2}
++ */
++typedef struct {
++    felm_t c0;
++    felm_t c1;
++} fp2;
++
++// Our F_{p^2} element type is a pointer to the struct.
++typedef fp2 f2elm_t[1];
++
++typedef struct { f2elm_t X; f2elm_t Z; } point_proj;                  // Point representation in projective XZ Montgomery coordinates.
++typedef point_proj point_proj_t[1];
++
++/* Old GCC 4.9 (jessie) doesn't implement {0} initialization properly,
++   which violates C11 as described in 6.7.9, 21 (similarily C99, 6.7.8).
++   Defines below are used to work around the bug, and provide a way
++   to initialize f2elem_t and point_proj_t structs.
++   Bug has been fixed in GCC6 (debian stretch).
++*/
++#define F2ELM_INIT {{ {0}, {0} }}
++#define POINT_PROJ_INIT {{ F2ELM_INIT, F2ELM_INIT }}
++
++/**************** Function prototypes ****************/
++/************* Multiprecision functions **************/
++
++// Copy wordsize digits, c = a, where lng(a) = nwords
++void copy_words(const digit_t* a, digit_t* c, const unsigned int nwords);
++
++// Multiprecision addition, c = a+b, where lng(a) = lng(b) = nwords. Returns the carry bit
++unsigned int mp_add(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords);
++
++// 503-bit multiprecision addition, c = a+b
++void mp_add503(const digit_t* a, const digit_t* b, digit_t* c);
++void mp_add503_asm(const digit_t* a, const digit_t* b, digit_t* c);
++void cswap503_asm(point_proj_t x, point_proj_t y, const digit_t option);
++
++// Multiprecision subtraction, c = a-b, where lng(a) = lng(b) = nwords. Returns the borrow bit
++unsigned int mp_sub(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords);
++digit_t mp_sub503x2_asm(const digit_t* a, const digit_t* b, digit_t* c);
++
++// Double 2x503-bit multiprecision subtraction, c = c-a-b, where c > a and c > b
++void mp_dblsub503x2_asm(const digit_t* a, const digit_t* b, digit_t* c);
++
++// Multiprecision left shift
++void mp_shiftleft(digit_t* x, unsigned int shift, const unsigned int nwords);
++
++// Multiprecision right shift by one
++void mp_shiftr1(digit_t* x, const unsigned int nwords);
++
++// Multiprecision left right shift by one
++void mp_shiftl1(digit_t* x, const unsigned int nwords);
++
++// Digit multiplication, digit * digit -> 2-digit result
++void digit_x_digit(const digit_t a, const digit_t b, digit_t* c);
++
++// Multiprecision comba multiply, c = a*b, where lng(a) = lng(b) = nwords.
++void mp_mul(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords);
++
++/************ Field arithmetic functions *************/
++
++// Copy of a field element, c = a
++void fpcopy503(const digit_t* a, digit_t* c);
++
++// Zeroing a field element, a = 0
++void fpzero503(digit_t* a);
++
++// Non constant-time comparison of two field elements. If a = b return TRUE, otherwise, return FALSE
++bool fpequal503_non_constant_time(const digit_t* a, const digit_t* b);
++
++// Modular addition, c = a+b mod p503
++extern void fpadd503(const digit_t* a, const digit_t* b, digit_t* c);
++extern void fpadd503_asm(const digit_t* a, const digit_t* b, digit_t* c);
++
++// Modular subtraction, c = a-b mod p503
++extern void fpsub503(const digit_t* a, const digit_t* b, digit_t* c);
++extern void fpsub503_asm(const digit_t* a, const digit_t* b, digit_t* c);
++
++// Modular negation, a = -a mod p503
++extern void fpneg503(digit_t* a);
++
++// Modular division by two, c = a/2 mod p503.
++void fpdiv2_503(const digit_t* a, digit_t* c);
++
++// Modular correction to reduce field element a in [0, 2*p503-1] to [0, p503-1].
++void fpcorrection503(digit_t* a);
++
++// 503-bit Montgomery reduction, c = a mod p
++void rdc_mont(const digit_t* a, digit_t* c);
++
++// Field multiplication using Montgomery arithmetic, c = a*b*R^-1 mod p503, where R=2^768
++void fpmul503_mont(const digit_t* a, const digit_t* b, digit_t* c);
++void mul503_asm(const digit_t* a, const digit_t* b, digit_t* c);
++void rdc503_asm(const digit_t* ma, digit_t* mc);
++
++// Field squaring using Montgomery arithmetic, c = a*b*R^-1 mod p503, where R=2^768
++void fpsqr503_mont(const digit_t* ma, digit_t* mc);
++
++// Conversion to Montgomery representation
++void to_mont(const digit_t* a, digit_t* mc);
++
++// Conversion from Montgomery representation to standard representation
++void from_mont(const digit_t* ma, digit_t* c);
++
++// Field inversion, a = a^-1 in GF(p503)
++void fpinv503_mont(digit_t* a);
++
++// Field inversion, a = a^-1 in GF(p503) using the binary GCD
++void fpinv503_mont_bingcd(digit_t* a);
++
++// Chain to compute (p503-3)/4 using Montgomery arithmetic
++void fpinv503_chain_mont(digit_t* a);
++
++/************ GF(p^2) arithmetic functions *************/
++
++// Copy of a GF(p503^2) element, c = a
++void fp2copy503(const f2elm_t a, f2elm_t c);
++
++// Zeroing a GF(p503^2) element, a = 0
++void fp2zero503(f2elm_t a);
++
++// GF(p503^2) negation, a = -a in GF(p503^2)
++void fp2neg503(f2elm_t a);
++
++// GF(p503^2) addition, c = a+b in GF(p503^2)
++extern void fp2add503(const f2elm_t a, const f2elm_t b, f2elm_t c);
++
++// GF(p503^2) subtraction, c = a-b in GF(p503^2)
++extern void fp2sub503(const f2elm_t a, const f2elm_t b, f2elm_t c);
++
++// GF(p503^2) division by two, c = a/2  in GF(p503^2)
++void fp2div2_503(const f2elm_t a, f2elm_t c);
++
++// Modular correction, a = a in GF(p503^2)
++void fp2correction503(f2elm_t a);
++
++// GF(p503^2) squaring using Montgomery arithmetic, c = a^2 in GF(p503^2)
++void fp2sqr503_mont(const f2elm_t a, f2elm_t c);
++
++// GF(p503^2) multiplication using Montgomery arithmetic, c = a*b in GF(p503^2)
++void fp2mul503_mont(const f2elm_t a, const f2elm_t b, f2elm_t c);
++
++// Conversion of a GF(p503^2) element to Montgomery representation
++void to_fp2mont(const f2elm_t a, f2elm_t mc);
++
++// Conversion of a GF(p503^2) element from Montgomery representation to standard representation
++void from_fp2mont(const f2elm_t ma, f2elm_t c);
++
++// GF(p503^2) inversion using Montgomery arithmetic, a = (a0-i*a1)/(a0^2+a1^2)
++void fp2inv503_mont(f2elm_t a);
++
++// GF(p503^2) inversion, a = (a0-i*a1)/(a0^2+a1^2), GF(p503) inversion done using the binary GCD
++void fp2inv503_mont_bingcd(f2elm_t a);
++
++// n-way Montgomery inversion
++void mont_n_way_inv(const f2elm_t* vec, const int n, f2elm_t* out);
++
++/************ Elliptic curve and isogeny functions *************/
++
++// Computes the j-invariant of a Montgomery curve with projective constant.
++void j_inv(const f2elm_t A, const f2elm_t C, f2elm_t jinv);
++
++// Simultaneous doubling and differential addition.
++void xDBLADD(point_proj_t P, point_proj_t Q, const f2elm_t xPQ, const f2elm_t A24);
++
++// Doubling of a Montgomery point in projective coordinates (X:Z).
++void xDBL(const point_proj_t P, point_proj_t Q, const f2elm_t A24plus, const f2elm_t C24);
++
++// Computes [2^e](X:Z) on Montgomery curve with projective constant via e repeated doublings.
++void xDBLe(const point_proj_t P, point_proj_t Q, const f2elm_t A24plus, const f2elm_t C24, const int e);
++
++// Differential addition.
++void xADD(point_proj_t P, const point_proj_t Q, const f2elm_t xPQ);
++
++// Computes the corresponding 4-isogeny of a projective Montgomery point (X4:Z4) of order 4.
++void get_4_isog(const point_proj_t P, f2elm_t A24plus, f2elm_t C24, f2elm_t* coeff);
++
++// Evaluates the isogeny at the point (X:Z) in the domain of the isogeny.
++void eval_4_isog(point_proj_t P, f2elm_t* coeff);
++
++// Tripling of a Montgomery point in projective coordinates (X:Z).
++void xTPL(const point_proj_t P, point_proj_t Q, const f2elm_t A24minus, const f2elm_t A24plus);
++
++// Computes [3^e](X:Z) on Montgomery curve with projective constant via e repeated triplings.
++void xTPLe(const point_proj_t P, point_proj_t Q, const f2elm_t A24minus, const f2elm_t A24plus, const int e);
++
++// Computes the corresponding 3-isogeny of a projective Montgomery point (X3:Z3) of order 3.
++void get_3_isog(const point_proj_t P, f2elm_t A24minus, f2elm_t A24plus, f2elm_t* coeff);
++
++// Computes the 3-isogeny R=phi(X:Z), given projective point (X3:Z3) of order 3 on a Montgomery curve and a point P with coefficients given in coeff.
++void eval_3_isog(point_proj_t Q, f2elm_t* coeff);
++
++// 3-way simultaneous inversion
++void inv_3_way(f2elm_t z1, f2elm_t z2, f2elm_t z3);
++
++// Given the x-coordinates of P, Q, and R, returns the value A corresponding to the Montgomery curve E_A: y^2=x^3+A*x^2+x such that R=Q-P on E_A.
++void get_A(const f2elm_t xP, const f2elm_t xQ, const f2elm_t xR, f2elm_t A);
++
++
++#endif
+diff --git a/third_party/sidh/src/ec_isogeny.c b/third_party/sidh/src/ec_isogeny.c
+new file mode 100644
+index 000000000..c512c5831
+--- /dev/null
++++ b/third_party/sidh/src/ec_isogeny.c
+@@ -0,0 +1,270 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: elliptic curve and isogeny functions
++*********************************************************************************************/
++#include "sidh/def_p503.h"
++#include "P503_internal.h"
++
++extern const struct params_t kP503Params;
++
++void xDBL(const point_proj_t P, point_proj_t Q, const f2elm_t A24plus, const f2elm_t C24)
++{ // Doubling of a Montgomery point in projective coordinates (X:Z).
++  // Input: projective Montgomery x-coordinates P = (X1:Z1), where x1=X1/Z1 and Montgomery curve constants A+2C and 4C.
++  // Output: projective Montgomery x-coordinates Q = 2*P = (X2:Z2).
++    f2elm_t t0, t1;
++
++    fp2sub(P->X, P->Z, t0);                         // t0 = X1-Z1
++    fp2add(P->X, P->Z, t1);                         // t1 = X1+Z1
++    fp2sqr_mont(t0, t0);                            // t0 = (X1-Z1)^2
++    fp2sqr_mont(t1, t1);                            // t1 = (X1+Z1)^2
++    fp2mul_mont(C24, t0, Q->Z);                     // Z2 = C24*(X1-Z1)^2
++    fp2mul_mont(t1, Q->Z, Q->X);                    // X2 = C24*(X1-Z1)^2*(X1+Z1)^2
++    fp2sub(t1, t0, t1);                             // t1 = (X1+Z1)^2-(X1-Z1)^2
++    fp2mul_mont(A24plus, t1, t0);                   // t0 = A24plus*[(X1+Z1)^2-(X1-Z1)^2]
++    fp2add(Q->Z, t0, Q->Z);                         // Z2 = A24plus*[(X1+Z1)^2-(X1-Z1)^2] + C24*(X1-Z1)^2
++    fp2mul_mont(Q->Z, t1, Q->Z);                    // Z2 = [A24plus*[(X1+Z1)^2-(X1-Z1)^2] + C24*(X1-Z1)^2]*[(X1+Z1)^2-(X1-Z1)^2]
++}
++
++
++void xDBLe(const point_proj_t P, point_proj_t Q, const f2elm_t A24plus, const f2elm_t C24, const int e)
++{ // Computes [2^e](X:Z) on Montgomery curve with projective constant via e repeated doublings.
++  // Input: projective Montgomery x-coordinates P = (XP:ZP), such that xP=XP/ZP and Montgomery curve constants A+2C and 4C.
++  // Output: projective Montgomery x-coordinates Q <- (2^e)*P.
++    int i;
++
++    copy_words((digit_t*)P, (digit_t*)Q, 2*2*NWORDS_FIELD);
++
++    for (i = 0; i < e; i++) {
++        xDBL(Q, Q, A24plus, C24);
++    }
++}
++
++
++void get_4_isog(const point_proj_t P, f2elm_t A24plus, f2elm_t C24, f2elm_t* coeff)
++{ // Computes the corresponding 4-isogeny of a projective Montgomery point (X4:Z4) of order 4.
++  // Input:  projective point of order four P = (X4:Z4).
++  // Output: the 4-isogenous Montgomery curve with projective coefficients A+2C/4C and the 3 coefficients
++  //         that are used to evaluate the isogeny at a point in eval_4_isog().
++
++    fp2sub(P->X, P->Z, coeff[1]);                   // coeff[1] = X4-Z4
++    fp2add(P->X, P->Z, coeff[2]);                   // coeff[2] = X4+Z4
++    fp2sqr_mont(P->Z, coeff[0]);                    // coeff[0] = Z4^2
++    fp2add(coeff[0], coeff[0], coeff[0]);           // coeff[0] = 2*Z4^2
++    fp2sqr_mont(coeff[0], C24);                     // C24 = 4*Z4^4
++    fp2add(coeff[0], coeff[0], coeff[0]);           // coeff[0] = 4*Z4^2
++    fp2sqr_mont(P->X, A24plus);                     // A24plus = X4^2
++    fp2add(A24plus, A24plus, A24plus);              // A24plus = 2*X4^2
++    fp2sqr_mont(A24plus, A24plus);                  // A24plus = 4*X4^4
++}
++
++
++void eval_4_isog(point_proj_t P, f2elm_t* coeff)
++{ // Evaluates the isogeny at the point (X:Z) in the domain of the isogeny, given a 4-isogeny phi defined
++  // by the 3 coefficients in coeff (computed in the function get_4_isog()).
++  // Inputs: the coefficients defining the isogeny, and the projective point P = (X:Z).
++  // Output: the projective point P = phi(P) = (X:Z) in the codomain.
++    f2elm_t t0, t1;
++
++    fp2add(P->X, P->Z, t0);                         // t0 = X+Z
++    fp2sub(P->X, P->Z, t1);                         // t1 = X-Z
++    fp2mul_mont(t0, coeff[1], P->X);                // X = (X+Z)*coeff[1]
++    fp2mul_mont(t1, coeff[2], P->Z);                // Z = (X-Z)*coeff[2]
++    fp2mul_mont(t0, t1, t0);                        // t0 = (X+Z)*(X-Z)
++    fp2mul_mont(t0, coeff[0], t0);                  // t0 = coeff[0]*(X+Z)*(X-Z)
++    fp2add(P->X, P->Z, t1);                         // t1 = (X-Z)*coeff[2] + (X+Z)*coeff[1]
++    fp2sub(P->X, P->Z, P->Z);                       // Z = (X-Z)*coeff[2] - (X+Z)*coeff[1]
++    fp2sqr_mont(t1, t1);                            // t1 = [(X-Z)*coeff[2] + (X+Z)*coeff[1]]^2
++    fp2sqr_mont(P->Z, P->Z);                        // Z = [(X-Z)*coeff[2] - (X+Z)*coeff[1]]^2
++    fp2add(t1, t0, P->X);                           // X = coeff[0]*(X+Z)*(X-Z) + [(X-Z)*coeff[2] + (X+Z)*coeff[1]]^2
++    fp2sub(P->Z, t0, t0);                           // t0 = [(X-Z)*coeff[2] - (X+Z)*coeff[1]]^2 - coeff[0]*(X+Z)*(X-Z)
++    fp2mul_mont(P->X, t1, P->X);                    // Xfinal
++    fp2mul_mont(P->Z, t0, P->Z);                    // Zfinal
++}
++
++
++void xTPL(const point_proj_t P, point_proj_t Q, const f2elm_t A24minus, const f2elm_t A24plus)
++{ // Tripling of a Montgomery point in projective coordinates (X:Z).
++  // Input: projective Montgomery x-coordinates P = (X:Z), where x=X/Z and Montgomery curve constants A24plus = A+2C and A24minus = A-2C.
++  // Output: projective Montgomery x-coordinates Q = 3*P = (X3:Z3).
++    f2elm_t t0, t1, t2, t3, t4, t5, t6;
++
++    fp2sub(P->X, P->Z, t0);                         // t0 = X-Z
++    fp2sqr_mont(t0, t2);                            // t2 = (X-Z)^2
++    fp2add(P->X, P->Z, t1);                         // t1 = X+Z
++    fp2sqr_mont(t1, t3);                            // t3 = (X+Z)^2
++    fp2add(t0, t1, t4);                             // t4 = 2*X
++    fp2sub(t1, t0, t0);                             // t0 = 2*Z
++    fp2sqr_mont(t4, t1);                            // t1 = 4*X^2
++    fp2sub(t1, t3, t1);                             // t1 = 4*X^2 - (X+Z)^2
++    fp2sub(t1, t2, t1);                             // t1 = 4*X^2 - (X+Z)^2 - (X-Z)^2
++    fp2mul_mont(t3, A24plus, t5);                   // t5 = A24plus*(X+Z)^2
++    fp2mul_mont(t3, t5, t3);                        // t3 = A24plus*(X+Z)^3
++    fp2mul_mont(A24minus, t2, t6);                  // t6 = A24minus*(X-Z)^2
++    fp2mul_mont(t2, t6, t2);                        // t2 = A24minus*(X-Z)^3
++    fp2sub(t2, t3, t3);                             // t3 = A24minus*(X-Z)^3 - coeff*(X+Z)^3
++    fp2sub(t5, t6, t2);                             // t2 = A24plus*(X+Z)^2 - A24minus*(X-Z)^2
++    fp2mul_mont(t1, t2, t1);                        // t1 = [4*X^2 - (X+Z)^2 - (X-Z)^2]*[A24plus*(X+Z)^2 - A24minus*(X-Z)^2]
++    fp2add(t3, t1, t2);                             // t2 = [4*X^2 - (X+Z)^2 - (X-Z)^2]*[A24plus*(X+Z)^2 - A24minus*(X-Z)^2] + A24minus*(X-Z)^3 - coeff*(X+Z)^3
++    fp2sqr_mont(t2, t2);                            // t2 = t2^2
++    fp2mul_mont(t4, t2, Q->X);                      // X3 = 2*X*t2
++    fp2sub(t3, t1, t1);                             // t1 = A24minus*(X-Z)^3 - A24plus*(X+Z)^3 - [4*X^2 - (X+Z)^2 - (X-Z)^2]*[A24plus*(X+Z)^2 - A24minus*(X-Z)^2]
++    fp2sqr_mont(t1, t1);                            // t1 = t1^2
++    fp2mul_mont(t0, t1, Q->Z);                      // Z3 = 2*Z*t1
++}
++
++
++void xTPLe(const point_proj_t P, point_proj_t Q, const f2elm_t A24minus, const f2elm_t A24plus, const int e)
++{ // Computes [3^e](X:Z) on Montgomery curve with projective constant via e repeated triplings.
++  // Input: projective Montgomery x-coordinates P = (XP:ZP), such that xP=XP/ZP and Montgomery curve constants A24plus = A+2C and A24minus = A-2C.
++  // Output: projective Montgomery x-coordinates Q <- (3^e)*P.
++    int i;
++
++    copy_words((digit_t*)P, (digit_t*)Q, 2*2*NWORDS_FIELD);
++
++    for (i = 0; i < e; i++) {
++        xTPL(Q, Q, A24minus, A24plus);
++    }
++}
++
++
++void get_3_isog(const point_proj_t P, f2elm_t A24minus, f2elm_t A24plus, f2elm_t* coeff)
++{ // Computes the corresponding 3-isogeny of a projective Montgomery point (X3:Z3) of order 3.
++  // Input:  projective point of order three P = (X3:Z3).
++  // Output: the 3-isogenous Montgomery curve with projective coefficient A/C.
++    f2elm_t t0, t1, t2, t3, t4;
++
++    fp2sub(P->X, P->Z, coeff[0]);                   // coeff0 = X-Z
++    fp2sqr_mont(coeff[0], t0);                      // t0 = (X-Z)^2
++    fp2add(P->X, P->Z, coeff[1]);                   // coeff1 = X+Z
++    fp2sqr_mont(coeff[1], t1);                      // t1 = (X+Z)^2
++    fp2add(t0, t1, t2);                             // t2 = (X+Z)^2 + (X-Z)^2
++    fp2add(coeff[0], coeff[1], t3);                 // t3 = 2*X
++    fp2sqr_mont(t3, t3);                            // t3 = 4*X^2
++    fp2sub(t3, t2, t3);                             // t3 = 4*X^2 - (X+Z)^2 - (X-Z)^2
++    fp2add(t1, t3, t2);                             // t2 = 4*X^2 - (X-Z)^2
++    fp2add(t3, t0, t3);                             // t3 = 4*X^2 - (X+Z)^2
++    fp2add(t0, t3, t4);                             // t4 = 4*X^2 - (X+Z)^2 + (X-Z)^2
++    fp2add(t4, t4, t4);                             // t4 = 2(4*X^2 - (X+Z)^2 + (X-Z)^2)
++    fp2add(t1, t4, t4);                             // t4 = 8*X^2 - (X+Z)^2 + 2*(X-Z)^2
++    fp2mul_mont(t2, t4, A24minus);                  // A24minus = [4*X^2 - (X-Z)^2]*[8*X^2 - (X+Z)^2 + 2*(X-Z)^2]
++    fp2add(t1, t2, t4);                             // t4 = 4*X^2 + (X+Z)^2 - (X-Z)^2
++    fp2add(t4, t4, t4);                             // t4 = 2(4*X^2 + (X+Z)^2 - (X-Z)^2)
++    fp2add(t0, t4, t4);                             // t4 = 8*X^2 + 2*(X+Z)^2 - (X-Z)^2
++    fp2mul_mont(t3, t4, t4);                        // t4 = [4*X^2 - (X+Z)^2]*[8*X^2 + 2*(X+Z)^2 - (X-Z)^2]
++    fp2sub(t4, A24minus, t0);                       // t0 = [4*X^2 - (X+Z)^2]*[8*X^2 + 2*(X+Z)^2 - (X-Z)^2] - [4*X^2 - (X-Z)^2]*[8*X^2 - (X+Z)^2 + 2*(X-Z)^2]
++    fp2add(A24minus, t0, A24plus);                  // A24plus = 8*X^2 - (X+Z)^2 + 2*(X-Z)^2
++}
++
++
++void eval_3_isog(point_proj_t Q, f2elm_t* coeff)
++{ // Computes the 3-isogeny R=phi(X:Z), given projective point (X3:Z3) of order 3 on a Montgomery curve and
++  // a point P with 2 coefficients in coeff (computed in the function get_3_isog()).
++  // Inputs: projective points P = (X3:Z3) and Q = (X:Z).
++  // Output: the projective point Q <- phi(Q) = (X3:Z3).
++    f2elm_t t0, t1, t2;
++
++    fp2add(Q->X, Q->Z, t0);                       // t0 = X+Z
++    fp2sub(Q->X, Q->Z, t1);                       // t1 = X-Z
++    fp2mul_mont(t0, coeff[0], t0);                // t0 = coeff0*(X+Z)
++    fp2mul_mont(t1, coeff[1], t1);                // t1 = coeff1*(X-Z)
++    fp2add(t0, t1, t2);                           // t2 = coeff0*(X+Z) + coeff1*(X-Z)
++    fp2sub(t1, t0, t0);                           // t0 = coeff1*(X-Z) - coeff0*(X+Z)
++    fp2sqr_mont(t2, t2);                          // t2 = [coeff0*(X+Z) + coeff1*(X-Z)]^2
++    fp2sqr_mont(t0, t0);                          // t0 = [coeff1*(X-Z) - coeff0*(X+Z)]^2
++    fp2mul_mont(Q->X, t2, Q->X);                  // X3final = X*[coeff0*(X+Z) + coeff1*(X-Z)]^2
++    fp2mul_mont(Q->Z, t0, Q->Z);                  // Z3final = Z*[coeff1*(X-Z) - coeff0*(X+Z)]^2
++}
++
++
++void inv_3_way(f2elm_t z1, f2elm_t z2, f2elm_t z3)
++{ // 3-way simultaneous inversion
++  // Input:  z1,z2,z3
++  // Output: 1/z1,1/z2,1/z3 (override inputs).
++    f2elm_t t0, t1, t2, t3;
++
++    fp2mul_mont(z1, z2, t0);                      // t0 = z1*z2
++    fp2mul_mont(z3, t0, t1);                      // t1 = z1*z2*z3
++    fp2inv_mont(t1);                              // t1 = 1/(z1*z2*z3)
++    fp2mul_mont(z3, t1, t2);                      // t2 = 1/(z1*z2)
++    fp2mul_mont(t2, z2, t3);                      // t3 = 1/z1
++    fp2mul_mont(t2, z1, z2);                      // z2 = 1/z2
++    fp2mul_mont(t0, t1, z3);                      // z3 = 1/z3
++    fp2copy(t3, z1);                              // z1 = 1/z1
++}
++
++
++void get_A(const f2elm_t xP, const f2elm_t xQ, const f2elm_t xR, f2elm_t A)
++{ // Given the x-coordinates of P, Q, and R, returns the value A corresponding to the Montgomery curve E_A: y^2=x^3+A*x^2+x such that R=Q-P on E_A.
++  // Input:  the x-coordinates xP, xQ, and xR of the points P, Q and R.
++  // Output: the coefficient A corresponding to the curve E_A: y^2=x^3+A*x^2+x.
++    f2elm_t t0, t1, one = F2ELM_INIT;
++
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, one->c0);
++    fp2add(xP, xQ, t1);                           // t1 = xP+xQ
++    fp2mul_mont(xP, xQ, t0);                      // t0 = xP*xQ
++    fp2mul_mont(xR, t1, A);                       // A = xR*t1
++    fp2add(t0, A, A);                             // A = A+t0
++    fp2mul_mont(t0, xR, t0);                      // t0 = t0*xR
++    fp2sub(A, one, A);                            // A = A-1
++    fp2add(t0, t0, t0);                           // t0 = t0+t0
++    fp2add(t1, xR, t1);                           // t1 = t1+xR
++    fp2add(t0, t0, t0);                           // t0 = t0+t0
++    fp2sqr_mont(A, A);                            // A = A^2
++    fp2inv_mont(t0);                              // t0 = 1/t0
++    fp2mul_mont(A, t0, A);                        // A = A*t0
++    fp2sub(A, t1, A);                             // Afinal = A-t1
++}
++
++
++void j_inv(const f2elm_t A, const f2elm_t C, f2elm_t jinv)
++{ // Computes the j-invariant of a Montgomery curve with projective constant.
++  // Input: A,C in GF(p^2).
++  // Output: j=256*(A^2-3*C^2)^3/(C^4*(A^2-4*C^2)), which is the j-invariant of the Montgomery curve B*y^2=x^3+(A/C)*x^2+x or (equivalently) j-invariant of B'*y^2=C*x^3+A*x^2+C*x.
++    f2elm_t t0, t1;
++
++    fp2sqr_mont(A, jinv);                           // jinv = A^2
++    fp2sqr_mont(C, t1);                             // t1 = C^2
++    fp2add(t1, t1, t0);                             // t0 = t1+t1
++    fp2sub(jinv, t0, t0);                           // t0 = jinv-t0
++    fp2sub(t0, t1, t0);                             // t0 = t0-t1
++    fp2sub(t0, t1, jinv);                           // jinv = t0-t1
++    fp2sqr_mont(t1, t1);                            // t1 = t1^2
++    fp2mul_mont(jinv, t1, jinv);                    // jinv = jinv*t1
++    fp2add(t0, t0, t0);                             // t0 = t0+t0
++    fp2add(t0, t0, t0);                             // t0 = t0+t0
++    fp2sqr_mont(t0, t1);                            // t1 = t0^2
++    fp2mul_mont(t0, t1, t0);                        // t0 = t0*t1
++    fp2add(t0, t0, t0);                             // t0 = t0+t0
++    fp2add(t0, t0, t0);                             // t0 = t0+t0
++    fp2inv_mont(jinv);                              // jinv = 1/jinv
++    fp2mul_mont(jinv, t0, jinv);                    // jinv = t0*jinv
++}
++
++
++void xDBLADD(point_proj_t P, point_proj_t Q, const f2elm_t xPQ, const f2elm_t A24)
++{ // Simultaneous doubling and differential addition.
++  // Input: projective Montgomery points P=(XP:ZP) and Q=(XQ:ZQ) such that xP=XP/ZP and xQ=XQ/ZQ, affine difference xPQ=x(P-Q) and Montgomery curve constant A24=(A+2)/4.
++  // Output: projective Montgomery points P <- 2*P = (X2P:Z2P) such that x(2P)=X2P/Z2P, and Q <- P+Q = (XQP:ZQP) such that = x(Q+P)=XQP/ZQP.
++    f2elm_t t0, t1, t2;
++
++    fp2add(P->X, P->Z, t0);                         // t0 = XP+ZP
++    fp2sub(P->X, P->Z, t1);                         // t1 = XP-ZP
++    fp2sqr_mont(t0, P->X);                          // XP = (XP+ZP)^2
++    fp2sub(Q->X, Q->Z, t2);                         // t2 = XQ-ZQ
++    fp2correction(t2);
++    fp2add(Q->X, Q->Z, Q->X);                       // XQ = XQ+ZQ
++    fp2mul_mont(t0, t2, t0);                        // t0 = (XP+ZP)*(XQ-ZQ)
++    fp2sqr_mont(t1, P->Z);                          // ZP = (XP-ZP)^2
++    fp2mul_mont(t1, Q->X, t1);                      // t1 = (XP-ZP)*(XQ+ZQ)
++    fp2sub(P->X, P->Z, t2);                         // t2 = (XP+ZP)^2-(XP-ZP)^2
++    fp2mul_mont(P->X, P->Z, P->X);                  // XP = (XP+ZP)^2*(XP-ZP)^2
++    fp2mul_mont(t2, A24, Q->X);                     // XQ = A24*[(XP+ZP)^2-(XP-ZP)^2]
++    fp2sub(t0, t1, Q->Z);                           // ZQ = (XP+ZP)*(XQ-ZQ)-(XP-ZP)*(XQ+ZQ)
++    fp2add(Q->X, P->Z, P->Z);                       // ZP = A24*[(XP+ZP)^2-(XP-ZP)^2]+(XP-ZP)^2
++    fp2add(t0, t1, Q->X);                           // XQ = (XP+ZP)*(XQ-ZQ)+(XP-ZP)*(XQ+ZQ)
++    fp2mul_mont(P->Z, t2, P->Z);                    // ZP = [A24*[(XP+ZP)^2-(XP-ZP)^2]+(XP-ZP)^2]*[(XP+ZP)^2-(XP-ZP)^2]
++    fp2sqr_mont(Q->Z, Q->Z);                        // ZQ = [(XP+ZP)*(XQ-ZQ)-(XP-ZP)*(XQ+ZQ)]^2
++    fp2sqr_mont(Q->X, Q->X);                        // XQ = [(XP+ZP)*(XQ-ZQ)+(XP-ZP)*(XQ+ZQ)]^2
++    fp2mul_mont(Q->Z, xPQ, Q->Z);                   // ZQ = xPQ*[(XP+ZP)*(XQ-ZQ)-(XP-ZP)*(XQ+ZQ)]^2
++}
+diff --git a/third_party/sidh/src/fpx.c b/third_party/sidh/src/fpx.c
+new file mode 100644
+index 000000000..4f933cbb5
+--- /dev/null
++++ b/third_party/sidh/src/fpx.c
+@@ -0,0 +1,420 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: core functions over GF(p) and GF(p^2)
++*********************************************************************************************/
++
++#include "sidh/def_p503.h"
++#include "P503_internal.h"
++#include "internal.h"
++
++extern const struct params_t kP503Params;
++
++inline void fpcopy(const felm_t a, felm_t c)
++{ // Copy a field element, c = a.
++    unsigned int i;
++
++    for (i = 0; i < NWORDS_FIELD; i++)
++        c[i] = a[i];
++}
++
++
++inline void fpzero(felm_t a)
++{ // Zero a field element, a = 0.
++    unsigned int i;
++
++    for (i = 0; i < NWORDS_FIELD; i++)
++        a[i] = 0;
++}
++
++
++void to_mont(const felm_t a, felm_t mc)
++{ // Conversion to Montgomery representation,
++  // mc = a*R^2*R^(-1) mod p = a*R mod p, where a in [0, p-1].
++  // The Montgomery constant R^2 mod p is the global value "Montgomery_R2".
++
++    fpmul_mont(a, (digit_t*)&kP503Params.Montgomery_R2, mc);
++}
++
++
++void from_mont(const felm_t ma, felm_t c)
++{ // Conversion from Montgomery representation to standard representation,
++  // c = ma*R^(-1) mod p = a mod p, where ma in [0, p-1].
++    digit_t one[NWORDS_FIELD] = {0};
++
++    one[0] = 1;
++    fpmul_mont(ma, one, c);
++    fpcorrection(c);
++}
++
++
++void copy_words(const digit_t* a, digit_t* c, const unsigned int nwords)
++{ // Copy wordsize digits, c = a, where lng(a) = nwords.
++    unsigned int i;
++
++    for (i = 0; i < nwords; i++) {
++        c[i] = a[i];
++    }
++}
++
++
++void fpmul_mont(const felm_t ma, const felm_t mb, felm_t mc)
++{ // Multiprecision multiplication, c = a*b mod p.
++    dfelm_t temp = {0};
++
++    mp_mul(ma, mb, temp, NWORDS_FIELD);
++    rdc_mont(temp, mc);
++}
++
++
++void fpsqr_mont(const felm_t ma, felm_t mc)
++{ // Multiprecision squaring, c = a^2 mod p.
++    dfelm_t temp = {0};
++
++    mp_mul(ma, ma, temp, NWORDS_FIELD);
++    rdc_mont(temp, mc);
++}
++
++
++void fpinv_mont(felm_t a)
++{ // Field inversion using Montgomery arithmetic, a = a^(-1)*R mod p.
++    felm_t tt;
++
++    fpcopy(a, tt);
++    fpinv_chain_mont(tt);
++    fpsqr_mont(tt, tt);
++    fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, a);
++}
++
++
++void fp2copy(const f2elm_t a, f2elm_t c)
++{ // Copy a GF(p^2) element, c = a.
++    fpcopy(a->c0, c->c0);
++    fpcopy(a->c1, c->c1);
++}
++
++
++void fp2zero(f2elm_t a)
++{ // Zero a GF(p^2) element, a = 0.
++    fpzero(a->c0);
++    fpzero(a->c1);
++}
++
++
++void fp2neg(f2elm_t a)
++{ // GF(p^2) negation, a = -a in GF(p^2).
++    fpneg(a->c0);
++    fpneg(a->c1);
++}
++
++inline void fp2add(const f2elm_t a, const f2elm_t b, f2elm_t c)
++{ // GF(p^2) addition, c = a+b in GF(p^2).
++    fpadd(a->c0, b->c0, c->c0);
++    fpadd(a->c1, b->c1, c->c1);
++}
++
++inline void fp2sub(const f2elm_t a, const f2elm_t b, f2elm_t c)
++{ // GF(p^2) subtraction, c = a-b in GF(p^2).
++    fpsub(a->c0, b->c0, c->c0);
++    fpsub(a->c1, b->c1, c->c1);
++}
++
++
++void fp2div2(const f2elm_t a, f2elm_t c)
++{ // GF(p^2) division by two, c = a/2  in GF(p^2).
++    fpdiv2(a->c0, c->c0);
++    fpdiv2(a->c1, c->c1);
++}
++
++
++void fp2correction(f2elm_t a)
++{ // Modular correction, a = a in GF(p^2).
++    fpcorrection(a->c0);
++    fpcorrection(a->c1);
++}
++
++
++inline static void mp_addfast(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Multiprecision addition, c = a+b.
++#if defined(OPENSSL_NO_ASM)
++    mp_add(a, b, c, NWORDS_FIELD);
++#else
++    mp_add_asm(a, b, c);
++
++#endif
++}
++
++
++void fp2sqr_mont(const f2elm_t a, f2elm_t c)
++{ // GF(p^2) squaring using Montgomery arithmetic, c = a^2 in GF(p^2).
++  // Inputs: a = a0+a1*i, where a0, a1 are in [0, 2*p-1]
++  // Output: c = c0+c1*i, where c0, c1 are in [0, 2*p-1]
++    felm_t t1, t2, t3;
++
++    mp_addfast(a->c0, a->c1, t1);                      // t1 = a0+a1
++    fpsub(a->c0, a->c1, t2);                           // t2 = a0-a1
++    mp_addfast(a->c0, a->c0, t3);                      // t3 = 2a0
++    fpmul_mont(t1, t2, c->c0);                        // c0 = (a0+a1)(a0-a1)
++    fpmul_mont(t3, a->c1, c->c1);                      // c1 = 2a0*a1
++}
++
++
++inline unsigned int mp_sub(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords)
++{ // Multiprecision subtraction, c = a-b, where lng(a) = lng(b) = nwords. Returns the borrow bit.
++    unsigned int i, borrow = 0;
++
++    for (i = 0; i < nwords; i++) {
++        SUBC(borrow, a[i], b[i], borrow, c[i]);
++    }
++
++    return borrow;
++}
++
++
++inline static digit_t mp_subfast(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Multiprecision subtraction, c = a-b, where lng(a) = lng(b) = 2*NWORDS_FIELD.
++  // If c < 0 then returns mask = 0xFF..F, else mask = 0x00..0
++#if defined(OPENSSL_NO_ASM)
++
++    return (0 - (digit_t)mp_sub(a, b, c, 2*NWORDS_FIELD));
++
++#else
++
++    return mp_subx2_asm(a, b, c);
++
++#endif
++}
++
++
++inline static void mp_dblsubfast(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Multiprecision subtraction, c = c-a-b, where lng(a) = lng(b) = 2*NWORDS_FIELD.
++  // Inputs should be s.t. c > a and c > b
++#if defined(OPENSSL_NO_ASM)
++
++    mp_sub(c, a, c, 2*NWORDS_FIELD);
++    mp_sub(c, b, c, 2*NWORDS_FIELD);
++
++#else
++
++    mp_dblsubx2_asm(a, b, c);
++
++#endif
++}
++
++
++void fp2mul_mont(const f2elm_t a, const f2elm_t b, f2elm_t c)
++{ // GF(p^2) multiplication using Montgomery arithmetic, c = a*b in GF(p^2).
++  // Inputs: a = a0+a1*i and b = b0+b1*i, where a0, a1, b0, b1 are in [0, 2*p-1]
++  // Output: c = c0+c1*i, where c0, c1 are in [0, 2*p-1]
++    felm_t t1, t2;
++    dfelm_t tt1, tt2, tt3;
++    digit_t mask;
++    unsigned int i;
++
++    mp_addfast(a->c0, a->c1, t1);                      // t1 = a0+a1
++    mp_addfast(b->c0, b->c1, t2);                      // t2 = b0+b1
++    mp_mul(a->c0, b->c0, tt1, NWORDS_FIELD);           // tt1 = a0*b0
++    mp_mul(a->c1, b->c1, tt2, NWORDS_FIELD);           // tt2 = a1*b1
++    mp_mul(t1, t2, tt3, NWORDS_FIELD);               // tt3 = (a0+a1)*(b0+b1)
++    mp_dblsubfast(tt1, tt2, tt3);                    // tt3 = (a0+a1)*(b0+b1) - a0*b0 - a1*b1
++    mask = mp_subfast(tt1, tt2, tt1);                // tt1 = a0*b0 - a1*b1. If tt1 < 0 then mask = 0xFF..F, else if tt1 >= 0 then mask = 0x00..0
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        t1[i] = ((digit_t*)kP503Params.prime)[i] & mask;
++    }
++
++    rdc_mont(tt3, c->c1);                             // c[1] = (a0+a1)*(b0+b1) - a0*b0 - a1*b1
++    mp_addfast((digit_t*)&tt1[NWORDS_FIELD], t1, (digit_t*)&tt1[NWORDS_FIELD]);
++    rdc_mont(tt1, c->c0);                             // c[0] = a0*b0 - a1*b1
++}
++
++
++void fpinv_chain_mont(felm_t a)
++{ // Chain to compute a^(p-3)/4 using Montgomery arithmetic.
++    unsigned int i, j;
++    felm_t t[15], tt;
++
++    // Precomputed table
++    fpsqr_mont(a, tt);
++    fpmul_mont(a, tt, t[0]);
++    for (i = 0; i <= 13; i++) fpmul_mont(t[i], tt, t[i+1]);
++
++    fpcopy(a, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[8], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 6; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[9], tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[0], tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[2], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[8], tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[10], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[0], tt, tt);
++    for (i = 0; i < 6; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[10], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[10], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[5], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[2], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[3], tt, tt);
++    for (i = 0; i < 6; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[5], tt, tt);
++    for (i = 0; i < 12; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[12], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[8], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[12], tt, tt);
++    for (i = 0; i < 6; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[11], tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[5], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[14], tt, tt);
++    for (i = 0; i < 7; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[14], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[5], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[8], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[4], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[6], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[5], tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[7], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(a, tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[0], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[11], tt, tt);
++    for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[13], tt, tt);
++    for (i = 0; i < 8; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[1], tt, tt);
++    for (i = 0; i < 6; i++) fpsqr_mont(tt, tt);
++    fpmul_mont(t[10], tt, tt);
++    for (j = 0; j < 49; j++) {
++        for (i = 0; i < 5; i++) fpsqr_mont(tt, tt);
++        fpmul_mont(t[14], tt, tt);
++    }
++    fpcopy(tt, a);
++}
++
++
++void fp2inv_mont(f2elm_t a)
++{// GF(p^2) inversion using Montgomery arithmetic, a = (a0-i*a1)/(a0^2+a1^2).
++    f2elm_t t1;
++
++    fpsqr_mont(a->c0, t1->c0);                         // t10 = a0^2
++    fpsqr_mont(a->c1, t1->c1);                         // t11 = a1^2
++    fpadd(t1->c0, t1->c1, t1->c0);                      // t10 = a0^2+a1^2
++    fpinv_mont(t1->c0);                               // t10 = (a0^2+a1^2)^-1
++    fpneg(a->c1);                                     // a = a0-i*a1
++    fpmul_mont(a->c0, t1->c0, a->c0);
++    fpmul_mont(a->c1, t1->c0, a->c1);                   // a = (a0-i*a1)*(a0^2+a1^2)^-1
++}
++
++
++void to_fp2mont(const f2elm_t a, f2elm_t mc)
++{ // Conversion of a GF(p^2) element to Montgomery representation,
++  // mc_i = a_i*R^2*R^(-1) = a_i*R in GF(p^2).
++
++    to_mont(a->c0, mc->c0);
++    to_mont(a->c1, mc->c1);
++}
++
++
++void from_fp2mont(const f2elm_t ma, f2elm_t c)
++{ // Conversion of a GF(p^2) element from Montgomery representation to standard representation,
++  // c_i = ma_i*R^(-1) = a_i in GF(p^2).
++
++    from_mont(ma->c0, c->c0);
++    from_mont(ma->c1, c->c1);
++}
++
++
++inline unsigned int mp_add(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords)
++{ // Multiprecision addition, c = a+b, where lng(a) = lng(b) = nwords. Returns the carry bit.
++    unsigned int i, carry = 0;
++
++    for (i = 0; i < nwords; i++) {
++        ADDC(carry, a[i], b[i], carry, c[i]);
++    }
++
++    return carry;
++}
++
++
++void mp_shiftleft(digit_t* x, unsigned int shift, const unsigned int nwords)
++{
++    unsigned int i, j = 0;
++
++    while (shift > RADIX) {
++        j += 1;
++        shift -= RADIX;
++    }
++
++    for (i = 0; i < nwords-j; i++)
++        x[nwords-1-i] = x[nwords-1-i-j];
++    for (i = nwords-j; i < nwords; i++)
++        x[nwords-1-i] = 0;
++    if (shift != 0) {
++        for (j = nwords-1; j > 0; j--)
++            SHIFTL(x[j], x[j-1], shift, x[j], RADIX);
++        x[0] <<= shift;
++    }
++}
++
++
++void mp_shiftr1(digit_t* x, const unsigned int nwords)
++{ // Multiprecision right shift by one.
++    unsigned int i;
++
++    for (i = 0; i < nwords-1; i++) {
++        SHIFTR(x[i+1], x[i], 1, x[i], RADIX);
++    }
++    x[nwords-1] >>= 1;
++}
++
++
++void mp_shiftl1(digit_t* x, const unsigned int nwords)
++{ // Multiprecision left shift by one.
++    int i;
++
++    for (i = nwords-1; i > 0; i--) {
++        SHIFTL(x[i], x[i-1], 1, x[i], RADIX);
++    }
++    x[0] <<= 1;
++}
+diff --git a/third_party/sidh/src/generic/fp_generic.c b/third_party/sidh/src/generic/fp_generic.c
+new file mode 100644
+index 000000000..325053f1c
+--- /dev/null
++++ b/third_party/sidh/src/generic/fp_generic.c
+@@ -0,0 +1,222 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: portable modular arithmetic for P503
++*********************************************************************************************/
++
++#include "../internal.h"
++#include "../P503_internal.h"
++
++
++// Global constants
++extern const struct params_t kP503Params;
++
++inline void fpadd503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular addition, c = a+b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    unsigned int i, carry = 0;
++    digit_t mask;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(carry, a[i], b[i], carry, c[i]);
++    }
++
++    carry = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(carry, c[i], ((digit_t*)kP503Params.primeX2)[i], carry, c[i]);
++    }
++    mask = 0 - (digit_t)carry;
++
++    carry = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(carry, c[i], ((digit_t*)kP503Params.primeX2)[i] & mask, carry, c[i]);
++    }
++}
++
++
++inline void fpsub503(const digit_t* a, const digit_t* b, digit_t* c)
++{ // Modular subtraction, c = a-b mod p503.
++  // Inputs: a, b in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    unsigned int i, borrow = 0;
++    digit_t mask;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, a[i], b[i], borrow, c[i]);
++    }
++    mask = 0 - (digit_t)borrow;
++
++    borrow = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(borrow, c[i], ((digit_t*)kP503Params.primeX2)[i] & mask, borrow, c[i]);
++    }
++}
++
++
++inline void fpneg503(digit_t* a)
++{ // Modular negation, a = -a mod p503.
++  // Input/output: a in [0, 2*p503-1]
++    unsigned int i, borrow = 0;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, ((digit_t*)kP503Params.primeX2)[i], a[i], borrow, a[i]);
++    }
++}
++
++
++void fpdiv2_503(const digit_t* a, digit_t* c)
++{ // Modular division by two, c = a/2 mod p503.
++  // Input : a in [0, 2*p503-1]
++  // Output: c in [0, 2*p503-1]
++    unsigned int i, carry = 0;
++    digit_t mask;
++
++    mask = 0 - (digit_t)(a[0] & 1);    // If a is odd compute a+p503
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(carry, a[i], ((digit_t*)kP503Params.prime)[i] & mask, carry, c[i]);
++    }
++
++    mp_shiftr1(c, NWORDS_FIELD);
++}
++
++
++void fpcorrection503(digit_t* a)
++{ // Modular correction to reduce field element a in [0, 2*p503-1] to [0, p503-1].
++    unsigned int i, borrow = 0;
++    digit_t mask;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        SUBC(borrow, a[i], ((digit_t*)kP503Params.prime)[i], borrow, a[i]);
++    }
++    mask = 0 - (digit_t)borrow;
++
++    borrow = 0;
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        ADDC(borrow, a[i], ((digit_t*)kP503Params.prime)[i] & mask, borrow, a[i]);
++    }
++}
++
++
++void digit_x_digit(const digit_t a, const digit_t b, digit_t* c)
++{ // Digit multiplication, digit * digit -> 2-digit result
++    register digit_t al, ah, bl, bh, temp;
++    digit_t albl, albh, ahbl, ahbh, res1, res2, res3, carry;
++    digit_t mask_low = (digit_t)(-1) >> (sizeof(digit_t)*4), mask_high = (digit_t)(-1) << (sizeof(digit_t)*4);
++
++    al = a & mask_low;                        // Low part
++    ah = a >> (sizeof(digit_t) * 4);          // High part
++    bl = b & mask_low;
++    bh = b >> (sizeof(digit_t) * 4);
++
++    albl = al*bl;
++    albh = al*bh;
++    ahbl = ah*bl;
++    ahbh = ah*bh;
++    c[0] = albl & mask_low;                   // C00
++
++    res1 = albl >> (sizeof(digit_t) * 4);
++    res2 = ahbl & mask_low;
++    res3 = albh & mask_low;
++    temp = res1 + res2 + res3;
++    carry = temp >> (sizeof(digit_t) * 4);
++    c[0] ^= temp << (sizeof(digit_t) * 4);    // C01
++
++    res1 = ahbl >> (sizeof(digit_t) * 4);
++    res2 = albh >> (sizeof(digit_t) * 4);
++    res3 = ahbh & mask_low;
++    temp = res1 + res2 + res3 + carry;
++    c[1] = temp & mask_low;                   // C10
++    carry = temp & mask_high;
++    c[1] ^= (ahbh & mask_high) + carry;       // C11
++}
++
++
++void mp_mul(const digit_t* a, const digit_t* b, digit_t* c, const unsigned int nwords)
++{ // Multiprecision comba multiply, c = a*b, where lng(a) = lng(b) = nwords.
++    unsigned int i, j;
++    digit_t t = 0, u = 0, v = 0, UV[2];
++    unsigned int carry = 0;
++
++    for (i = 0; i < nwords; i++) {
++        for (j = 0; j <= i; j++) {
++            MUL(a[j], b[i-j], UV+1, UV[0]);
++            ADDC(0, UV[0], v, carry, v);
++            ADDC(carry, UV[1], u, carry, u);
++            t += carry;
++        }
++        c[i] = v;
++        v = u;
++        u = t;
++        t = 0;
++    }
++
++    for (i = nwords; i < 2*nwords-1; i++) {
++        for (j = i-nwords+1; j < nwords; j++) {
++            MUL(a[j], b[i-j], UV+1, UV[0]);
++            ADDC(0, UV[0], v, carry, v);
++            ADDC(carry, UV[1], u, carry, u);
++            t += carry;
++        }
++        c[i] = v;
++        v = u;
++        u = t;
++        t = 0;
++    }
++    c[2*nwords-1] = v;
++}
++
++
++void rdc_mont(const digit_t* ma, digit_t* mc)
++{ // Efficient Montgomery reduction using comba and exploiting the special form of the prime p503.
++  // mc = ma*R^-1 mod p503x2, where R = 2^512.
++  // If ma < 2^512*p503, the output mc is in the range [0, 2*p503-1].
++  // ma is assumed to be in Montgomery representation.
++    unsigned int i, j, carry, count = p503_ZERO_WORDS;
++    digit_t UV[2], t = 0, u = 0, v = 0;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        mc[i] = 0;
++    }
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        for (j = 0; j < i; j++) {
++            if (j < (i-p503_ZERO_WORDS+1)) {
++                MUL(mc[j], ((digit_t*)kP503Params.primeP1)[i-j], UV+1, UV[0]);
++                ADDC(0, UV[0], v, carry, v);
++                ADDC(carry, UV[1], u, carry, u);
++                t += carry;
++            }
++        }
++        ADDC(0, v, ma[i], carry, v);
++        ADDC(carry, u, 0, carry, u);
++        t += carry;
++        mc[i] = v;
++        v = u;
++        u = t;
++        t = 0;
++    }
++
++    for (i = NWORDS_FIELD; i < 2*NWORDS_FIELD-1; i++) {
++        if (count > 0) {
++            count -= 1;
++        }
++        for (j = i-NWORDS_FIELD+1; j < NWORDS_FIELD; j++) {
++            if (j < (NWORDS_FIELD-count)) {
++                MUL(mc[j], ((digit_t*)kP503Params.primeP1)[i-j], UV+1, UV[0]);
++                ADDC(0, UV[0], v, carry, v);
++                ADDC(carry, UV[1], u, carry, u);
++                t += carry;
++            }
++        }
++        ADDC(0, v, ma[i], carry, v);
++        ADDC(carry, u, 0, carry, u);
++        t += carry;
++        mc[i-NWORDS_FIELD] = v;
++        v = u;
++        u = t;
++        t = 0;
++    }
++    ADDC(0, v, ma[2*NWORDS_FIELD-1], carry, v);
++    mc[NWORDS_FIELD-1] = v;
++}
+\ No newline at end of file
+diff --git a/third_party/sidh/src/internal.h b/third_party/sidh/src/internal.h
+new file mode 100644
+index 000000000..8a32b465c
+--- /dev/null
++++ b/third_party/sidh/src/internal.h
+@@ -0,0 +1,96 @@
++#ifndef INTERNAL_H_
++#define INTERNAL_H_
++
++#include "sidh/def_p503.h"
++
++/********************** Macros for platform-dependent operations **********************/
++
++#if defined(OPENSSL_NO_ASM)
++
++/********************** Constant-time unsigned comparisons ***********************/
++
++// The following functions return 1 (TRUE) if condition is true, 0 (FALSE) otherwise
++
++static inline unsigned int is_digit_nonzero_ct(digit_t x)
++{ // Is x != 0?
++    return (unsigned int)((x | (0-x)) >> (RADIX-1));
++}
++
++static inline unsigned int is_digit_zero_ct(digit_t x)
++{ // Is x = 0?
++    return (unsigned int)(1 ^ is_digit_nonzero_ct(x));
++}
++
++static inline unsigned int is_digit_lessthan_ct(digit_t x, digit_t y)
++{ // Is x < y?
++    return (unsigned int)((x ^ ((x ^ y) | ((x - y) ^ y))) >> (RADIX-1));
++}
++
++// Digit multiplication
++#define MUL(multiplier, multiplicand, hi, lo)                                                     \
++    digit_x_digit((multiplier), (multiplicand), &(lo));
++
++// Digit addition with carry
++#define ADDC(carryIn, addend1, addend2, carryOut, sumOut)                                         \
++    { digit_t tempReg = (addend1) + (digit_t)(carryIn);                                           \
++    (sumOut) = (addend2) + tempReg;                                                               \
++    (carryOut) = (is_digit_lessthan_ct(tempReg, (digit_t)(carryIn)) | is_digit_lessthan_ct((sumOut), tempReg)); }
++
++// Digit subtraction with borrow
++#define SUBC(borrowIn, minuend, subtrahend, borrowOut, differenceOut)                             \
++    { digit_t tempReg = (minuend) - (subtrahend);                                                 \
++    unsigned int borrowReg = (is_digit_lessthan_ct((minuend), (subtrahend)) | ((borrowIn) & is_digit_zero_ct(tempReg)));  \
++    (differenceOut) = tempReg - (digit_t)(borrowIn);                                              \
++    (borrowOut) = borrowReg; }
++
++// Shift right with flexible datatype
++#define SHIFTR(highIn, lowIn, shift, shiftOut, DigitSize)                                         \
++    (shiftOut) = ((lowIn) >> (shift)) ^ ((highIn) << (DigitSize - (shift)));
++
++// Shift left with flexible datatype
++#define SHIFTL(highIn, lowIn, shift, shiftOut, DigitSize)                                         \
++    (shiftOut) = ((highIn) << (shift)) ^ ((lowIn) >> (DigitSize - (shift)));
++
++// 64x64-bit multiplication
++#define MUL128(multiplier, multiplicand, product)                                                 \
++    mp_mul((digit_t*)&(multiplier), (digit_t*)&(multiplicand), (digit_t*)&(product), NWORDS_FIELD/2);
++
++// 128-bit addition, inputs < 2^127
++#define ADD128(addend1, addend2, addition)                                                        \
++    mp_add((digit_t*)(addend1), (digit_t*)(addend2), (digit_t*)(addition), NWORDS_FIELD);
++
++// 128-bit addition with output carry
++#define ADC128(addend1, addend2, carry, addition)                                                 \
++    (carry) = mp_add((digit_t*)(addend1), (digit_t*)(addend2), (digit_t*)(addition), NWORDS_FIELD);
++
++#else
++
++// Digit multiplication
++#define MUL(multiplier, multiplicand, hi, lo)                                                     \
++    { uint128_t tempReg = (uint128_t)(multiplier) * (uint128_t)(multiplicand);                    \
++    *(hi) = (digit_t)(tempReg >> RADIX);                                                          \
++    (lo) = (digit_t)tempReg; }
++
++// Digit addition with carry
++#define ADDC(carryIn, addend1, addend2, carryOut, sumOut)                                         \
++    { uint128_t tempReg = (uint128_t)(addend1) + (uint128_t)(addend2) + (uint128_t)(carryIn);     \
++    (carryOut) = (digit_t)(tempReg >> RADIX);                                                     \
++    (sumOut) = (digit_t)tempReg; }
++
++// Digit subtraction with borrow
++#define SUBC(borrowIn, minuend, subtrahend, borrowOut, differenceOut)                             \
++    { uint128_t tempReg = (uint128_t)(minuend) - (uint128_t)(subtrahend) - (uint128_t)(borrowIn); \
++    (borrowOut) = (digit_t)(tempReg >> (sizeof(uint128_t)*8 - 1));                                \
++    (differenceOut) = (digit_t)tempReg; }
++
++// Digit shift right
++#define SHIFTR(highIn, lowIn, shift, shiftOut, DigitSize)                                         \
++    (shiftOut) = ((lowIn) >> (shift)) ^ ((highIn) << (RADIX - (shift)));
++
++// Digit shift left
++#define SHIFTL(highIn, lowIn, shift, shiftOut, DigitSize)                                         \
++    (shiftOut) = ((highIn) << (shift)) ^ ((lowIn) >> (RADIX - (shift)));
++
++#endif
++
++#endif // INTERNAL_H_
+diff --git a/third_party/sidh/src/sidh.c b/third_party/sidh/src/sidh.c
+new file mode 100644
+index 000000000..fdbd87e28
+--- /dev/null
++++ b/third_party/sidh/src/sidh.c
+@@ -0,0 +1,410 @@
++/********************************************************************************************
++* SIDH: an efficient supersingular isogeny cryptography library
++*
++* Abstract: ephemeral supersingular isogeny Diffie-Hellman key exchange (SIDH)
++*********************************************************************************************/
++
++#include "openssl/bn.h"
++#include "openssl/base.h"
++
++#include "sidh/def_p503.h"
++#include "P503_internal.h"
++
++extern const struct params_t kP503Params;
++
++// Returns private key bit size for type A (IsInitiator=true) or B (IsInitiator=false) type.
++static inline size_t PrvKeyBitSz(int IsInitiator) {
++    return IsInitiator?SIDHp503_PRV_A_BITSZ:SIDHp503_PRV_B_BITSZ;
++}
++
++// Swap points.
++// If option = 0 then P <- P and Q <- Q, else if option = 0xFF...FF then P <- Q and Q <- P
++#if !defined(OPENSSL_X86_64) || defined(OPENSSL_NO_ASM)
++static void cswap(point_proj_t P, point_proj_t Q, const digit_t option)
++{
++    digit_t temp;
++    unsigned int i;
++
++    for (i = 0; i < NWORDS_FIELD; i++) {
++        temp = option & (P->X->c0[i] ^ Q->X->c0[i]);
++        P->X->c0[i] = temp ^ P->X->c0[i];
++        Q->X->c0[i] = temp ^ Q->X->c0[i];
++        temp = option & (P->Z->c0[i] ^ Q->Z->c0[i]);
++        P->Z->c0[i] = temp ^ P->Z->c0[i];
++        Q->Z->c0[i] = temp ^ Q->Z->c0[i];
++        temp = option & (P->X->c1[i] ^ Q->X->c1[i]);
++        P->X->c1[i] = temp ^ P->X->c1[i];
++        Q->X->c1[i] = temp ^ Q->X->c1[i];
++        temp = option & (P->Z->c1[i] ^ Q->Z->c1[i]);
++        P->Z->c1[i] = temp ^ P->Z->c1[i];
++        Q->Z->c1[i] = temp ^ Q->Z->c1[i];
++    }
++}
++#endif
++
++// Swap points.
++// If option = 0 then P <- P and Q <- Q, else if option = 0xFF...FF then P <- Q and Q <- P
++static inline void fp2cswap(point_proj_t P, point_proj_t Q, const digit_t option)
++{
++#if defined(OPENSSL_X86_64) && !defined(OPENSSL_NO_ASM)
++    cswap_asm(P, Q, option);
++#else
++    cswap(P, Q, option);
++#endif
++}
++
++static void LADDER3PT(const f2elm_t xP, const f2elm_t xQ, const f2elm_t xPQ, const digit_t* m, const unsigned int AliceOrBob, point_proj_t R, const f2elm_t A)
++{
++    point_proj_t R0 = POINT_PROJ_INIT, R2 = POINT_PROJ_INIT;
++    f2elm_t A24 = F2ELM_INIT;
++    digit_t mask;
++    int i, nbits, bit, swap, prevbit = 0;
++
++    if (AliceOrBob == ALICE) {
++        nbits = OALICE_BITS;
++    } else {
++        nbits = OBOB_BITS;
++    }
++
++    // Initializing constant
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, A24->c0);
++    fp2add(A24, A24, A24);
++    fp2add(A, A24, A24);
++    fp2div2(A24, A24);
++    fp2div2(A24, A24); // A24 = (A+2)/4
++
++    // Initializing points
++    fp2copy(xQ, R0->X);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (digit_t*)R0->Z);
++    fp2copy(xPQ, R2->X);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (digit_t*)R2->Z);
++    fp2copy(xP, R->X);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (digit_t*)R->Z);
++    fpzero((digit_t*)(R->Z)->c1);
++
++    // Main loop
++    for (i = 0; i < nbits; i++) {
++        bit = (m[i >> LOG2RADIX] >> (i & (RADIX-1))) & 1;
++        swap = bit ^ prevbit;
++        prevbit = bit;
++        mask = 0 - (digit_t)swap;
++
++        fp2cswap(R, R2, mask);
++        xDBLADD(R0, R2, R->X, A24);
++        fp2mul_mont(R2->X, R->Z, R2->X);
++    }
++}
++
++// Initialization of basis points
++static void init_basis(digit_t *gen, f2elm_t XP, f2elm_t XQ, f2elm_t XR)
++{
++
++    fpcopy(gen,                  XP->c0);
++    fpcopy(gen +   NWORDS_FIELD, XP->c1);
++    fpcopy(gen + 2*NWORDS_FIELD, XQ->c0);
++    fpzero(XQ->c1);
++    fpcopy(gen + 3*NWORDS_FIELD, XR->c0);
++    fpcopy(gen + 4*NWORDS_FIELD, XR->c1);
++}
++
++// Conversion of GF(p^2) element from Montgomery to standard representation, and encoding by removing leading 0 bytes
++static void fp2_encode(const f2elm_t x, unsigned char *enc)
++{
++    unsigned int i;
++    f2elm_t t;
++
++    from_fp2mont(x, t);
++    for (i = 0; i < FP2_ENCODED_BYTES / 2; i++) {
++        enc[i] = ((unsigned char*)t)[i];
++        enc[i + FP2_ENCODED_BYTES / 2] = ((unsigned char*)t)[i + MAXBITS_FIELD / 8];
++    }
++}
++
++// Parse byte sequence back into GF(p^2) element, and conversion to Montgomery representation
++static void fp2_decode(const unsigned char *enc, f2elm_t x)
++{
++    unsigned int i;
++
++    for (i = 0; i < 2*(MAXBITS_FIELD / 8); i++) ((unsigned char *)x)[i] = 0;
++    for (i = 0; i < FP2_ENCODED_BYTES / 2; i++) {
++        ((unsigned char*)x)[i] = enc[i];
++        ((unsigned char*)x)[i + MAXBITS_FIELD / 8] = enc[i + FP2_ENCODED_BYTES / 2];
++    }
++    to_fp2mont(x, x);
++}
++
++int EphemeralKeyGeneration_A(const unsigned char* PrivateKeyA, unsigned char* PublicKeyA)
++{
++    point_proj_t R, phiP = POINT_PROJ_INIT, phiQ = POINT_PROJ_INIT, phiR = POINT_PROJ_INIT, pts[MAX_INT_POINTS_ALICE];
++    f2elm_t XPA, XQA, XRA, coeff[3], A24plus = F2ELM_INIT, C24 = F2ELM_INIT, A = F2ELM_INIT;
++    unsigned int i, row, m, index = 0, pts_index[MAX_INT_POINTS_ALICE], npts = 0, ii = 0;
++
++    // Initialize basis points
++    init_basis((digit_t*)kP503Params.A_gen, XPA, XQA, XRA);
++    init_basis((digit_t*)kP503Params.B_gen, phiP->X, phiQ->X, phiR->X);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiP->Z)->c0);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiQ->Z)->c0);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiR->Z)->c0);
++
++    // Initialize constants
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, A24plus->c0);
++    fp2add(A24plus, A24plus, C24);
++
++    // Retrieve kernel point
++    LADDER3PT(XPA, XQA, XRA, (digit_t*)PrivateKeyA, ALICE, R, A);
++
++    // Traverse tree
++    index = 0;
++    for (row = 1; row < MAX_Alice; row++) {
++        while (index < MAX_Alice-row) {
++            fp2copy(R->X, pts[npts]->X);
++            fp2copy(R->Z, pts[npts]->Z);
++            pts_index[npts++] = index;
++            m = kP503Params.strat_Alice[ii++];
++            xDBLe(R, R, A24plus, C24, (int)(2*m));
++            index += m;
++        }
++        get_4_isog(R, A24plus, C24, coeff);
++
++        for (i = 0; i < npts; i++) {
++            eval_4_isog(pts[i], coeff);
++        }
++        eval_4_isog(phiP, coeff);
++        eval_4_isog(phiQ, coeff);
++        eval_4_isog(phiR, coeff);
++
++        fp2copy(pts[npts-1]->X, R->X);
++        fp2copy(pts[npts-1]->Z, R->Z);
++        index = pts_index[npts-1];
++        npts -= 1;
++    }
++
++    get_4_isog(R, A24plus, C24, coeff);
++    eval_4_isog(phiP, coeff);
++    eval_4_isog(phiQ, coeff);
++    eval_4_isog(phiR, coeff);
++
++    inv_3_way(phiP->Z, phiQ->Z, phiR->Z);
++    fp2mul_mont(phiP->X, phiP->Z, phiP->X);
++    fp2mul_mont(phiQ->X, phiQ->Z, phiQ->X);
++    fp2mul_mont(phiR->X, phiR->Z, phiR->X);
++
++    // Format public key
++    fp2_encode(phiP->X, PublicKeyA);
++    fp2_encode(phiQ->X, PublicKeyA + FP2_ENCODED_BYTES);
++    fp2_encode(phiR->X, PublicKeyA + 2*FP2_ENCODED_BYTES);
++
++    return 0;
++}
++
++
++int EphemeralKeyGeneration_B(const unsigned char* PrivateKeyB, unsigned char* PublicKeyB)
++{
++    point_proj_t R, phiP = POINT_PROJ_INIT, phiQ = POINT_PROJ_INIT, phiR = POINT_PROJ_INIT, pts[MAX_INT_POINTS_BOB];
++    f2elm_t XPB, XQB, XRB, coeff[3], A24plus = F2ELM_INIT, A24minus = F2ELM_INIT, A = F2ELM_INIT;
++    unsigned int i, row, m, index = 0, pts_index[MAX_INT_POINTS_BOB], npts = 0, ii = 0;
++
++    // Initialize basis points
++    init_basis((digit_t*)kP503Params.B_gen, XPB, XQB, XRB);
++    init_basis((digit_t*)kP503Params.A_gen, phiP->X, phiQ->X, phiR->X);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiP->Z)->c0);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiQ->Z)->c0);
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, (phiR->Z)->c0);
++
++    // Initialize constants
++    fpcopy((digit_t*)&kP503Params.Montgomery_one, A24plus->c0);
++    fp2add(A24plus, A24plus, A24plus);
++    fp2copy(A24plus, A24minus);
++    fp2neg(A24minus);
++
++    // Retrieve kernel point
++    LADDER3PT(XPB, XQB, XRB, (digit_t*)PrivateKeyB, BOB, R, A);
++
++    // Traverse tree
++    index = 0;
++    for (row = 1; row < MAX_Bob; row++) {
++        while (index < MAX_Bob-row) {
++            fp2copy(R->X, pts[npts]->X);
++            fp2copy(R->Z, pts[npts]->Z);
++            pts_index[npts++] = index;
++            m = kP503Params.strat_Bob[ii++];
++            xTPLe(R, R, A24minus, A24plus, (int)m);
++            index += m;
++        }
++        get_3_isog(R, A24minus, A24plus, coeff);
++
++        for (i = 0; i < npts; i++) {
++            eval_3_isog(pts[i], coeff);
++        }
++        eval_3_isog(phiP, coeff);
++        eval_3_isog(phiQ, coeff);
++        eval_3_isog(phiR, coeff);
++
++        fp2copy(pts[npts-1]->X, R->X);
++        fp2copy(pts[npts-1]->Z, R->Z);
++        index = pts_index[npts-1];
++        npts -= 1;
++    }
++
++    get_3_isog(R, A24minus, A24plus, coeff);
++    eval_3_isog(phiP, coeff);
++    eval_3_isog(phiQ, coeff);
++    eval_3_isog(phiR, coeff);
++
++    inv_3_way(phiP->Z, phiQ->Z, phiR->Z);
++    fp2mul_mont(phiP->X, phiP->Z, phiP->X);
++    fp2mul_mont(phiQ->X, phiQ->Z, phiQ->X);
++    fp2mul_mont(phiR->X, phiR->Z, phiR->X);
++
++    // Format public key
++    fp2_encode(phiP->X, PublicKeyB);
++    fp2_encode(phiQ->X, PublicKeyB + FP2_ENCODED_BYTES);
++    fp2_encode(phiR->X, PublicKeyB + 2*FP2_ENCODED_BYTES);
++
++    return 0;
++}
++
++
++int EphemeralSecretAgreement_A(const unsigned char* PrivateKeyA, const unsigned char* PublicKeyB, unsigned char* SharedSecretA)
++{
++    point_proj_t R, pts[MAX_INT_POINTS_ALICE];
++    f2elm_t coeff[3], PKB[3], jinv;
++    f2elm_t A24plus = F2ELM_INIT, C24 = F2ELM_INIT, A = F2ELM_INIT;
++    unsigned int i, row, m, index = 0, pts_index[MAX_INT_POINTS_ALICE], npts = 0, ii = 0;
++
++    // Initialize images of Bob's basis
++    fp2_decode(PublicKeyB, PKB[0]);
++    fp2_decode(PublicKeyB + FP2_ENCODED_BYTES, PKB[1]);
++    fp2_decode(PublicKeyB + 2*FP2_ENCODED_BYTES, PKB[2]);
++
++    // Initialize constants
++    get_A(PKB[0], PKB[1], PKB[2], A); // TODO: Can return projective A?
++    fpadd((digit_t*)&kP503Params.Montgomery_one, (digit_t*)&kP503Params.Montgomery_one, C24->c0);
++    fp2add(A, C24, A24plus);
++    fpadd(C24->c0, C24->c0, C24->c0);
++
++    // Retrieve kernel point
++    LADDER3PT(PKB[0], PKB[1], PKB[2], (digit_t*)PrivateKeyA, ALICE, R, A);
++
++    // Traverse tree
++    index = 0;
++    for (row = 1; row < MAX_Alice; row++) {
++        while (index < MAX_Alice-row) {
++            fp2copy(R->X, pts[npts]->X);
++            fp2copy(R->Z, pts[npts]->Z);
++            pts_index[npts++] = index;
++            m = kP503Params.strat_Alice[ii++];
++            xDBLe(R, R, A24plus, C24, (int)(2*m));
++            index += m;
++        }
++        get_4_isog(R, A24plus, C24, coeff);
++
++        for (i = 0; i < npts; i++) {
++            eval_4_isog(pts[i], coeff);
++        }
++
++        fp2copy(pts[npts-1]->X, R->X);
++        fp2copy(pts[npts-1]->Z, R->Z);
++        index = pts_index[npts-1];
++        npts -= 1;
++    }
++
++    get_4_isog(R, A24plus, C24, coeff);
++    fp2div2(C24, C24);
++    fp2sub(A24plus, C24, A24plus);
++    fp2div2(C24, C24);
++    j_inv(A24plus, C24, jinv);
++    fp2_encode(jinv, SharedSecretA);    // Format shared secret
++
++    return 0;
++}
++
++int EphemeralSecretAgreement_B(const unsigned char* PrivateKeyB, const unsigned char* PublicKeyA, unsigned char* SharedSecretB)
++{
++    point_proj_t R, pts[MAX_INT_POINTS_BOB];
++    f2elm_t coeff[3], PKB[3], jinv;
++    f2elm_t A24plus = F2ELM_INIT, A24minus = F2ELM_INIT, A = F2ELM_INIT;
++    unsigned int i, row, m, index = 0, pts_index[MAX_INT_POINTS_BOB], npts = 0, ii = 0;
++
++    // Initialize images of Alice's basis
++    fp2_decode(PublicKeyA, PKB[0]);
++    fp2_decode(PublicKeyA + FP2_ENCODED_BYTES, PKB[1]);
++    fp2_decode(PublicKeyA + 2*FP2_ENCODED_BYTES, PKB[2]);
++
++    // Initialize constants
++    get_A(PKB[0], PKB[1], PKB[2], A); // TODO: Can return projective A?
++    fpadd((digit_t*)&kP503Params.Montgomery_one, (digit_t*)&kP503Params.Montgomery_one, A24minus->c0);
++    fp2add(A, A24minus, A24plus);
++    fp2sub(A, A24minus, A24minus);
++
++    // Retrieve kernel point
++    LADDER3PT(PKB[0], PKB[1], PKB[2], (digit_t*)PrivateKeyB, BOB, R, A);
++
++    // Traverse tree
++    index = 0;
++    for (row = 1; row < MAX_Bob; row++) {
++        while (index < MAX_Bob-row) {
++            fp2copy(R->X, pts[npts]->X);
++            fp2copy(R->Z, pts[npts]->Z);
++            pts_index[npts++] = index;
++            m = kP503Params.strat_Bob[ii++];
++            xTPLe(R, R, A24minus, A24plus, (int)m);
++            index += m;
++        }
++        get_3_isog(R, A24minus, A24plus, coeff);
++
++        for (i = 0; i < npts; i++) {
++            eval_3_isog(pts[i], coeff);
++        }
++
++        fp2copy(pts[npts-1]->X, R->X);
++        fp2copy(pts[npts-1]->Z, R->Z);
++        index = pts_index[npts-1];
++        npts -= 1;
++    }
++
++    get_3_isog(R, A24minus, A24plus, coeff);
++    fp2add(A24plus, A24minus, A);
++    fp2add(A, A, A);
++    fp2sub(A24plus, A24minus, A24plus);
++    j_inv(A, A24plus, jinv);
++    fp2_encode(jinv, SharedSecretB);    // Format shared secret
++
++    return 0;
++}
++
++int EphemeralKeyPair_SIDHp503(unsigned char* PrivateKey, unsigned char* PublicKey, int IsInitiator) {
++    int ret = -1;
++
++    BN_CTX *ctx = BN_CTX_new();
++    if (!ctx) {
++        goto end;
++    }
++
++    // Calculate private key for Alice. Needs to be in range [0, 2^0xFA - 1] and < 250 bits
++    BIGNUM *bn_sidh_prv = BN_CTX_get(ctx);
++    if (!bn_sidh_prv) {
++        goto end;
++    }
++
++    if (!BN_rand(bn_sidh_prv, PrvKeyBitSz(IsInitiator), BN_RAND_TOP_ONE, BN_RAND_BOTTOM_ANY)) {
++        goto end;
++    }
++
++    // Convert to little endian
++    if (!BN_bn2le_padded(PrivateKey, NBITS_TO_NBYTES(PrvKeyBitSz(IsInitiator)), bn_sidh_prv)) {
++        goto end;
++    }
++
++    // Never fails
++    IsInitiator
++        ?(void)EphemeralKeyGeneration_A_SIDHp503(PrivateKey, PublicKey)
++        :(void)EphemeralKeyGeneration_B_SIDHp503(PrivateKey, PublicKey);
++
++    // All good
++    ret = 0;
++
++end:
++    BN_CTX_free(ctx);
++    return ret;
++}
+diff --git a/tool/CMakeLists.txt b/tool/CMakeLists.txt
+index 7f340171d..6a796cc48 100644
+--- a/tool/CMakeLists.txt
++++ b/tool/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-include_directories(../include)
++include_directories(../include ../third_party/sidh/include)
+ 
+ add_executable(
+   bssl
+diff --git a/tool/speed.cc b/tool/speed.cc
+index 2175baa24..4d86441ea 100644
+--- a/tool/speed.cc
++++ b/tool/speed.cc
+@@ -50,6 +50,10 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
+ #include "internal.h"
+ 
+ 
++#include "sidh/def_p503.h"
++#include "sidh/P503_api.h"
++
++
+ // TimeResults represents the results of benchmarking a function.
+ struct TimeResults {
+   // num_calls is the number of function calls done in the time period.
+@@ -282,6 +286,78 @@ static bool SpeedRSAKeyGen(const std::string &selected) {
+   return true;
+ }
+ 
++static bool SpeedSIDHP503KeyGen(bool is_initiator) {
++  uint8_t public_SIDH[SIDHp503_PUB_BYTESZ] = {0};
++  uint8_t private_SIDH[SIDHp503_PRV_KEY_BYTESZ_MAX] = {0};
++  // Key generation function to be benchmarked
++  std::function<int(const unsigned char*, unsigned char*)> keygen =
++    is_initiator?
++    EphemeralKeyGeneration_A_SIDHp503:
++    EphemeralKeyGeneration_B_SIDHp503;
++
++  // Generate private key to be used for public key generation
++  if (EphemeralKeyPair_SIDHp503(private_SIDH, public_SIDH, is_initiator)) {
++    return false;
++  }
++
++  TimeResults results;
++  TimeFunction(&results,
++              [keygen, &private_SIDH, &public_SIDH]() -> bool {
++    // Never fails
++    (void)keygen(private_SIDH, public_SIDH);
++    return true;
++  });
++
++  results.Print(std::string("SIDH/P503 KeyGen ") + std::string(is_initiator?"A":"B"));
++  return true;
++}
++
++static bool SpeedSIDHP503Kex(bool is_initiator) {
++  uint8_t public_SIDH[SIDHp503_PUB_BYTESZ] = {0};
++  uint8_t private_SIDH[SIDHp503_PRV_KEY_BYTESZ_MAX] = {0};
++  uint8_t tmp[SIDHp503_PRV_KEY_BYTESZ_MAX] = {0};
++  uint8_t ss[SIDHp503_SS_BYTESZ] = {0};
++
++  // Key agreement function to be benchmarked
++  std::function<void(const unsigned char*, const unsigned char*, unsigned char*)> kex =
++    is_initiator?
++    EphemeralSecretAgreement_A_SIDHp503:
++    EphemeralSecretAgreement_B_SIDHp503;
++
++  // Generate private key for one side
++  if (EphemeralKeyPair_SIDHp503(private_SIDH, public_SIDH, is_initiator)) {
++    return false;
++  }
++
++  // Generate public key for other side
++  memset(public_SIDH, 0, sizeof(public_SIDH));
++  if (EphemeralKeyPair_SIDHp503(tmp, public_SIDH, !is_initiator)) {
++    return false;
++  }
++
++  TimeResults results;
++  TimeFunction(&results,
++              [kex, &private_SIDH, &public_SIDH, &ss]() -> bool {
++    // Never fails
++    (void)kex(private_SIDH, public_SIDH, ss);
++    return true;
++  });
++
++  results.Print(std::string("SIDH/P503 KEX ") + std::string(is_initiator?"A":"B"));
++  return true;
++}
++
++static bool SpeedSIDHP503(const std::string &selected) {
++  if (!selected.empty() && selected.find("SIDH") == std::string::npos) {
++    return true;
++  }
++  return
++    SpeedSIDHP503KeyGen(true) &&
++    SpeedSIDHP503KeyGen(false) &&
++    SpeedSIDHP503Kex(true) &&
++    SpeedSIDHP503Kex(false);
++}
++
+ static uint8_t *align(uint8_t *in, unsigned alignment) {
+   return reinterpret_cast<uint8_t *>(
+       (reinterpret_cast<uintptr_t>(in) + alignment) &
+@@ -815,6 +891,7 @@ bool Speed(const std::vector<std::string> &args) {
+       !SpeedECDH(selected) ||
+       !SpeedECDSA(selected) ||
+       !Speed25519(selected) ||
++      !SpeedSIDHP503(selected) ||
+       !SpeedSPAKE2(selected) ||
+       !SpeedScrypt(selected) ||
+       !SpeedRSAKeyGen(selected)) {
