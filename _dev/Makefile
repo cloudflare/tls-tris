@@ -25,7 +25,7 @@ TMP_DIR		:= $(shell mktemp -d)
 TARGET_TEST_COMPAT=boring picotls tstclnt
 
 # Some target-specific constants
-BORINGSSL_REVISION=d451453067cd665a5c38830fbbaac9e599234a5e
+BORINGSSL_REVISION=ff433815b51c34496bb6bea13e73e29e5c278238
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
 
 # SIDH repository
