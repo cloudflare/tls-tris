@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,23 @@ var cipherSuiteIdToName = map[uint16]string{
 	tls.TLS_AES_128_GCM_SHA256:                  "TLS_AES_128_GCM_SHA256",
 	tls.TLS_AES_256_GCM_SHA384:                  "TLS_AES_256_GCM_SHA384",
 	tls.TLS_CHACHA20_POLY1305_SHA256:            "TLS_CHACHA20_POLY1305_SHA256",
+}
+
+var namedGroupsToName = map[uint16]string{
+	uint16(tls.HybridSIDHp503Curve25519): "X25519-SIDHp503",
+	uint16(tls.X25519):                   "X25519",
+	uint16(tls.CurveP256):                "P-256",
+	uint16(tls.CurveP384):                "P-384",
+	uint16(tls.CurveP521):                "P-521",
+}
+
+func getIDByName(m map[uint16]string, name string) (uint16, error) {
+	for key, value := range m {
+		if value == name {
+			return key, nil
+		}
+	}
+	return 0, errors.New("Unknown value")
 }
 
 var failed uint
@@ -49,15 +67,6 @@ func (c *Client) clone() *Client {
 func (c *Client) setMinMaxTLS(ver uint16) {
 	c.TLS.MinVersion = ver
 	c.TLS.MaxVersion = ver
-}
-
-func getQrAlgoId(qr string) tls.CurveID {
-	switch qr {
-	case "X25519-SIDHp503":
-		return tls.HybridSIDHp503Curve25519
-	default:
-		return 0
-	}
 }
 
 func (c *Client) run() {
@@ -101,14 +110,16 @@ func result() {
 
 // Usage client args host:port
 func main() {
-	var keylog_file, qrAlgoName string
+	var keylog_file, tls_version, named_groups, named_ciphers string
 	var enable_rsa, enable_ecdsa, client_auth bool
 
 	flag.StringVar(&keylog_file, "keylogfile", "", "Secrets will be logged here")
 	flag.BoolVar(&enable_rsa, "rsa", true, "Whether to enable RSA cipher suites")
 	flag.BoolVar(&enable_ecdsa, "ecdsa", true, "Whether to enable ECDSA cipher suites")
 	flag.BoolVar(&client_auth, "cliauth", false, "Whether to enable client authentication")
-	flag.StringVar(&qrAlgoName, "qr", "", "Specifies qr algorithm from following list:\n[X25519-SIDHp503]")
+	flag.StringVar(&tls_version, "tls_version", "1.3", "TLS version to use")
+	flag.StringVar(&named_groups, "groups", "X25519:P-256:P-384:P-521", "NamedGroups IDs to use")
+	flag.StringVar(&named_ciphers, "ciphers", "TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384", "Named cipher IDs to use")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -131,21 +142,6 @@ func main() {
 		}
 		client.TLS.KeyLogWriter = keylog_writer
 		log.Println("Enabled keylog")
-	}
-
-	if len(qrAlgoName) > 0 {
-		id := getQrAlgoId(qrAlgoName)
-		if id == 0 {
-			log.Fatalf("Unknown QR algorithm: %s", qrAlgoName)
-			return
-		}
-
-		client.TLS.CipherSuites = []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256}
-		client.TLS.CurvePreferences = []tls.CurveID{id}
-		client.setMinMaxTLS(tls.VersionTLS13)
-		client.run()
-		result()
-		return
 	}
 
 	if client_auth {
@@ -178,17 +174,30 @@ func main() {
 		c.run()
 	}
 
-	client.setMinMaxTLS(tls.VersionTLS13)
-	client.TLS.CipherSuites = []uint16{tls.TLS_CHACHA20_POLY1305_SHA256}
-	client.run()
+	// Set requested DH groups
+	client.TLS.CurvePreferences = []tls.CurveID{}
+	for _, ng := range strings.Split(named_groups, ":") {
+		id, err := getIDByName(namedGroupsToName, ng)
+		if err != nil {
+			panic("Wrong TLS version provided")
+		}
+		client.TLS.CurvePreferences = append(client.TLS.CurvePreferences, tls.CurveID(id))
+	}
 
-	client.setMinMaxTLS(tls.VersionTLS13)
-	client.TLS.CipherSuites = []uint16{tls.TLS_AES_128_GCM_SHA256}
-	client.run()
-
-	client.setMinMaxTLS(tls.VersionTLS13)
-	client.TLS.CipherSuites = []uint16{tls.TLS_AES_256_GCM_SHA384}
-	client.run()
+	// Perform TLS handshake with each each requested CipherSuite
+	tlsID, err := getIDByName(tlsVersionToName, tls_version)
+	if err != nil {
+		panic("Unknown TLS version")
+	}
+	for _, cn := range strings.Split(named_ciphers, ":") {
+		id, err := getIDByName(cipherSuiteIdToName, cn)
+		if err != nil {
+			panic("Wrong cipher name provided")
+		}
+		client.setMinMaxTLS(tlsID)
+		client.TLS.CipherSuites = []uint16{id}
+		client.run()
+	}
 
 	// TODO test other kex methods besides X25519, like MTI secp256r1
 	// TODO limit supported groups?

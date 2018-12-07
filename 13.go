@@ -1231,7 +1231,7 @@ func (kexSIDHp503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) 
 		return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
 	}
 	pubKey := prvKey.GeneratePublicKey()
-	return prvKey.Export(), keyShare{group: 0, data: pubKey.Export()}, nil
+	return prvKey.Export(), keyShare{group: 0 /*UNUSED*/, data: pubKey.Export()}, nil
 }
 
 func (kexSIDHp503) derive(c *Conn, ks keyShare, key []byte) []byte {
@@ -1295,7 +1295,7 @@ func (kex *kexHybridSIDHp503X25519) derive(c *Conn, ks keyShare, key []byte) []b
 	copy(sharedKey[:], ret)
 
 	// Key agreement for PQ
-	tmpKs.group = 0
+	tmpKs.group = 0 /*UNUSED*/
 	tmpKs.data = ks.data[x25519SharedSecretSz:]
 	ret = kex.pqKEX.derive(c, tmpKs, key[x25519SharedSecretSz:])
 	if ret == nil {

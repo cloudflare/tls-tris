@@ -25,7 +25,7 @@ bssl server \
 bssl server \
     -key ecdsa.pem \
     -curves X25519-SIDHp503:X25519:P-256:P-384:P-521 \
-    -min-version tls1.3 -max-version tls1.3 \
+    -min-version tls1.2 -max-version tls1.3 \
     -accept 7443 -loop -www \
     -debug 2>&1 &
 
