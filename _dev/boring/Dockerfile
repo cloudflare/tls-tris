@@ -59,7 +59,7 @@ ADD sidh_$REVISION.patch /
 RUN cd boringssl && git fetch
 RUN cd boringssl && git checkout $REVISION
 RUN cd boringssl && patch -p1 < /sidh_$REVISION.patch
-RUN cd boringssl/build && cmake -DEXP_SIDH=1 -GNinja ..
+RUN cd boringssl/build && cmake -GNinja ..
 RUN cd boringssl && ninja -C build
 
 ADD httpreq.txt /httpreq.txt

@@ -257,8 +257,19 @@ class InteropClient_BoringSSL(InteropClient, ClientNominalMixin, ClientClientAut
         '''
         Connects to BoringSSL server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
         '''
-        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr X25519-SIDHp503 ' + self.server_ip+":7443")
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -groups X25519-SIDHp503 ' + self.server_ip+":7443")
         self.assertEqual(res[0], 0)
+        self.assertIsNotNone(re.search(RE_TRIS_ALL_PASSED, res[1], re.MULTILINE))
+
+    def test_SIDH_TLSv12(self):
+        '''
+        Connects to TRIS server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
+        This connection will be over TLSv12 and hence it should fall back to X25519
+        '''
+        res = self.d.run_client(self.CLIENT_NAME, '-tls_version=1.2 -rsa=false -ecdsa=true -groups X25519-SIDHp503:P-256 -ciphers TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 ' + self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+        # Go doesn't provide API to get NamedGroup ID, but boringssl on port 7443 accepts only TLS1.2
+        # so if handshake was successful, then that's all what we need
         self.assertIsNotNone(re.search(RE_TRIS_ALL_PASSED, res[1], re.MULTILINE))
 
 class InteropClient_NSS(
@@ -278,7 +289,7 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         self.assertEqual(res[0], 0)
 
     def test_SIDH(self):
-        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -qr X25519-SIDHp503 '+self.server_ip+":7443")
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -groups X25519-SIDHp503 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
     def test_server_doesnt_support_SIDH(self):
