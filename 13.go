@@ -1270,9 +1270,8 @@ func (kexSIDHp503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) 
 
 func (kexSIDHp503) keyAgreementClient(c *Conn, ks keyShare, key []byte) ([]byte, error) {
 	var prvVariant, pubVariant = getSidhKeyVariant(c.isClient)
-	var prvKeySize = P503PrvKeySz
 
-	if len(ks.data) != P503PubKeySz || len(key) != prvKeySize {
+	if len(ks.data) != P503PubKeySz || len(key) != SIDHP503PrvKeySz {
 		return nil, errors.New("tls: wrong key size")
 	}
 
