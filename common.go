@@ -124,6 +124,7 @@ const (
 
 	// Experimental KEX
 	HybridSIDHp503Curve25519 CurveID = 0xFE30
+	HybridSIKEp503Curve25519 CurveID = 0xFE32
 )
 
 // TLS 1.3 Key Share
