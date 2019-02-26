@@ -29,6 +29,7 @@ var cipherSuiteIdToName = map[uint16]string{
 
 var namedGroupsToName = map[uint16]string{
 	uint16(tls.HybridSIDHp503Curve25519): "X25519-SIDHp503",
+	uint16(tls.HybridSIKEp503Curve25519): "X25519-SIKEp503",
 	uint16(tls.X25519):                   "X25519",
 	uint16(tls.CurveP256):                "P-256",
 	uint16(tls.CurveP384):                "P-384",

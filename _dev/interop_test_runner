@@ -292,6 +292,10 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -groups X25519-SIDHp503 '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
+    def test_SIKE(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -groups X25519-SIKEp503 '+self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+
     def test_server_doesnt_support_SIDH(self):
         '''
         Client advertises HybridSIDH and ECDH. Server supports ECDH only. Checks weather

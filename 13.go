@@ -22,6 +22,7 @@ import (
 	"time"
 
 	sidh "github_com/cloudflare/sidh/sidh"
+	sike "github_com/cloudflare/sidh/sike"
 	"golang_org/x/crypto/curve25519"
 )
 
@@ -32,14 +33,22 @@ const numSessionTickets = 2
 type secretLabel int
 
 const (
-	x25519SharedSecretSz = 32
+	// Both public key and shared secret size
+	x25519Sz = 32
 
-	P503PubKeySz                  = 378
-	P503PrvKeySz                  = 32
-	P503SharedSecretSz            = 126
-	SIDHp503Curve25519PubKeySz    = x25519SharedSecretSz + P503PubKeySz
-	SIDHp503Curve25519PrvKeySz    = x25519SharedSecretSz + P503PrvKeySz
-	SIDHp503Curve25519SharedKeySz = x25519SharedSecretSz + P503SharedSecretSz
+	SIDHp503PubKeySz              = 378
+	SIDHp503PrvKeySz              = 32
+	SIDHp503SharedSecretSz        = 126
+	SIDHp503Curve25519PubKeySz    = x25519Sz + SIDHp503PubKeySz
+	SIDHp503Curve25519PrvKeySz    = x25519Sz + SIDHp503PrvKeySz
+	SIDHp503Curve25519SharedKeySz = x25519Sz + SIDHp503SharedSecretSz
+
+	SIKEp503SharedSecretSz        = 16
+	SIKEp503CtSz                  = SIDHp503PubKeySz + 24
+	SIKEp503Curve25519CtSz        = x25519Sz + SIKEp503CtSz
+	SIKEp503Curve25519PubKeySz    = x25519Sz + SIDHp503PubKeySz
+	SIKEp503Curve25519PrvKeySz    = x25519Sz + SIDHp503PrvKeySz + 24
+	SIKEp503Curve25519SharedKeySz = x25519Sz + SIKEp503SharedSecretSz
 )
 
 const (
@@ -111,11 +120,17 @@ func (defaultServerKEX) keyAgreementServer(c *Conn, clientKS keyShare) ([]byte, 
 type kexNIST struct{ defaultServerKEX }     // Used by NIST curves; P-256, P-384, P-512
 type kexX25519 struct{ defaultServerKEX }   // Used by X25519
 type kexSIDHp503 struct{ defaultServerKEX } // Used by SIDH/P503
+type kexSIKEp503 struct{}                   // Used by SIKE/P503
 type kexHybridSIDHp503X25519 struct {
 	defaultServerKEX
 	classicKEX kexX25519
 	pqKEX      kexSIDHp503
 } // Used by SIDH-ECDH hybrid scheme
+
+type kexHybridSIKEp503X25519 struct {
+	classicKEX kexX25519
+	pqKEX      kexSIKEp503
+} // Used by SIKE-ECDHE hybrid scheme
 
 // Routing map for key exchange strategies
 var kexStrat = map[CurveID]kex{
@@ -124,6 +139,7 @@ var kexStrat = map[CurveID]kex{
 	CurveP521:                &kexNIST{},
 	X25519:                   &kexX25519{},
 	HybridSIDHp503Curve25519: &kexHybridSIDHp503X25519{},
+	HybridSIKEp503Curve25519: &kexHybridSIKEp503X25519{},
 }
 
 func newKeySchedule13(suite *cipherSuite, config *Config, clientRandom []byte) *keySchedule13 {
@@ -1238,7 +1254,7 @@ func (kexNIST) keyAgreementClient(c *Conn, ks keyShare, secretKey []byte) ([]byt
 
 // KEX: X25519
 func (kexX25519) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
-	var scalar, public [x25519SharedSecretSz]byte
+	var scalar, public [x25519Sz]byte
 	if _, err := io.ReadFull(c.config.rand(), scalar[:]); err != nil {
 		return nil, keyShare{}, err
 	}
@@ -1247,8 +1263,8 @@ func (kexX25519) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
 }
 
 func (kexX25519) keyAgreementClient(c *Conn, ks keyShare, secretKey []byte) ([]byte, error) {
-	var theirPublic, sharedKey, scalar [x25519SharedSecretSz]byte
-	if len(ks.data) != x25519SharedSecretSz {
+	var theirPublic, sharedKey, scalar [x25519Sz]byte
+	if len(ks.data) != x25519Sz {
 		return nil, errors.New("tls: wrong shared secret size")
 	}
 	copy(theirPublic[:], ks.data)
@@ -1270,9 +1286,8 @@ func (kexSIDHp503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) 
 
 func (kexSIDHp503) keyAgreementClient(c *Conn, ks keyShare, key []byte) ([]byte, error) {
 	var prvVariant, pubVariant = getSidhKeyVariant(c.isClient)
-	var prvKeySize = P503PrvKeySz
 
-	if len(ks.data) != P503PubKeySz || len(key) != prvKeySize {
+	if len(ks.data) != SIDHp503PubKeySz || len(key) != SIDHp503PrvKeySz {
 		return nil, errors.New("tls: wrong key size")
 	}
 
@@ -1309,20 +1324,20 @@ func (kex *kexHybridSIDHp503X25519) generate(c *Conn, groupId CurveID) (private 
 	if err != nil {
 		return
 	}
-	copy(prvHybrid[x25519SharedSecretSz:], private)
-	copy(pubHybrid[x25519SharedSecretSz:], ks.data)
+	copy(prvHybrid[x25519Sz:], private)
+	copy(pubHybrid[x25519Sz:], ks.data)
 	return prvHybrid[:], keyShare{group: HybridSIDHp503Curve25519, data: pubHybrid[:]}, nil
 }
 
-func (kex *kexHybridSIDHp503X25519) keyAgreementClient(c *Conn, ks keyShare, key []byte) ([]byte, error) {
+func (kex *kexHybridSIDHp503X25519) keyAgreementClient(c *Conn, theirsKS keyShare, key []byte) ([]byte, error) {
 	var sharedKey [SIDHp503Curve25519SharedKeySz]byte
 	var ret []byte
 	var tmpKs keyShare
 
 	// Key agreement for classic
 	tmpKs.group = X25519
-	tmpKs.data = ks.data[:x25519SharedSecretSz]
-	ret, err := kex.classicKEX.keyAgreementClient(c, tmpKs, key[:x25519SharedSecretSz])
+	tmpKs.data = theirsKS.data[:x25519Sz]
+	ret, err := kex.classicKEX.keyAgreementClient(c, tmpKs, key[:x25519Sz])
 	if err != nil {
 		return nil, err
 	}
@@ -1330,11 +1345,157 @@ func (kex *kexHybridSIDHp503X25519) keyAgreementClient(c *Conn, ks keyShare, key
 
 	// Key agreement for PQ
 	tmpKs.group = 0 /*UNUSED*/
-	tmpKs.data = ks.data[x25519SharedSecretSz:]
-	ret, err = kex.pqKEX.keyAgreementClient(c, tmpKs, key[x25519SharedSecretSz:])
+	tmpKs.data = theirsKS.data[x25519Sz:]
+	ret, err = kex.pqKEX.keyAgreementClient(c, tmpKs, key[x25519Sz:])
 	if err != nil {
 		return nil, err
 	}
-	copy(sharedKey[x25519SharedSecretSz:], ret)
+	copy(sharedKey[x25519Sz:], ret)
 	return sharedKey[:], nil
+}
+
+// generate method generates SIKE key pair (ephemeral) on client side
+func (kexSIKEp503) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
+	if !c.isClient {
+		return nil, keyShare{}, errors.New("tls: internal error")
+	}
+
+	var prvKey = sidh.NewPrivateKey(sidh.FP_503, sidh.KeyVariant_SIKE)
+	if prvKey.Generate(c.config.rand()) != nil {
+		return nil, keyShare{}, errors.New("tls: private SIDH key generation failed")
+	}
+	var pubKey = prvKey.GeneratePublicKey()
+	var ks = keyShare{data: pubKey.Export()}
+
+	// 'buf' is a concatenation of (private || public) key. I need public key
+	// when decapsulating in kexSIKEp503::keyAgreementClient.
+	var buf = make([]byte, prvKey.Size()+pubKey.Size())
+	copy(buf, prvKey.Export())
+	copy(buf[prvKey.Size():], ks.data)
+	return buf, ks, nil
+}
+
+// keyAgreementClient performs KEM decapsulation. 'privateKey' is a concatenation
+// of (private || public) key
+func (kexSIKEp503) keyAgreementClient(c *Conn, theirsKS keyShare, privateKey []byte) ([]byte, error) {
+	// Import private key
+	var prvKey = sidh.NewPrivateKey(sidh.FP_503, sidh.KeyVariant_SIKE)
+	var pubKey = sidh.NewPublicKey(sidh.FP_503, sidh.KeyVariant_SIKE)
+
+	if len(privateKey) != prvKey.Size()+pubKey.Size() {
+		return nil, errors.New("tls: internal error")
+	}
+
+	// Never fails
+	prvKey.Import(privateKey[:prvKey.Size()])
+	pubKey.Import(privateKey[prvKey.Size():])
+
+	ss, err := sike.Decapsulate(prvKey, pubKey, theirsKS.data)
+	if err != nil {
+		return nil, err
+	}
+	return ss, nil
+}
+
+// keyAgreementServer performs KEM encapsulation.
+func (kexSIKEp503) keyAgreementServer(c *Conn, theirsKS keyShare) ([]byte, keyShare, error) {
+	pubKey := sidh.NewPublicKey(sidh.FP_503, sidh.KeyVariant_SIKE)
+	if pubKey.Import(theirsKS.data) != nil {
+		return nil, keyShare{}, errors.New("tls: can't import public SIKE key")
+	}
+	ct, key, err := sike.Encapsulate(c.config.rand(), pubKey)
+	if err != nil {
+		return nil, keyShare{}, errors.New("tls: SIKE encapsulation failed")
+	}
+	return key, keyShare{data: ct}, nil
+}
+
+// KEX Hybrid SIKEp503-X25519
+func (kex *kexHybridSIKEp503X25519) generate(c *Conn, groupId CurveID) ([]byte, keyShare, error) {
+	var pubHybrid [SIKEp503Curve25519PubKeySz]byte
+	var prvHybrid [SIKEp503Curve25519PrvKeySz + SIDHp503PubKeySz]byte
+
+	// Generate ephemeral key for classic x25519
+	private, ks, err := kex.classicKEX.generate(c, 0)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	copy(prvHybrid[:], private)
+	copy(pubHybrid[:], ks.data)
+
+	// Generate PQ ephemeral key for SIDH
+	private, ks, err = kex.pqKEX.generate(c, 0)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	copy(prvHybrid[x25519Sz:], private)
+	copy(pubHybrid[x25519Sz:], ks.data)
+	return prvHybrid[:], keyShare{group: HybridSIKEp503Curve25519, data: pubHybrid[:]}, nil
+}
+
+// keyAgreementClient performs X25519-SIKEp503 key agreement on client side. 'theirsKS.data' contains
+// X25519 public key and SIKEp503 KEM generated by the server. 'privateKey' is a key stored
+// locally by the process. It is a concatenation of (X25519 || SIKEp503 private || SIKEp503 public) keys.
+// In case of success concatenation of (X25519||SIKEp503) shared secrets is returned (32+16 bytes).
+func (kex *kexHybridSIKEp503X25519) keyAgreementClient(c *Conn, theirsKS keyShare, privateKey []byte) ([]byte, error) {
+	var ssHyb [SIKEp503Curve25519SharedKeySz]byte
+	var tmpKs keyShare
+
+	if len(privateKey) != SIKEp503Curve25519PrvKeySz+SIDHp503PubKeySz {
+		return nil, errors.New("tls: internal error")
+	}
+
+	if len(theirsKS.data) != SIKEp503Curve25519CtSz {
+		return nil, errors.New("tls: wrong key size for X25519-SIKEp503")
+	}
+
+	// Key agreement for classic
+	tmpKs.group = X25519
+	tmpKs.data = theirsKS.data[:x25519Sz]
+	ret, err := kex.classicKEX.keyAgreementClient(c, tmpKs, privateKey[:x25519Sz])
+	if err != nil {
+		return nil, err
+	}
+	copy(ssHyb[:], ret)
+
+	// Key agreement for PQ
+	tmpKs.group = 0 /*UNUSED*/
+	tmpKs.data = theirsKS.data[x25519Sz:]
+	ret, err = kex.pqKEX.keyAgreementClient(c, tmpKs, privateKey[x25519Sz:])
+	if err != nil {
+		return nil, err
+	}
+	copy(ssHyb[x25519Sz:], ret[:])
+	return ssHyb[:], nil
+}
+
+// keyAgreementServer performs X25519-SIKEp503 shared secret agreement on a server side. 'theirsKS'
+// contains concatenation of public keys for both X25519 and SIKEp503. In case of success
+// function returns X25519 and SIKEp503 shaerd secret concatenated together and concatenation of
+// X25519 public and SIKEp503 ciphertext that are sent to the client.
+func (kex *kexHybridSIKEp503X25519) keyAgreementServer(c *Conn, theirsKS keyShare) ([]byte, keyShare, error) {
+	var ssHyb [SIKEp503Curve25519SharedKeySz]byte
+	var ret [SIKEp503Curve25519CtSz]byte
+
+	if len(theirsKS.data) != SIKEp503Curve25519PubKeySz {
+		return nil, keyShare{}, errors.New("tls: wrong key size for X25519-SIKEp503")
+	}
+
+	var tmpKs = keyShare{group: X25519, data: theirsKS.data[:x25519Sz]}
+	ss, srvKs, err := kex.classicKEX.keyAgreementServer(c, tmpKs)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	copy(ssHyb[:], ss[:])
+	copy(ret[:], srvKs.data[:])
+
+	tmpKs.group = 0 /*UNUSED*/
+	tmpKs.data = theirsKS.data[x25519Sz:]
+	ss, srvKs, err = kex.pqKEX.keyAgreementServer(c, tmpKs)
+	if err != nil {
+		return nil, keyShare{}, err
+	}
+	copy(ssHyb[x25519Sz:], ss[:])
+	copy(ret[x25519Sz:], srvKs.data[:SIKEp503CtSz])
+	return ssHyb[:], keyShare{group: HybridSIKEp503Curve25519, data: ret[:]}, nil
 }
