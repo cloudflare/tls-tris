@@ -65,10 +65,9 @@ func (c *Conn) serverHandshake() error {
 	if err != nil {
 		return err
 	}
-
-	// For an overview of TLS handshaking, see https://tools.ietf.org/html/rfc5246#section-7.3
-	// and https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-2
+	c.clientHello = hs.clientHello.marshal()
 	c.buffering = true
+
 	if c.vers >= VersionTLS13 {
 		if err := hs.doTLS13Handshake(); err != nil {
 			return err

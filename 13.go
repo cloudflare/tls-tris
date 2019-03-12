@@ -234,8 +234,6 @@ func (hs *serverHandshakeState) doTLS13Handshake() error {
 	c := hs.c
 
 	hs.c.cipherSuite, hs.hello.cipherSuite = hs.suite.id, hs.suite.id
-	hs.c.clientHello = hs.clientHello.marshal()
-
 	// When picking the group for the handshake, priority is given to groups
 	// that the client provided a keyShare for, so to avoid a round-trip.
 	// After that the order of CurvePreferences is respected.
