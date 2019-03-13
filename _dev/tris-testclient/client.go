@@ -180,7 +180,7 @@ func main() {
 	for _, ng := range strings.Split(named_groups, ":") {
 		id, err := getIDByName(namedGroupsToName, ng)
 		if err != nil {
-			panic("Wrong TLS version provided")
+			panic("Wrong group name provided")
 		}
 		client.TLS.CurvePreferences = append(client.TLS.CurvePreferences, tls.CurveID(id))
 	}
