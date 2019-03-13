@@ -821,15 +821,6 @@ func (c *Config) cipherSuites() []uint16 {
 	s := c.CipherSuites
 	if s == nil {
 		s = defaultCipherSuites()
-	} else if c.maxVersion() >= VersionTLS13 {
-		// Ensure that TLS 1.3 suites are always present, but respect
-		// the application cipher suite preferences.
-		s13 := defaultTLS13CipherSuites()
-		if !hasOverlappingCipherSuites(s, s13) {
-			allSuites := make([]uint16, len(s13)+len(s))
-			allSuites = append(allSuites, s13...)
-			s = append(allSuites, s...)
-		}
 	}
 	return s
 }
