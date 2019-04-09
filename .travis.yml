@@ -1,5 +1,16 @@
-sudo: required
 language: go
+
+matrix:
+  include:
+    - os: linux
+      env: TEST_SUITE=test-unit
+    - os: linux
+      env: TEST_SUITE=test-bogo
+    - os: linux
+      env: TEST_SUITE=test-interop
+    - os: osx
+      env: TEST_SUITE=test-unit
+  fast_finish: true
 
 services:
   - docker
@@ -7,19 +18,13 @@ services:
 go:
   - 1.11.x
 
-env:
-  - TEST_SUITE=test-unit
-  - TEST_SUITE=test-bogo
-  - TEST_SUITE=test-interop
-
-matrix:
-  fast_finish: true
-
 before_install:
   - make -f _dev/Makefile fmtcheck
 
 install:
-  - sudo pip install docker
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo pip install docker; fi
 
 script:
+  # Travis does not support Docker on macOS, disable it in the build-all target.
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export DOCKER='echo Unsupported - docker'; fi
   - make -f _dev/Makefile build-all && make -f _dev/Makefile "$TEST_SUITE"

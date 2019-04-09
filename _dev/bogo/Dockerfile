@@ -4,6 +4,7 @@ RUN apk add --update \
     git \
     make \
     bash \
+    perl \
     patch \
     rsync \
   && rm -rf /var/cache/apk/*
