@@ -15,6 +15,7 @@ OS          ?= $(shell $(GO) env GOHOSTOS)
 ARCH        ?= $(shell $(GO) env GOHOSTARCH)
 OS_ARCH     := $(OS)_$(ARCH)
 VER_OS_ARCH := $(shell $(GO) version | cut -d' ' -f 3)_$(OS)_$(ARCH)
+VER_MAJOR   := $(shell $(GO) version | cut -d' ' -f 3 | cut -d. -f1-2)
 GOROOT_ENV  ?= $(shell $(GO) env GOROOT)
 GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
 # Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
@@ -57,6 +58,11 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Apply additional patches
 	for p in $(wildcard $(DEV_DIR)/patches/*); do patch -d "$(GOROOT_LOCAL)" -p1 < "$$p"; done
+
+# Adjust internal paths https://github.com/cloudflare/tls-tris/issues/166
+ifeq ($(VER_MAJOR), go1.12)
+	perl -pi -e 's,"golang_org/x/crypto/,"internal/x/crypto/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
+endif
 
 # Vendor NOBS library
 	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
