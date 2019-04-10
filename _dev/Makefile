@@ -46,9 +46,10 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 	mkdir -p "$(GOROOT_LOCAL)/pkg"
 
 # Copy src/tools from system GOROOT
-	cp -Hr $(GOROOT_ENV)/src $(GOROOT_LOCAL)/src
-	cp -Hr $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/include
-	cp -Hr $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/tool
+	# macOS cp requires -R instead of -r. It makes no difference for GNU cp.
+	cp -HR $(GOROOT_ENV)/src $(GOROOT_LOCAL)/src
+	cp -HR $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/include
+	cp -HR $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/tool
 
 # Swap TLS implementation
 	rm -r $(GOROOT_LOCAL)/src/crypto/tls/*
@@ -60,14 +61,16 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 # Vendor NOBS library
 	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
 	cd $(TMP_DIR)/nobs; $(GIT) checkout tags/$(NOBS_REPO_TAG)
+	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/nobs/Makefile
 	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
-	cp -rf $(TMP_DIR)/nobs/tls_vendor/* $(GOROOT_LOCAL)/src/vendor/
+	cp -rf $(TMP_DIR)/nobs/tls_vendor/. $(GOROOT_LOCAL)/src/vendor/
 
 # Vendor SIDH library
 	$(GIT) clone $(SIDH_REPO) $(TMP_DIR)/sidh
 	cd $(TMP_DIR)/sidh; $(GIT) checkout tags/$(SIDH_REPO_TAG)
+	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/sidh/Makefile
 	cd $(TMP_DIR)/sidh; make vendor
-	cp -rf $(TMP_DIR)/sidh/build/vendor/* $(GOROOT_LOCAL)/src/vendor/
+	cp -rf $(TMP_DIR)/sidh/build/vendor/. $(GOROOT_LOCAL)/src/vendor/
 
 # Create go package
 	GOARCH=$(ARCH) GOROOT="$(GOROOT_LOCAL)" $(GO) install -v std
