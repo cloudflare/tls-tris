@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -154,6 +155,8 @@ func main() {
 	arg_confirm := flag.Bool("rtt0ack", false, "0-RTT confirm")
 	arg_clientauth := flag.Bool("cliauth", false, "Performs client authentication (RequireAndVerifyClientCert used)")
 	arg_pq := flag.String("pq", "", "Enable quantum-resistant algorithms [c: Support classical and Quantum-Resistant, q: Enable Quantum-Resistant only]")
+	arg_esniKeys := flag.String("esni-keys", "", "File with base64-encoded ESNIKeys")
+	arg_esniPrivate := flag.String("esni-private", "", "Private key file for ESNI")
 	flag.Parse()
 
 	s.Address = *arg_addr
@@ -176,6 +179,35 @@ func main() {
 		enablePQ(s, true)
 	} else if *arg_pq == "q" {
 		enablePQ(s, false)
+	}
+
+	var err error
+	var esniKeys *tls.ESNIKeys
+	var esniPrivateKey []byte
+	if *arg_esniPrivate == "" && *arg_esniKeys != "" ||
+		*arg_esniPrivate != "" && *arg_esniKeys == "" {
+		log.Fatal("Both -esni-keys and -esni-private must be provided.")
+	}
+	if *arg_esniPrivate != "" {
+		esniPrivateKey, err = ioutil.ReadFile(*arg_esniPrivate)
+		if err != nil {
+			log.Fatalf("Failed to read ESNI private key: %s", err)
+		}
+	}
+	if *arg_esniKeys != "" {
+		contents, err := ioutil.ReadFile(*arg_esniKeys)
+		if err != nil {
+			log.Fatalf("Failed to read ESNIKeys: %s", err)
+		}
+		esniKeysBytes, err := base64.StdEncoding.DecodeString(string(contents))
+		if err != nil {
+			log.Fatal("Bad -esni-keys: %s", err)
+		}
+		esniKeys, err = tls.ParseESNIKeys(esniKeysBytes)
+		if esniKeys == nil {
+			log.Fatalf("Cannot parse ESNIKeys: %s", err)
+		}
+		s.TLS.GetServerESNIKeys = func([]byte) (*tls.ESNIKeys, []byte, error) { return esniKeys, esniPrivateKey, nil }
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

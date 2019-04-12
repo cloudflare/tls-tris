@@ -246,6 +246,28 @@ Curves:
 		return false, errors.New("tls: initial handshake had non-empty renegotiation extension")
 	}
 
+	c.serverName = hs.clientHello.serverName
+
+	var esniNonce []byte
+	if len(hs.clientHello.encryptedServerName) != 0 {
+		if c.vers < VersionTLS13 {
+			c.sendAlert(alertHandshakeFailure)
+			return false, errors.New("tls: ESNI requires TLS 1.3")
+		}
+		var clientESNI clientEncryptedSNI
+		if !clientESNI.unmarshal(hs.clientHello.encryptedServerName) {
+			c.sendAlert(alertDecodeError)
+			return false, errors.New("tls: malformed clientESNI extension")
+		}
+		var alert alert
+		// Override and ignore the old server_name value.
+		esniNonce, c.serverName, alert, err = clientESNI.processClientESNIForServer(c.config, hs.clientHello.random, hs.clientHello.keyShares)
+		if alert != alertSuccess {
+			c.sendAlert(alert)
+			return false, err
+		}
+	}
+
 	if c.vers < VersionTLS13 {
 		hs.hello = new(serverHelloMsg)
 		hs.hello.vers = c.vers
@@ -268,10 +290,7 @@ Curves:
 			c.sendAlert(alertInternalError)
 			return false, err
 		}
-	}
-
-	if len(hs.clientHello.serverName) > 0 {
-		c.serverName = hs.clientHello.serverName
+		hs.hello13Enc.esniNonce = esniNonce
 	}
 
 	if len(hs.clientHello.alpnProtocols) > 0 {
@@ -914,9 +933,15 @@ func (hs *serverHandshakeState) clientHelloInfo() *ClientHelloInfo {
 		pskBinder = hs.clientHello.psks[0].binder
 	}
 
+	// Use ESNI if available.
+	serverName := hs.c.serverName
+	if len(serverName) == 0 {
+		serverName = hs.clientHello.serverName
+	}
+
 	hs.cachedClientHelloInfo = &ClientHelloInfo{
 		CipherSuites:               hs.clientHello.cipherSuites,
-		ServerName:                 hs.clientHello.serverName,
+		ServerName:                 serverName,
 		SupportedCurves:            hs.clientHello.supportedCurves,
 		SupportedPoints:            hs.clientHello.supportedPoints,
 		SignatureSchemes:           hs.clientHello.supportedSignatureAlgorithms,

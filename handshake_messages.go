@@ -33,6 +33,7 @@ type clientHelloMsg struct {
 	compressionMethods               []uint8
 	nextProtoNeg                     bool
 	serverName                       string
+	encryptedServerName              []byte
 	ocspStapling                     bool
 	scts                             bool
 	supportedCurves                  []CurveID
@@ -116,6 +117,7 @@ func (m *clientHelloMsg) equal(i interface{}) bool {
 		bytes.Equal(m.compressionMethods, m1.compressionMethods) &&
 		m.nextProtoNeg == m1.nextProtoNeg &&
 		m.serverName == m1.serverName &&
+		bytes.Equal(m.encryptedServerName, m1.encryptedServerName) &&
 		m.ocspStapling == m1.ocspStapling &&
 		m.scts == m1.scts &&
 		eqCurveIDs(m.supportedCurves, m1.supportedCurves) &&
@@ -152,6 +154,10 @@ func (m *clientHelloMsg) marshal() []byte {
 	}
 	if len(m.serverName) > 0 {
 		extensionsLength += 5 + len(m.serverName)
+		numExtensions++
+	}
+	if len(m.encryptedServerName) > 0 {
+		extensionsLength += len(m.encryptedServerName)
 		numExtensions++
 	}
 	if len(m.supportedCurves) > 0 {
@@ -283,6 +289,13 @@ func (m *clientHelloMsg) marshal() []byte {
 		z[4] = byte(len(m.serverName))
 		copy(z[5:], []byte(m.serverName))
 		z = z[l:]
+	}
+	if len(m.encryptedServerName) > 0 {
+		l := len(m.encryptedServerName)
+		binary.BigEndian.PutUint16(z, extensionEncryptedServerName)
+		binary.BigEndian.PutUint16(z[2:], uint16(l))
+		copy(z[4:], m.encryptedServerName)
+		z = z[4+l:]
 	}
 	if m.ocspStapling {
 		// RFC 4366, section 3.6
@@ -490,6 +503,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 
 	m.nextProtoNeg = false
 	m.serverName = ""
+	m.encryptedServerName = nil
 	m.ocspStapling = false
 	m.ticketSupported = false
 	m.sessionTicket = nil
@@ -776,6 +790,9 @@ func (m *clientHelloMsg) unmarshal(data []byte) alert {
 			if length != 0 {
 				return alertDecodeError
 			}
+		case extensionEncryptedServerName:
+			// https://tools.ietf.org/html/draft-ietf-tls-esni-01
+			m.encryptedServerName = data[:length]
 		}
 		data = data[length:]
 		bindersOffset += length
@@ -1234,6 +1251,7 @@ type encryptedExtensionsMsg struct {
 	raw          []byte
 	alpnProtocol string
 	earlyData    bool
+	esniNonce    []byte
 }
 
 func (m *encryptedExtensionsMsg) equal(i interface{}) bool {
@@ -1244,7 +1262,8 @@ func (m *encryptedExtensionsMsg) equal(i interface{}) bool {
 
 	return bytes.Equal(m.raw, m1.raw) &&
 		m.alpnProtocol == m1.alpnProtocol &&
-		m.earlyData == m1.earlyData
+		m.earlyData == m1.earlyData &&
+		bytes.Equal(m.esniNonce, m1.esniNonce)
 }
 
 func (m *encryptedExtensionsMsg) marshal() []byte {
@@ -1263,6 +1282,9 @@ func (m *encryptedExtensionsMsg) marshal() []byte {
 			panic("invalid ALPN protocol")
 		}
 		length += 2 + 2 + 2 + 1 + alpnLen
+	}
+	if len(m.esniNonce) > 0 {
+		length += 2 + 2 + 16
 	}
 
 	x := make([]byte, 4+length)
@@ -1296,6 +1318,13 @@ func (m *encryptedExtensionsMsg) marshal() []byte {
 		z = z[4:]
 	}
 
+	if len(m.esniNonce) > 0 {
+		binary.BigEndian.PutUint16(z, extensionEncryptedServerName)
+		binary.BigEndian.PutUint16(z[2:], 16)
+		copy(z[4:], m.esniNonce)
+		z = z[4+len(m.esniNonce):]
+	}
+
 	m.raw = x
 	return x
 }
@@ -1308,6 +1337,7 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) alert {
 
 	m.alpnProtocol = ""
 	m.earlyData = false
+	m.esniNonce = nil
 
 	extensionsLength := int(data[4])<<8 | int(data[5])
 	data = data[6:]
@@ -1350,6 +1380,11 @@ func (m *encryptedExtensionsMsg) unmarshal(data []byte) alert {
 		case extensionEarlyData:
 			// https://tools.ietf.org/html/draft-ietf-tls-tls13-18#section-4.2.8
 			m.earlyData = true
+		case extensionEncryptedServerName:
+			if length != 16 {
+				return alertDecodeError
+			}
+			m.esniNonce = data[:16]
 		}
 
 		data = data[length:]

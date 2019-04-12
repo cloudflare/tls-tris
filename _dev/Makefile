@@ -99,11 +99,13 @@ build-all: \
 	build-test-tris-client \
 	build-test-tris-server \
 	build-test-bogo \
+	build-esnitool \
 	$(addprefix build-test-,$(TARGET_TEST_COMPAT))
 
 # Builds TRIS client
 build-test-tris-client: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
 	cd $(DEV_DIR)/tris-testclient && \
+		GOROOT="$(GOROOT_LOCAL)" $(GO) get -d -v && \
 		GOROOT="$(GOROOT_LOCAL)" GOOS=linux CGO_ENABLED=0 $(GO) build -v -i .
 	$(DOCKER) build -t tris-testclient $(DEV_DIR)/tris-testclient
 
@@ -112,6 +114,12 @@ build-test-tris-server: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
 	cd $(DEV_DIR)/tris-localserver && \
 		GOROOT="$(GOROOT_LOCAL)" GOOS=linux CGO_ENABLED=0 $(GO) build -v -i .
 	$(DOCKER) build -t tris-localserver $(DEV_DIR)/tris-localserver
+
+# Builds esnitool for ESNI tests
+build-esnitool: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+	cd $(DEV_DIR)/esnitool && \
+		GOROOT="$(GOROOT_LOCAL)" $(GO) get -d -v && \
+		GOROOT="$(GOROOT_LOCAL)" $(GO) build -v -i .
 
 # BoringSSL specific stuff
 build-test-boring: 	BUILDARG=--build-arg REVISION=$(BORINGSSL_REVISION)
