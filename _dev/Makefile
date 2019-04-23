@@ -61,8 +61,13 @@ $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
 # Adjust internal paths https://github.com/cloudflare/tls-tris/issues/166
 ifeq ($(VER_MAJOR), go1.12)
-	perl -pi -e 's,"golang_org/x/crypto/,"internal/x/crypto/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
+	perl -pi -e 's,"golang\.org/x/crypto/,"internal/x/crypto/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
+else ifeq ($(VER_MAJOR), go1.11)
+	perl -pi -e 's,"golang\.org/x/crypto/,"golang_org/x/crypto/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
 endif
+	perl -pi -e 's,"golang\.org/x/sys/cpu","internal/cpu",' $(GOROOT_LOCAL)/src/crypto/tls/*.go
+# Use vendored copy of SIDH and SIKE.
+	perl -pi -e 's,"github\.com/,"github_com/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
 
 # Vendor NOBS library
 	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
