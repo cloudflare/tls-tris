@@ -1,3 +1,4 @@
+dist: xenial
 language: go
 
 matrix:
@@ -28,7 +29,10 @@ before_install:
   - make -f _dev/Makefile fmtcheck
 
 install:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]] && [[ "$TEST_SUITE" != "test-unit" ]]; then sudo pip install docker; fi
+  - |
+    if [[ "$TRAVIS_OS_NAME" == "linux" ]] && [[ "$TEST_SUITE" != "test-unit" ]]; then
+      sudo apt-get install -y python3-pip && sudo pip3 install docker
+    fi
 
 script:
   # Travis does not support Docker on macOS, disable it in the build-all target.

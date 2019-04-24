@@ -135,7 +135,7 @@ test-bogo:
 	$(DOCKER) run --rm -v $(PRJ_DIR):$(BOGO_DOCKER_TRIS_LOCATION) tls-tris:bogo
 
 test-interop:
-	$(DEV_DIR)/interop_test_runner -v
+	$(DEV_DIR)/interop_test_runner.py -v
 
 ###############
 #
