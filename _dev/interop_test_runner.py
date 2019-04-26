@@ -45,9 +45,21 @@ class Docker(object):
     def run_server(self, image_name, cmd=None, ports=None, entrypoint=None):
         ''' Starts server and returns docker container '''
         c = self.d.containers.run(image=image_name, auto_remove=True, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
-        # TODO: maybe can be done better?
-        time.sleep(3)
+        try:
+            self.wait_for_ports(c)
+        except:
+            c.kill()
+            raise
         return c
+
+    def wait_for_ports(self, container):
+        ''' Waits until all services from the container are ready. '''
+        container.reload()
+        netinfo = container.attrs['NetworkSettings']
+        host = netinfo['IPAddress']
+        ports = [portproto.split('/')[0] for portproto in netinfo['Ports']]
+        command = ' '.join([host] + ports)
+        self.d.containers.run('tris-wait-for-ports', command, auto_remove=True)
 
 class RegexSelfTest(unittest.TestCase):
     ''' Ensures that those regexe's actually work '''

@@ -118,6 +118,11 @@ build-test-boring: 	BUILDARG=--build-arg REVISION=$(BORINGSSL_REVISION)
 build-caddy: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
 	CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build github.com/mholt/caddy
 
+# for interop tests
+build-wait-for-ports:
+	cd $(DEV_DIR)/wait-for-ports; GOOS=linux $(GO) build -v -i .
+	$(DOCKER) build -t tris-wait-for-ports $(DEV_DIR)/wait-for-ports
+
 ###############
 #
 # Test targets
