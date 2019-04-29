@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import docker
 import unittest
@@ -8,13 +8,13 @@ import time
 # Regex patterns used for testing
 
 # Checks if TLS 1.3 was negotiated
-RE_PATTERN_HELLO_TLS_13_NORESUME = "^.*Hello TLS 1.3 \(draft .*\) _o/$|^.*Hello TLS 1.3 _o/$"
+RE_PATTERN_HELLO_TLS_13_NORESUME = r"^.*Hello TLS 1.3 \(draft .*\) _o/$|^.*Hello TLS 1.3 _o/$"
 # Checks if TLS 1.3 was resumed
-RE_PATTERN_HELLO_TLS_13_RESUME   = "Hello TLS 1.3 \[resumed\] _o/"
+RE_PATTERN_HELLO_TLS_13_RESUME   = r"Hello TLS 1.3 \[resumed\] _o/"
 # Checks if 0-RTT was used and NOT confirmed
-RE_PATTERN_HELLO_0RTT            = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o/$"
+RE_PATTERN_HELLO_0RTT            = r"^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o/$"
 # Checks if 0-RTT was used and confirmed
-RE_PATTERN_HELLO_0RTT_CONFIRMED  = "^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
+RE_PATTERN_HELLO_0RTT_CONFIRMED  = r"^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
 # ALPN
 RE_PATTERN_ALPN = "ALPN protocol: npn_proto$"
 # Successful TLS establishement from TRIS
@@ -27,23 +27,24 @@ class Docker(object):
     def __init__(self):
         self.d = docker.from_env()
 
+    def close(self):
+        self.d.close()
+
     def get_ip(self, server):
         tris_localserver_container = self.d.containers.get(server)
         return tris_localserver_container.attrs['NetworkSettings']['IPAddress']
 
     def run_client(self, image_name, cmd):
         ''' Runs client and returns tuple (status_code, logs) '''
-        c = self.d.containers.create(image=image_name, command=cmd)
-        c.start()
+        c = self.d.containers.run(image=image_name, detach=True, command=cmd)
         res = c.wait()
-        ret = c.logs()
+        ret = c.logs().decode('utf8')
         c.remove()
         return (res['StatusCode'], ret)
 
     def run_server(self, image_name, cmd=None, ports=None, entrypoint=None):
         ''' Starts server and returns docker container '''
-        c = self.d.containers.create(image=image_name, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
-        c.start()
+        c = self.d.containers.run(image=image_name, auto_remove=True, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
         # TODO: maybe can be done better?
         time.sleep(3)
         return c
@@ -95,12 +96,16 @@ class InteropServer(object):
     @classmethod
     def setUpClass(self):
         self.d = Docker()
-        self.server = self.d.run_server(self.TRIS_SERVER_NAME)
+        try:
+            self.server = self.d.run_server(self.TRIS_SERVER_NAME)
+        except:
+            self.d.close()
+            raise
 
     @classmethod
     def tearDownClass(self):
         self.server.kill()
-        self.server.remove()
+        self.d.close()
 
     @property
     def server_ip(self):
@@ -193,15 +198,19 @@ class InteropClient(object):
     @classmethod
     def setUpClass(self):
         self.d = Docker()
-        self.server = self.d.run_server(
-                            self.SERVER_NAME,
-                            ports={ '1443/tcp': 1443, '2443/tcp': 2443, '6443/tcp': 6443, '7443/tcp': 7443},
-                            entrypoint="/server.sh")
+        try:
+            self.server = self.d.run_server(
+                                self.SERVER_NAME,
+                                ports={ '1443/tcp': None, '2443/tcp': None, '6443/tcp': None, '7443/tcp': None},
+                                entrypoint="/server.sh")
+        except:
+            self.d.close()
+            raise
 
     @classmethod
     def tearDownClass(self):
         self.server.kill()
-        self.server.remove()
+        self.d.close()
 
     @property
     def server_ip(self):
