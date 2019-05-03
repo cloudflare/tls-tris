@@ -103,12 +103,14 @@ build-all: \
 
 # Builds TRIS client
 build-test-tris-client: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
-	cd $(DEV_DIR)/tris-testclient; CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build -v -i .
+	cd $(DEV_DIR)/tris-testclient && \
+		GOROOT="$(GOROOT_LOCAL)" GOOS=linux CGO_ENABLED=0 $(GO) build -v -i .
 	$(DOCKER) build -t tris-testclient $(DEV_DIR)/tris-testclient
 
 # Builds TRIS server
 build-test-tris-server: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
-	cd $(DEV_DIR)/tris-localserver; CGO_ENABLED=0 GOROOT="$(GOROOT_LOCAL)" $(GO) build -v -i .
+	cd $(DEV_DIR)/tris-localserver && \
+		GOROOT="$(GOROOT_LOCAL)" GOOS=linux CGO_ENABLED=0 $(GO) build -v -i .
 	$(DOCKER) build -t tris-localserver $(DEV_DIR)/tris-localserver
 
 # BoringSSL specific stuff
