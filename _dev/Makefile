@@ -20,7 +20,6 @@ GOROOT_ENV  ?= $(shell $(GO) env GOROOT)
 GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
 # Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
 INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
-TMP_DIR		:= $(shell mktemp -d)
 
 # Test targets used for compatibility testing
 TARGET_TEST_COMPAT=boring picotls tstclnt
@@ -28,6 +27,8 @@ TARGET_TEST_COMPAT=boring picotls tstclnt
 # Some target-specific constants
 BORINGSSL_REVISION=ff433815b51c34496bb6bea13e73e29e5c278238
 BOGO_DOCKER_TRIS_LOCATION=/go/src/github.com/cloudflare/tls-tris
+
+TRIS_SOURCES := $(wildcard $(PRJ_DIR)/*.go)
 
 # SIDH repository
 SIDH_REPO  ?= https://github.com/cloudflare/sidh.git
@@ -41,23 +42,55 @@ NOBS_REPO_TAG ?= Release_0.1
 # Build targets
 #
 ##############################
-$(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): clean
 
-# Create clean directory structure
+# Default target must build Go (assumed by _dev/go.sh)
+.PHONY: go
+go: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
+
+# Ensure src and src/vendor directories are present when building in parallel)
+$(GOROOT_LOCAL)/src/vendor:
+	mkdir -p $@
+
+# Replace the local copy if the system Go version has changed.
+$(GOROOT_LOCAL)/pkg/.ok_$(VER_OS_ARCH): $(GOROOT_ENV)/pkg | $(GOROOT_LOCAL)/src/vendor
+	rm -rf $(GOROOT_LOCAL)/pkg $(GOROOT_LOCAL)/src
 	mkdir -p "$(GOROOT_LOCAL)/pkg"
-
-# Copy src/tools from system GOROOT
-	# macOS cp requires -R instead of -r. It makes no difference for GNU cp.
-	cp -HR $(GOROOT_ENV)/src $(GOROOT_LOCAL)/src
-	cp -HR $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/include
-	cp -HR $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/tool
-
-# Swap TLS implementation
-	rm -r $(GOROOT_LOCAL)/src/crypto/tls/*
-	rsync -rltgoD $(PRJ_DIR)/ $(GOROOT_LOCAL)/src/crypto/tls/ --exclude=$(lastword $(subst /, ,$(DEV_DIR)))
-
-# Apply additional patches
+	cp -r $(GOROOT_ENV)/src $(GOROOT_LOCAL)/
+	cp -r $(GOROOT_ENV)/pkg/include $(GOROOT_LOCAL)/pkg/
+	cp -r $(GOROOT_ENV)/pkg/tool $(GOROOT_LOCAL)/pkg/
+# Apply additional patches to stdlib
 	for p in $(wildcard $(DEV_DIR)/patches/*); do patch -d "$(GOROOT_LOCAL)" -p1 < "$$p"; done
+	touch $@
+
+# Vendor NOBS library
+$(GOROOT_LOCAL)/src/vendor/github_com/henrydcase/nobs: | $(GOROOT_LOCAL)/src/vendor
+	$(eval TMP_DIR := $(shell mktemp -d))
+	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
+	cd $(TMP_DIR)/nobs; $(GIT) checkout tags/$(NOBS_REPO_TAG)
+	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/nobs/Makefile
+	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
+	cp -rf $(TMP_DIR)/nobs/tls_vendor/. $(GOROOT_LOCAL)/src/vendor/
+	-rm -rf $(TMP_DIR)
+
+# Vendor SIDH library
+$(GOROOT_LOCAL)/src/vendor/github_com/cloudflare/sidh: | $(GOROOT_LOCAL)/src/vendor
+	$(eval TMP_DIR := $(shell mktemp -d))
+	$(GIT) clone $(SIDH_REPO) $(TMP_DIR)/sidh
+	cd $(TMP_DIR)/sidh; $(GIT) checkout tags/$(SIDH_REPO_TAG)
+	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/sidh/Makefile
+	cd $(TMP_DIR)/sidh; make vendor
+	cp -rf $(TMP_DIR)/sidh/build/vendor/. $(GOROOT_LOCAL)/src/vendor/
+	-rm -rf $(TMP_DIR)
+
+# Rebuild only on dependency (Go core and vendored deps) and Tris changes.
+$(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH): \
+	$(GOROOT_LOCAL)/pkg/.ok_$(VER_OS_ARCH) \
+	$(GOROOT_LOCAL)/src/vendor/github_com/henrydcase/nobs \
+	$(GOROOT_LOCAL)/src/vendor/github_com/cloudflare/sidh \
+	$(TRIS_SOURCES)
+
+# Replace the standard TLS implementation by Tris
+	rsync -a --delete $(PRJ_DIR)/ $(GOROOT_LOCAL)/src/crypto/tls/ --exclude='[._]*'
 
 # Adjust internal paths https://github.com/cloudflare/tls-tris/issues/166
 ifeq ($(VER_MAJOR), go1.12)
@@ -69,26 +102,11 @@ endif
 # Use vendored copy of SIDH and SIKE.
 	perl -pi -e 's,"github\.com/,"github_com/,' $(GOROOT_LOCAL)/src/crypto/tls/*.go
 
-# Vendor NOBS library
-	$(GIT) clone $(NOBS_REPO) $(TMP_DIR)/nobs
-	cd $(TMP_DIR)/nobs; $(GIT) checkout tags/$(NOBS_REPO_TAG)
-	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/nobs/Makefile
-	cd $(TMP_DIR)/nobs; make vendor-sidh-for-tls
-	cp -rf $(TMP_DIR)/nobs/tls_vendor/. $(GOROOT_LOCAL)/src/vendor/
-
-# Vendor SIDH library
-	$(GIT) clone $(SIDH_REPO) $(TMP_DIR)/sidh
-	cd $(TMP_DIR)/sidh; $(GIT) checkout tags/$(SIDH_REPO_TAG)
-	perl -pi -e 's/sed -i/perl -pi -e/' $(TMP_DIR)/sidh/Makefile
-	cd $(TMP_DIR)/sidh; make vendor
-	cp -rf $(TMP_DIR)/sidh/build/vendor/. $(GOROOT_LOCAL)/src/vendor/
-
 # Create go package
 	GOARCH=$(ARCH) GOROOT="$(GOROOT_LOCAL)" $(GO) install -v std
 ifeq ($(INSTALL_RACE),1)
 	GOARCH=$(ARCH) GOROOT="$(GOROOT_LOCAL)" $(GO) install -race -v std
 endif
-	rm -rf $(TMP_DIR)
 	@touch "$@"
 
 build-test-%: $(BUILD_DIR)/$(OS_ARCH)/.ok_$(VER_OS_ARCH)
