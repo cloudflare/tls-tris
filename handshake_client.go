@@ -34,6 +34,7 @@ type clientHandshakeState struct {
 	// TLS 1.3 fields
 	keySchedule *keySchedule13
 	privateKey  []byte
+	esniNonce   []byte
 }
 
 func makeClientHello(config *Config) (*clientHelloMsg, error) {
@@ -204,6 +205,22 @@ func (c *Conn) clientHandshake() error {
 		hello.sessionId = make([]byte, 16)
 		if _, err := io.ReadFull(c.config.rand(), hello.sessionId); err != nil {
 			return errors.New("tls: short read from Rand: " + err.Error())
+		}
+
+		if c.config.ClientESNIKeys != nil {
+			esniKeys := c.config.ClientESNIKeys
+			if !esniKeys.isValid(c.config.time()) {
+				return errors.New("tls: ClientESNIKeys has expired")
+			}
+			esniNonce, esniExt, err := esniKeys.makeClientHelloExtension(c.config.rand(), hello.serverName, hello.random, hello.keyShares)
+			if esniExt == nil {
+				// Bad serverName, etc.
+				return fmt.Errorf("tls: invalid ESNI configuration: %s", err)
+			}
+			// Replace SNI with ESNI, omitting "server_name".
+			hello.encryptedServerName = esniExt.marshal()
+			hello.serverName = ""
+			hs.esniNonce = esniNonce
 		}
 	}
 
