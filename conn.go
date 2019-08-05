@@ -8,6 +8,7 @@ package tls
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/cipher"
 	"crypto/subtle"
 	"crypto/x509"
@@ -68,6 +69,12 @@ type Conn struct {
 	secureRenegotiation bool
 	// indicates wether extended MasterSecret extension is used (see RFC7627)
 	useEMS bool
+	// exporterSecret contains the Exporter Secret
+	// (RFC 8446, 7.5 and 7.1) for TLS 1.3. For TLS 1.2 it contains the
+	// masterSecret
+	exporterSecret []byte
+	// hash contains the hash algorithm negotiated for use with exporters
+	hash crypto.Hash
 
 	// clientFinishedIsFirst is true if the client sent the first Finished
 	// message during the most recent handshake. This is recorded because
@@ -1733,4 +1740,23 @@ func (c *Conn) VerifyHostname(host string) error {
 		return errors.New("tls: handshake did not verify certificate chain")
 	}
 	return c.peerCertificates[0].VerifyHostname(host)
+}
+
+// Exporter returns an exporter value as defined in RFC 5705 and RFC 8446
+// We assume there always is a context.
+func (c *Conn) Exporter(label string, context []byte, length int) ([]byte, error) {
+	c.handshakeMutex.Lock()
+	defer c.handshakeMutex.Unlock()
+	if !c.handshakeComplete { // Question: do we wait instead?
+		return nil, errors.New("tls: handshake not performed")
+	}
+	if c.vers >= VersionTLS13 {
+		secret := hkdfExpandLabel(c.hash, c.exporterSecret, c.hash.New().Sum(nil), label, c.hash.Size()) // Same as derive secret
+		h := c.hash.New()
+		h.Write(context)
+		contextHash := h.Sum(nil)
+
+		return hkdfExpandLabel(c.hash, secret, contextHash, "exporter", length), nil
+	}
+	return nil, errors.New("tls: exporter unimplemented for TLS 1.2 and below")
 }

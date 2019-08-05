@@ -87,6 +87,12 @@ func (c *Client) run() {
 		failed++
 		return
 	}
+	if con.ConnectionState().Version == tls.VersionTLS13 {
+		_, err = con.Exporter("test exporter", []byte("client"), 32)
+		if err != nil {
+			fmt.Printf("exporter failed: %v\n\n", err)
+		}
+	}
 
 	buf := make([]byte, 1024)
 	n, err := con.Read(buf)

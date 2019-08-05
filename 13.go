@@ -59,6 +59,7 @@ const (
 	secretApplicationClient
 	secretApplicationServer
 	secretResumption
+	secretExporter
 )
 
 type keySchedule13 struct {
@@ -198,6 +199,8 @@ func (ks *keySchedule13) getLabel(secretLabel secretLabel) (label, keylogType st
 		keylogType = "SERVER_TRAFFIC_SECRET_0"
 	case secretResumption:
 		label = "res master"
+	case secretExporter:
+		label = "exp master"
 	}
 	return
 }
@@ -244,6 +247,7 @@ CurvePreferenceLoop:
 	}
 
 	hash := hashForSuite(hs.suite)
+	c.hash = hash
 	hashSize := hash.Size()
 	hs.keySchedule = newKeySchedule13(hs.suite, config, hs.clientHello.random)
 
@@ -331,6 +335,8 @@ CurvePreferenceLoop:
 	hs.appClientCipher, _ = hs.keySchedule.prepareCipher(secretApplicationClient)
 	serverCipher, _ = hs.keySchedule.prepareCipher(secretApplicationServer)
 	c.out.setCipher(c.vers, serverCipher)
+
+	c.exporterSecret = hs.keySchedule.deriveSecret(secretExporter)
 
 	if c.hand.Len() > 0 {
 		return c.sendAlert(alertUnexpectedMessage)
@@ -1013,6 +1019,7 @@ func (hs *clientHandshakeState) sendCertificate13(chainToSend *Certificate, cert
 func (hs *clientHandshakeState) doTLS13Handshake() error {
 	c := hs.c
 	hash := hashForSuite(hs.suite)
+	c.hash = hash
 	hashSize := hash.Size()
 	serverHello := hs.serverHello
 	c.scts = serverHello.scts
@@ -1170,6 +1177,9 @@ func (hs *clientHandshakeState) doTLS13Handshake() error {
 	appServerCipher, _ := hs.keySchedule.prepareCipher(secretApplicationServer)
 	appClientCipher, _ := hs.keySchedule.prepareCipher(secretApplicationClient)
 	// TODO store initial traffic secret key for KeyUpdate GH #85
+
+	// Derive exporter secret
+	c.exporterSecret = hs.keySchedule.deriveSecret(secretExporter)
 
 	// Change outbound handshake cipher for final step
 	c.out.setCipher(c.vers, clientCipher)
