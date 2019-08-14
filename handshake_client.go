@@ -445,9 +445,6 @@ func (hs *clientHandshakeState) processDelegatedCredentialFromServer(serialized 
 		} else if !v {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("delegated credential: signature invalid")
-		} else if dc.cred.expectedVersion != hs.c.vers {
-			c.sendAlert(alertIllegalParameter)
-			return errors.New("delegated credential: protocol version mismatch")
 		} else if dc.cred.expectedCertVerifyAlgorithm != scheme {
 			c.sendAlert(alertIllegalParameter)
 			return errors.New("delegated credential: signature scheme mismatch")

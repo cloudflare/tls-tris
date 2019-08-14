@@ -5,7 +5,7 @@
 package tls
 
 // Delegated credentials for TLS
-// (https://tools.ietf.org/html/draft-ietf-tls-subcerts-02) is an IETF Internet
+// (https://tools.ietf.org/html/draft-ietf-tls-subcerts-03) is an IETF Internet
 // draft and proposed TLS extension. This allows a backend server to delegate
 // TLS termination to a trusted frontend. If the client supports this extension,
 // then the frontend may use a "delegated credential" as the signing key in the
@@ -14,7 +14,7 @@ package tls
 // revoked; in order to mitigate risk in case the frontend is compromised, the
 // credential is only valid for a short time (days, hours, or even minutes).
 //
-// This implements draft 02. This draft doesn't specify an object identifier for
+// This implements draft 03. This draft doesn't specify an object identifier for
 // the X.509 extension; we use one assigned by Cloudflare. In addition, IANA has
 // not assigned an extension ID for this extension; we picked up one that's not
 // yet taken.
@@ -43,6 +43,8 @@ const (
 	dcMaxTTL          = time.Duration(dcMaxTTLSeconds * time.Second)
 	dcMaxPublicKeyLen = 1 << 24 // Bytes
 	dcMaxSignatureLen = 1 << 16 // Bytes
+	//Length of the header
+	paramsLen = 6
 )
 
 var errNoDelegationUsage = errors.New("certificate not authorized for delegation")
@@ -87,9 +89,6 @@ type credential struct {
 	// The signature scheme associated with the delegated credential public key.
 	expectedCertVerifyAlgorithm SignatureScheme
 
-	// The version of TLS in which the credential will be used.
-	expectedVersion uint16
-
 	// The credential public key.
 	publicKey crypto.PublicKey
 }
@@ -131,16 +130,10 @@ func (cred *credential) marshalSubjectPublicKeyInfo() ([]byte, error) {
 // marshal encodes a credential in the wire format specified in
 // https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
 func (cred *credential) marshal() ([]byte, error) {
-	// The number of bytes comprising the DC parameters, which includes the
-	// validity time (4 bytes), the signature scheme of the public key (2 bytes), and
-	// the protocol version (2 bytes).
-	paramsLen := 8
-
-	// The first 4 bytes are the valid_time, scheme, and version fields.
+	// The first 4 bytes are the valid_time and scheme fields
 	serialized := make([]byte, paramsLen+dcPubKeyFieldLen)
 	binary.BigEndian.PutUint32(serialized, uint32(cred.validTime/time.Second))
 	binary.BigEndian.PutUint16(serialized[4:], uint16(cred.expectedCertVerifyAlgorithm))
-	binary.BigEndian.PutUint16(serialized[6:], cred.expectedVersion)
 
 	// Encode the public key and assert that the encoding is no longer than 2^16
 	// bytes (per the spec).
@@ -164,9 +157,6 @@ func (cred *credential) marshal() ([]byte, error) {
 
 // unmarshalCredential decodes a credential and returns it.
 func unmarshalCredential(serialized []byte) (*credential, error) {
-	// The number of bytes comprising the DC parameters.
-	paramsLen := 8
-
 	if len(serialized) < paramsLen+dcPubKeyFieldLen {
 		return nil, errors.New("credential is too short")
 	}
@@ -174,7 +164,6 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 	// Parse the valid_time, scheme, and version fields.
 	validTime := time.Duration(binary.BigEndian.Uint32(serialized)) * time.Second
 	scheme := SignatureScheme(binary.BigEndian.Uint16(serialized[4:]))
-	version := binary.BigEndian.Uint16(serialized[6:])
 
 	// Parse the SubjectPublicKeyInfo.
 	pk, err := x509.ParsePKIXPublicKey(serialized[paramsLen+dcPubKeyFieldLen:])
@@ -190,7 +179,6 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 		raw:                         serialized,
 		validTime:                   validTime,
 		expectedCertVerifyAlgorithm: scheme,
-		expectedVersion:             version,
 		publicKey:                   pk,
 	}, nil
 }
@@ -199,11 +187,10 @@ func unmarshalCredential(serialized []byte) (*credential, error) {
 // credential that starts at the beginning of the input slice. It returns an
 // error if the input is too short to contain a credential.
 func getCredentialLen(serialized []byte) (int, error) {
-	paramsLen := 8
 	if len(serialized) < paramsLen+dcPubKeyFieldLen {
 		return 0, errors.New("credential is too short")
 	}
-	// First several bytes are the valid_time, scheme, and version fields.
+	// First several bytes are the valid_time and scheme fields
 	serialized = serialized[paramsLen:]
 
 	// The next 3 bytes are the length of the serialized public key, which may
