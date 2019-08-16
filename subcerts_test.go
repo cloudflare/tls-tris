@@ -17,27 +17,25 @@ import (
 
 // A PEM-encoded "delegation certificate", an X.509 certificate with the
 // DelegationUsage extension. The extension is defined in
-// specified in https://tools.ietf.org/html/draft-ietf-tls-subcerts-02.
+// specified in https://tools.ietf.org/html/draft-ietf-tls-subcerts-03.
 const DcCertWithDelegationUsage = `-----BEGIN CERTIFICATE-----
-MIIBejCCASGgAwIBAgIQXXtl0v50W2OadoW0QwLUlzAKBggqhkjOPQQDAjAUMRIw
-EAYDVQQKEwlBY21lIEluYy4wHhcNMTgwNzMwMjAxMTE5WhcNMTgwODA2MjAxMTE5
+MIIBejCCASGgAwIBAgIQFPrGWi6iIFqO9Vm/7VKk6jAKBggqhkjOPQQDAjAUMRIw
+EAYDVQQKEwlBY21lIEluYy4wHhcNMTkwODE0MjMwNzEyWhcNMTkwODIxMjMwNzEy
 WjAUMRIwEAYDVQQKEwlBY21lIEluYy4wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
-AATcQuuaUNJ3kqKGs4DBdJVd7zWzyGANT4uBNGVkZ2cgaDsdFnx99fGibfgoWer8
-HLt9Z+S6Hs+8bDPBHNgTR/Lfo1UwUzAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAww
+AASbTU38xZke+7nv0mnFKGSDa4EBkNkTiwig4RgPjlzLVSSJJQna0jhqAju7eeS/
+FCegeunOC9RBeeFHcbK3SMOEo1UwUzAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAww
 CgYIKwYBBQUHAwEwDAYDVR0TAQH/BAIwADAPBgNVHREECDAGhwR/AAABMA0GCSsG
-AQQBgtpLLAQAMAoGCCqGSM49BAMCA0cAMEQCIEMdIkwwmzQAJ6RSDT3wcrsySx2B
-5Lvx5HGzc43Fgu9eAiAi4sFXnizFBVUL43qXZBq4ARw17o0JW3/7eec1xttQhw==
------END CERTIFICATE-----
-`
+AQQBgtpLLAQAMAoGCCqGSM49BAMCA0cAMEQCIGSkHJFqDL/uFchUJV++4SGKxxAf
+t1gmce6yX6kKYg+ZAiAGLDwy1tImngiY3OBVpjL49vGfsYJ7vpRkPmApuL55qQ==
+-----END CERTIFICATE-----`
 
 // The PEM-encoded "delegation key", the secret key associated with the
 // delegation certificate. This is a key for ECDSA with P256 and SHA256.
 const DcKeyWithDelegationUsage = `-----BEGIN EC PRIVATE KEY-----
-MHcCAQEEIAS/pGktmxK1hlt3gF4N2nkMrJnoZihvOO63nnNcxXQroAoGCCqGSM49
-AwEHoUQDQgAE3ELrmlDSd5KihrOAwXSVXe81s8hgDU+LgTRlZGdnIGg7HRZ8ffXx
-om34KFnq/By7fWfkuh7PvGwzwRzYE0fy3w==
------END EC PRIVATE KEY-----
-`
+MHcCAQEEIMKB8JN8diRY5LTAfPxaLbdfV2SacUIq9TE110dPwXgjoAoGCCqGSM49
+AwEHoUQDQgAEm01N/MWZHvu579JpxShkg2uBAZDZE4sIoOEYD45cy1UkiSUJ2tI4
+agI7u3nkvxQnoHrpzgvUQXnhR3Gyt0jDhA==
+-----END EC PRIVATE KEY-----`
 
 // A certificate without the DelegationUsage extension.
 const DcCertWithoutDelegationUsage = `-----BEGIN CERTIFICATE-----
@@ -71,51 +69,50 @@ type dcTestDC struct {
 
 // Use with maxVersion == VersionTLS13.
 const DcTestDataTLS13PEM = `-----BEGIN DC TEST DATA-----
-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
-jreml8HfVQ==
+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
 -----END DC TEST DATA-----`
 
 // Parses the input PEM block containing the test DCs.
@@ -131,28 +128,11 @@ func dcLoadTestData(in []byte, out *[]dcTestDC) error {
 		return errors.New("failed to unmarshal DC test ASN.1 data")
 	}
 
-	// Check that the test data is for the right version. This should be
-	// maxVersion, defined in common.go.
+	// Check we can parse the DCs
 	for _, test := range *out {
-		dc, err := unmarshalDelegatedCredential(test.DC)
+		_, err := unmarshalDelegatedCredential(test.DC)
 		if err != nil {
 			return err
-		}
-
-		// Sanity check that test version matches the version encoded by the DC.
-		testVersion := uint16(test.Version)
-		if dc.cred.expectedVersion != testVersion {
-			return fmt.Errorf(
-				"test version doesn't match credential version: got: 0x0%04x; want: 0x%04x",
-				testVersion, dc.cred.expectedVersion)
-		}
-
-		// With the exception of "badvers" and "tsl12", all test DCs should have
-		// the expected verison.
-		if test.Name != "badvers" && test.Name != "tls12" && testVersion != maxVersion {
-			return fmt.Errorf(
-				"encountered test with wrong version: got: 0x0%04x; want: 0x%04x",
-				test.Version, maxVersion)
 		}
 	}
 	return nil
@@ -310,7 +290,6 @@ var dcTesters = []struct {
 	{true, true, false, VersionTLS13, VersionTLS13, 0, "badkey", false, false, "bad key"},
 	{true, true, true, VersionTLS13, VersionTLS13, 0, "badsig", true, true, "bad key, skip verify"},
 	{true, true, false, VersionTLS13, VersionTLS13, dcMaxTTL, "tls13", false, false, "expired dc"},
-	{true, true, false, VersionTLS13, VersionTLS13, 0, "badvers", false, false, "dc wrong version"},
 	{true, true, false, VersionTLS12, VersionTLS12, 0, "tls12", true, false, "tls12"},
 }
 
