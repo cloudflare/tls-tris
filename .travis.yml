@@ -19,6 +19,7 @@ os:
 go:
   - 1.11.x
   - 1.12.x
+  - 1.13rc1
 
 env:
   - TEST_SUITE=test-unit

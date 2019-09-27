@@ -72,7 +72,7 @@ yuGnBXj8ytqU0CwIPX4WecigUCAkVDNx
 	conn.Close()
 }
 
-func ExampleConfig_keyLogWriter_TLS12() {
+func ExampleConfig_keyLogWriterTLS12() {
 	// Debugging TLS applications by decrypting a network traffic capture.
 
 	// WARNING: Use of KeyLogWriter compromises security and should only be
@@ -116,7 +116,7 @@ func ExampleConfig_keyLogWriter_TLS12() {
 	// CLIENT_RANDOM 0000000000000000000000000000000000000000000000000000000000000000 baca0df460a688e44ce018b025183cc2353ae01f89755ef766eedd3ecc302888ee3b3a22962e45f48c20df15a98c0e80
 }
 
-func ExampleConfig_keyLogWriter_TLS13() {
+func ExampleConfig_keyLogWriterTLS13() {
 	// Debugging TLS applications by decrypting a network traffic capture.
 
 	// WARNING: Use of KeyLogWriter compromises security and should only be

@@ -1232,8 +1232,8 @@ func signatureFromSignatureScheme(signatureAlgorithm SignatureScheme) uint8 {
 // TODO(kk): Use variable length encoding?
 func getUint24(b []byte) int {
 	n := int(b[2])
-	n += int(b[1] << 8)
-	n += int(b[0] << 16)
+	n += int(b[1]) << 8
+	n += int(b[0]) << 16
 	return n
 }
 
