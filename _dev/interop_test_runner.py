@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
 import docker
-import unittest
+import os
 import re
+import subprocess
+import sys
+import tempfile
 import time
+import unittest
 
 # Regex patterns used for testing
 
@@ -34,17 +38,17 @@ class Docker(object):
         tris_localserver_container = self.d.containers.get(server)
         return tris_localserver_container.attrs['NetworkSettings']['IPAddress']
 
-    def run_client(self, image_name, cmd):
+    def run_client(self, image_name, cmd, volumes=None):
         ''' Runs client and returns tuple (status_code, logs) '''
-        c = self.d.containers.run(image=image_name, detach=True, command=cmd)
+        c = self.d.containers.run(image=image_name, detach=True, command=cmd, volumes=volumes)
         res = c.wait()
         ret = c.logs().decode('utf8')
         c.remove()
         return (res['StatusCode'], ret)
 
-    def run_server(self, image_name, cmd=None, ports=None, entrypoint=None):
+    def run_server(self, image_name, cmd=None, ports=None, entrypoint=None, volumes=None):
         ''' Starts server and returns docker container '''
-        c = self.d.containers.run(image=image_name, auto_remove=True, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
+        c = self.d.containers.run(image=image_name, auto_remove=True, detach=True, command=cmd, ports=ports, entrypoint=entrypoint, volumes=volumes)
         # TODO: maybe can be done better?
         time.sleep(3)
         return c
@@ -97,8 +101,12 @@ class InteropServer(object):
     def setUpClass(self):
         self.d = Docker()
         try:
-            self.server = self.d.run_server(self.TRIS_SERVER_NAME)
+            self.tmpdir = self._create_tmpdir()
+            self._create_esni_keys()
+            self.server = self.d.run_server(self.TRIS_SERVER_NAME, volumes=self.data_volumes())
         except:
+            if hasattr(self, 'tmpdir'):
+                self.tmpdir.cleanup()
             self.d.close()
             raise
 
@@ -106,6 +114,28 @@ class InteropServer(object):
     def tearDownClass(self):
         self.server.kill()
         self.d.close()
+        self.tmpdir.cleanup()
+
+    @classmethod
+    def _create_tmpdir(cls):
+        basedir = None
+        if sys.platform == 'darwin':
+            # Workaround for TMPDIR=/var/folders/.../T/ which is not permitted
+            # by the default Docker configuration.
+            basedir = '/tmp'
+        return tempfile.TemporaryDirectory(dir=basedir)
+
+    @classmethod
+    def _create_esni_keys(cls):
+        # Create fresh ESNIKeys that has not expired yet.
+        esni_priv = os.path.join(cls.tmpdir.name, 'esni.key')
+        esni_pub = os.path.join(cls.tmpdir.name, 'esni.pub')
+        esnitool = os.path.join(os.path.dirname(__file__), 'esnitool', 'esnitool')
+        subprocess.check_call([esnitool, '-esni-keys-file', esni_pub, '-esni-private-file', esni_priv])
+
+    @classmethod
+    def data_volumes(cls):
+        return {cls.tmpdir.name: {'bind': '/testdata', 'mode': 'ro'}}
 
     @property
     def server_ip(self):
@@ -311,6 +341,11 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         TLS session can still be established.
         '''
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true '+self.server_ip+":7443")
+        self.assertEqual(res[0], 0)
+
+    def test_esni(self):
+        res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=false -esni-keys=/testdata/esni.pub '+self.server_ip+':1443',
+                volumes=self.data_volumes())
         self.assertEqual(res[0], 0)
 
 if __name__ == '__main__':

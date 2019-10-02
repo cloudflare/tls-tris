@@ -3,11 +3,14 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"strings"
 )
@@ -55,6 +58,8 @@ type Client struct {
 func NewClient() *Client {
 	var c Client
 	c.TLS.InsecureSkipVerify = true
+	// ESNI support requires a server name to be set.
+	c.TLS.ServerName = "localhost"
 	return &c
 }
 
@@ -112,7 +117,8 @@ func result() {
 // Usage client args host:port
 func main() {
 	var keylog_file, tls_version, named_groups, named_ciphers string
-	var enable_rsa, enable_ecdsa, client_auth bool
+	var enable_rsa, enable_ecdsa, client_auth, enable_esni bool
+	var esniKeys string
 
 	flag.StringVar(&keylog_file, "keylogfile", "", "Secrets will be logged here")
 	flag.BoolVar(&enable_rsa, "rsa", true, "Whether to enable RSA cipher suites")
@@ -121,6 +127,8 @@ func main() {
 	flag.StringVar(&tls_version, "tls_version", "1.3", "TLS version to use")
 	flag.StringVar(&named_groups, "groups", "X25519:P-256:P-384:P-521", "NamedGroups IDs to use")
 	flag.StringVar(&named_ciphers, "ciphers", "TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384", "Named cipher IDs to use")
+	flag.BoolVar(&enable_esni, "esni", false, "Whether to enable ESNI (using DNS if -esni-keys is not provided)")
+	flag.StringVar(&esniKeys, "esni-keys", "", "Enable ESNI, using the base64-encoded ESNIKeys from this file instead of DNS")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		flag.Usage()
@@ -131,6 +139,10 @@ func main() {
 	client.addr = flag.Arg(0)
 	if !strings.Contains(client.addr, ":") {
 		client.addr += ":443"
+	}
+	host, _, err := net.SplitHostPort(client.addr)
+	if err != nil {
+		log.Fatalf("Cannot parse address: %s", err)
 	}
 
 	if keylog_file == "" {
@@ -156,6 +168,32 @@ func main() {
 		client.TLS.RootCAs = x509.NewCertPool()
 		if !client.TLS.RootCAs.AppendCertsFromPEM([]byte(client_ca)) {
 			panic("Can't load client CA cert")
+		}
+	}
+
+	var esniKeysBytes []byte
+	if len(esniKeys) != 0 {
+		contents, err := ioutil.ReadFile(esniKeys)
+		if err != nil {
+			log.Fatalf("Failed to read ESNIKeys: %s", err)
+		}
+		esniKeysBytes, err = base64.StdEncoding.DecodeString(string(contents))
+		if err != nil {
+			log.Fatalf("Failed to parse -esni-keys: %s", err)
+		}
+		enable_esni = true
+	} else if enable_esni {
+		esniKeysBytes, err = QueryESNIKeysForHost(host)
+		// Note: on error the spec suggests to continue with cleartext
+		// ESNI, but for testing purposes we will treat it as fatal.
+		if err != nil {
+			log.Fatalf("Failed to retrieve ESNI for host: %s", err)
+		}
+	}
+	if enable_esni {
+		client.TLS.ClientESNIKeys, err = tls.ParseESNIKeys(esniKeysBytes)
+		if client.TLS.ClientESNIKeys == nil {
+			log.Fatalf("Failed to process ESNI response for host: %s", err)
 		}
 	}
 

@@ -641,6 +641,18 @@ type Config struct {
 	// This value has no meaning for the client.
 	GetDelegatedCredential func(*ClientHelloInfo, uint16) ([]byte, crypto.PrivateKey, error)
 
+	// ClientESNIKeys enables SNI encryption by the client using the
+	// provided server keys, it has no effect on a server. If the value is
+	// nil, then SNI encryption is not enabled.
+	//
+	// See https://tools.ietf.org/html/draft-ietf-tls-esni-01
+	ClientESNIKeys *ESNIKeys
+
+	// GetServerESNIKeys should return the ESNIKeys structure identified by
+	// the given recordDigest and the corresponding private key share or
+	// return an error if unknown.
+	GetServerESNIKeys func(recordDigest []byte) (*ESNIKeys, []byte, error)
+
 	serverInitOnce sync.Once // guards calling (*Config).serverInit
 
 	// mutex protects sessionTicketKeys.
@@ -723,6 +735,8 @@ func (c *Config) Clone() *Config {
 		SessionTicketSealer:         c.SessionTicketSealer,
 		AcceptDelegatedCredential:   c.AcceptDelegatedCredential,
 		GetDelegatedCredential:      c.GetDelegatedCredential,
+		ClientESNIKeys:              c.ClientESNIKeys,
+		GetServerESNIKeys:           c.GetServerESNIKeys,
 		sessionTicketKeys:           sessionTicketKeys,
 		UseExtendedMasterSecret:     c.UseExtendedMasterSecret,
 	}
