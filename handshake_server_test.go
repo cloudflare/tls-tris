@@ -993,6 +993,39 @@ func TestResumptionDisabled(t *testing.T) {
 	// file for ResumeDisabled does not include a resumption handshake.
 }
 
+type DummySealer struct {
+}
+
+func (self DummySealer) Seal(chi *ConnectionState, data []byte) ([]byte, error) {
+	return data, nil
+}
+
+func (self DummySealer) Unseal(chi *ClientHelloInfo, data []byte) ([]byte, bool) {
+	return data, true
+}
+
+func TestResumptionWithSealer(t *testing.T) {
+	sessionFilePath := tempFile("")
+	defer os.Remove(sessionFilePath)
+
+	config := testConfig.Clone()
+	config.SessionTicketSealer = DummySealer{}
+	test := &serverTest{
+		name:    "IssueTicketSealer",
+		command: []string{"openssl", "s_client", "-cipher", "AES128-SHA", "-sess_out", sessionFilePath},
+		config:  config,
+	}
+	runServerTestTLS12(t, test)
+
+	test = &serverTest{
+		name:    "ResumeTicketSealer",
+		command: []string{"openssl", "s_client", "-cipher", "AES128-SHA", "-sess_in", sessionFilePath},
+		config:  config,
+	}
+
+	runServerTestTLS12(t, test)
+}
+
 func TestFallbackSCSV(t *testing.T) {
 	serverConfig := Config{
 		Certificates: testConfig.Certificates,

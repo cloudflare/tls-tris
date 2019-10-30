@@ -396,11 +396,22 @@ func (hs *serverHandshakeState) checkForResumption() bool {
 		return false
 	}
 
-	sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
-	serializedState, usedOldKey := c.decryptTicket(sessionTicket)
-	hs.sessionState = &sessionState{usedOldKey: usedOldKey}
-	if hs.sessionState.unmarshal(serializedState) != alertSuccess {
-		return false
+	if c.config.SessionTicketSealer != nil {
+		sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
+		serializedState, success := c.config.SessionTicketSealer.Unseal(hs.clientHelloInfo(), sessionTicket)
+		if !success {
+			return false
+		}
+		if hs.sessionState.unmarshal(serializedState) != alertSuccess {
+			return false
+		}
+	} else {
+		sessionTicket := append([]uint8{}, hs.clientHello.sessionTicket...)
+		serializedState, usedOldKey := c.decryptTicket(sessionTicket)
+		hs.sessionState = &sessionState{usedOldKey: usedOldKey}
+		if hs.sessionState.unmarshal(serializedState) != alertSuccess {
+			return false
+		}
 	}
 
 	// Never resume a session for a different TLS version.
@@ -738,7 +749,13 @@ func (hs *serverHandshakeState) sendSessionTicket() error {
 		certificates: hs.certsFromClient,
 		usedEMS:      c.useEMS,
 	}
-	m.ticket, err = c.encryptTicket(state.marshal())
+	ticket := state.marshal()
+	if c.config.SessionTicketSealer != nil {
+		cs := c.ConnectionState()
+		m.ticket, err = c.config.SessionTicketSealer.Seal(&cs, ticket)
+	} else {
+		m.ticket, err = c.encryptTicket(state.marshal())
+	}
 	if err != nil {
 		return err
 	}
