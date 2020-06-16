@@ -12,7 +12,7 @@ RUN apk add --update \
 ENV CGO_ENABLED=0
 
 RUN git clone http://git.amongbytes.com/kris/crypto-tls-bogo-shim.git \
-    /go/src/git.amongbytes.com/kris/crypto-tls-bogo-shim
+    /go/src/github.com/kris/crypto-tls-bogo-shim
 
 # Draft 18 with client-tests branch
 #ARG REVISION=3f5e87d6a1931b6f6930e4eadb7b2d0b2aa7c588
@@ -32,8 +32,8 @@ RUN git clone http://git.amongbytes.com/kris/crypto-tls-bogo-shim.git \
 # Draft 28
 ARG REVISION=33204d1eaa497819c6325998d7ba6b66316790f3
 
-RUN cd /go/src/git.amongbytes.com/kris/crypto-tls-bogo-shim && \
+RUN cd /go/src/github.com/kris/crypto-tls-bogo-shim && \
     git checkout $REVISION
 
-WORKDIR /go/src/git.amongbytes.com/kris/crypto-tls-bogo-shim
+WORKDIR /go/src/github.com/kris/crypto-tls-bogo-shim
 CMD ["make", "run"]
