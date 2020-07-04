@@ -23,7 +23,7 @@ RE_TRIS_ALL_PASSED = ".*All handshakes passed.*"
 RE_BORINGSSL_P503 = "ECDHE curve: X25519-SIDHp503"
 
 class Docker(object):
-    ''' Utility class used for starting/stoping servers and clients during tests'''
+    """Utility class used for starting/stoping servers and clients during tests"""
     def __init__(self):
         self.d = docker.from_env()
 
@@ -35,7 +35,7 @@ class Docker(object):
         return tris_localserver_container.attrs['NetworkSettings']['IPAddress']
 
     def run_client(self, image_name, cmd):
-        ''' Runs client and returns tuple (status_code, logs) '''
+        """Runs client and returns tuple (status_code, logs)"""
         c = self.d.containers.run(image=image_name, detach=True, command=cmd)
         res = c.wait()
         ret = c.logs().decode('utf8')
@@ -43,14 +43,14 @@ class Docker(object):
         return (res['StatusCode'], ret)
 
     def run_server(self, image_name, cmd=None, ports=None, entrypoint=None):
-        ''' Starts server and returns docker container '''
+        """Starts server and returns docker container"""
         c = self.d.containers.run(image=image_name, auto_remove=True, detach=True, command=cmd, ports=ports, entrypoint=entrypoint)
         # TODO: maybe can be done better?
         time.sleep(3)
         return c
 
 class RegexSelfTest(unittest.TestCase):
-    ''' Ensures that those regexe's actually work '''
+    """Ensures that those regexe's actually work"""
 
     LINE_HELLO_TLS      ="\nsomestuff\nHello TLS 1.3 _o/\nsomestuff"
     LINE_HELLO_DRAFT_TLS="\nsomestuff\nHello TLS 1.3 (draft 23) _o/\nsomestuff"
@@ -89,7 +89,7 @@ class RegexSelfTest(unittest.TestCase):
 
 
 class InteropServer(object):
-    ''' Instantiates TRIS as a server '''
+    """Instantiates TRIS as a server"""
 
     TRIS_SERVER_NAME = "tris-localserver"
 
@@ -114,7 +114,7 @@ class InteropServer(object):
 # Mixins for testing server functionality
 
 class ServerNominalMixin(object):
-    ''' Nominal tests for TLS 1.3 - client tries to perform handshake with server '''
+    """Nominal tests for TLS 1.3 - client tries to perform handshake with server"""
     def test_rsa(self):
         res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":"+'1443')
         self.assertTrue(res[0] == 0)
@@ -136,7 +136,7 @@ class ServerNominalMixin(object):
             re.search(RE_PATTERN_HELLO_TLS_13_RESUME, res[1], re.MULTILINE))
 
 class ServerClientAuthMixin(object):
-    ''' Client authentication testing '''
+    """Client authentication testing"""
     def test_client_auth(self):
         args = ''.join([self.server_ip+':6443',' -key client_rsa.key -cert client_rsa.crt -debug'])
         res = self.d.run_client(self.CLIENT_NAME, args)
@@ -160,14 +160,14 @@ class ClientNominalMixin(object):
 
 
 class ClientClientAuthMixin(object):
-    ''' Client authentication testing - tris on client side '''
+    """Client authentication testing - tris on client side"""
 
     def test_client_auth(self):
         res = self.d.run_client('tris-testclient', '-rsa=false -cliauth '+self.server_ip+":6443")
         self.assertTrue(res[0] == 0)
 
 class ServerZeroRttMixin(object):
-    ''' Zero RTT testing '''
+    """Zero RTT testing"""
 
     def test_zero_rtt(self):
         # rejecting 0-RTT
@@ -191,7 +191,7 @@ class ServerZeroRttMixin(object):
             re.search(RE_PATTERN_HELLO_0RTT_CONFIRMED, res[1], re.MULTILINE))
 
 class InteropClient(object):
-    ''' Instantiates TRIS as a client '''
+    """Instantiates TRIS as a client"""
 
     CLIENT_NAME = "tris-testclient"
 
@@ -224,18 +224,18 @@ class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAut
     CLIENT_NAME = "tls-tris:boring"
 
     def test_ALPN(self):
-        '''
+        """
         Checks wether ALPN is sent back by tris server in EncryptedExtensions in case of TLS 1.3. The
         ALPN protocol is set to 'npn_proto', which is hardcoded in TRIS test server.
-        '''
+        """
         res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":1443 "+'-alpn-protos npn_proto')
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_PATTERN_ALPN, res[1], re.MULTILINE))
 
     def test_SIDH(self):
-        '''
+        """
         Connects to TRIS server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
-        '''
+        """
         res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":7443 "+'-curves X25519-SIDHp503')
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_BORINGSSL_P503, res[1], re.MULTILINE))
@@ -263,18 +263,18 @@ class InteropClient_BoringSSL(InteropClient, ClientNominalMixin, ClientClientAut
     SERVER_NAME = "boring-localserver"
 
     def test_SIDH(self):
-        '''
+        """
         Connects to BoringSSL server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
-        '''
+        """
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true -groups X25519-SIDHp503 ' + self.server_ip+":7443")
         self.assertEqual(res[0], 0)
         self.assertIsNotNone(re.search(RE_TRIS_ALL_PASSED, res[1], re.MULTILINE))
 
     def test_SIDH_TLSv12(self):
-        '''
+        """
         Connects to TRIS server listening on 7443 and tries to perform key agreement with SIDH/P503-X25519
         This connection will be over TLSv12 and hence it should fall back to X25519
-        '''
+        """
         res = self.d.run_client(self.CLIENT_NAME, '-tls_version=1.2 -rsa=false -ecdsa=true -groups X25519-SIDHp503:P-256 -ciphers TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 ' + self.server_ip+":7443")
         self.assertEqual(res[0], 0)
         # Go doesn't provide API to get NamedGroup ID, but boringssl on port 7443 accepts only TLS1.2
@@ -306,10 +306,10 @@ class InteropServer_TRIS(ClientNominalMixin, InteropServer, unittest.TestCase):
         self.assertEqual(res[0], 0)
 
     def test_server_doesnt_support_SIDH(self):
-        '''
+        """
         Client advertises HybridSIDH and ECDH. Server supports ECDH only. Checks weather
         TLS session can still be established.
-        '''
+        """
         res = self.d.run_client(self.CLIENT_NAME, '-rsa=false -ecdsa=true '+self.server_ip+":7443")
         self.assertEqual(res[0], 0)
 
