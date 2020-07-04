@@ -17,13 +17,13 @@ RE_PATTERN_HELLO_0RTT            = r"^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT\] _o
 RE_PATTERN_HELLO_0RTT_CONFIRMED  = r"^.*Hello TLS 1.3 .*\[resumed\] \[0-RTT confirmed\] _o/$"
 # ALPN
 RE_PATTERN_ALPN = "ALPN protocol: npn_proto$"
-# Successful TLS establishement from TRIS
+# Successful TLS establishment from TRIS
 RE_TRIS_ALL_PASSED = ".*All handshakes passed.*"
 # TLS handshake from BoringSSL with SIDH/P503-X25519
 RE_BORINGSSL_P503 = "ECDHE curve: X25519-SIDHp503"
 
 class Docker(object):
-    ''' Utility class used for starting/stoping servers and clients during tests'''
+    ''' Utility class used for starting/stopping servers and clients during tests'''
     def __init__(self):
         self.d = docker.from_env()
 
@@ -80,7 +80,7 @@ class RegexSelfTest(unittest.TestCase):
         # expects 0-RTT
         self.assertIsNone(
             re.search(RE_PATTERN_HELLO_TLS_13_RESUME, RegexSelfTest.LINE_HELLO_TLS_13_0RTT, re.MULTILINE))
-        # expectes 0-RTT confirmed
+        # expects 0-RTT confirmed
         self.assertIsNone(
             re.search(RE_PATTERN_HELLO_0RTT, RegexSelfTest.LINE_HELLO_TLS_13_0RTT_CONFIRMED, re.MULTILINE))
         # expects resume without 0-RTT
@@ -225,7 +225,7 @@ class InteropServer_BoringSSL(InteropServer, ServerNominalMixin, ServerClientAut
 
     def test_ALPN(self):
         '''
-        Checks wether ALPN is sent back by tris server in EncryptedExtensions in case of TLS 1.3. The
+        Checks whether ALPN is sent back by tris server in EncryptedExtensions in case of TLS 1.3. The
         ALPN protocol is set to 'npn_proto', which is hardcoded in TRIS test server.
         '''
         res = self.d.run_client(self.CLIENT_NAME, self.server_ip+":1443 "+'-alpn-protos npn_proto')

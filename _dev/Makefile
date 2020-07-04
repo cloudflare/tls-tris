@@ -18,7 +18,7 @@ VER_OS_ARCH := $(shell $(GO) version | cut -d' ' -f 3)_$(OS)_$(ARCH)
 VER_MAJOR   := $(shell $(GO) version | cut -d' ' -f 3 | cut -d. -f1-2 | sed 's/[br].*//')
 GOROOT_ENV  ?= $(shell $(GO) env GOROOT)
 GOROOT_LOCAL = $(BUILD_DIR)/$(OS_ARCH)
-# Flag indicates wheter invoke "go install -race std". Supported only on amd64 with CGO enabled
+# Flag indicates whether invoke "go install -race std". Supported only on amd64 with CGO enabled
 INSTALL_RACE:= $(words $(filter $(ARCH)_$(shell go env CGO_ENABLED), amd64_1))
 
 # Test targets used for compatibility testing
