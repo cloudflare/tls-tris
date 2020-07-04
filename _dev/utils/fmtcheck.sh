@@ -6,7 +6,7 @@
 gofiles=$(find . -iname "*.go" ! -path "*/_dev/*")
 #[ -z "$gofiles" ] && exit 0
 
-unformatted=$(gofmt -l $gofiles)
+unformatted=$(gofmt -l "$gofiles")
 [ -z "$unformatted" ] && exit 0
 
 # Some files are not gofmt'd. Print message and fail.

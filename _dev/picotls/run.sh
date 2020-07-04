@@ -6,5 +6,5 @@ shift
 HOST="${ADDR[0]}"
 PORT="${ADDR[1]}"
 
-/picotls/cli -s /session -e "$@" $HOST $PORT < /httpreq.txt
-/picotls/cli -s /session -e "$@" $HOST $PORT < /httpreq.txt
+/picotls/cli -s /session -e "$@" "$HOST" "$PORT" < /httpreq.txt
+/picotls/cli -s /session -e "$@" "$HOST" "$PORT" < /httpreq.txt
