@@ -1,6 +1,11 @@
 #!/bin/sh
 
-./tris-localserver -b 0.0.0.0:1443 -cert=rsa   -rtt0=n  2>&1 &  # first port: ECDSA (and no 0-RTT)
+esni_args=
+if [ -e /testdata/esni.key ]; then
+    esni_args='-esni-keys=/testdata/esni.pub -esni-private=/testdata/esni.key'
+fi
+
+./tris-localserver -b 0.0.0.0:1443 -cert=rsa   -rtt0=n $esni_args 2>&1 &  # first port: ECDSA (and no 0-RTT)
 ./tris-localserver -b 0.0.0.0:2443 -cert=ecdsa -rtt0=a  2>&1 &  # second port: RSA (and accept 0-RTT but not offer it)
 ./tris-localserver -b 0.0.0.0:3443 -cert=ecdsa -rtt0=o  2>&1 &  # third port: offer and reject 0-RTT
 ./tris-localserver -b 0.0.0.0:4443 -cert=ecdsa -rtt0=oa 2>&1 &  # fourth port: offer and accept 0-RTT

@@ -900,6 +900,12 @@ func (hs *clientHandshakeState) processEncryptedExtensions(ee *encryptedExtensio
 		c.clientProtocol = ee.alpnProtocol
 		c.clientProtocolFallback = false
 	}
+	if len(hs.esniNonce) != 0 {
+		// ESNI was requested, it must be present with a valid nonce.
+		if subtle.ConstantTimeCompare(ee.esniNonce, hs.esniNonce) != 1 {
+			return c.sendAlert(alertIllegalParameter)
+		}
+	}
 	return nil
 }
 
