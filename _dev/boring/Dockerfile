@@ -5,7 +5,8 @@ RUN apk add --update \
     cmake \
     patch \
     perl \
-    python \
+    python3-dev \
+    python3 \
     build-base \
     go \
     ninja \
