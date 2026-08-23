@@ -333,7 +333,7 @@ func (hs *clientHandshakeState) pickTLSVersion() error {
 	vers, ok := hs.c.config.pickVersion([]uint16{hs.serverHello.vers})
 	if !ok || vers < VersionTLS10 {
 		// TLS 1.0 is the minimum version supported as a client.
-		hs.c.sendAlert(alertProtocolVersion)
+		hs.c.sendAlert(alertIllegalParameter)
 		return fmt.Errorf("tls: server selected unsupported protocol version %x", hs.serverHello.vers)
 	}
 
